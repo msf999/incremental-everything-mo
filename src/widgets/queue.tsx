@@ -45,11 +45,11 @@ export function QueueComponent() {
 
   // Navigate to the rem when an incremental item is reached in the queue
   React.useEffect(() => {
-    if (remAndType?.rem?._id) {
+    if (remAndType?.rem) {
       // Navigate to the rem automatically when it appears in the queue
-      plugin.window.openRem(remAndType.rem._id);
+      plugin.window.openRem(remAndType.rem);
     }
-  }, [remAndType?.rem?._id]);
+  }, [remAndType?.rem]);
 
   /**
    * If the rem is a rem type, then we should render the rem editor
@@ -104,10 +104,10 @@ export function QueueComponent() {
         ) : null}
         
         {/* Navigation indicator */}
-        {remAndType?.rem?._id && (
+        {remAndType?.rem && (
           <div 
             className="fixed top-2 right-2 bg-blue-500 text-white px-2 py-1 rounded text-xs cursor-pointer hover:bg-blue-600 transition-colors"
-            onClick={() => plugin.window.openRem(remAndType.rem._id)}
+            onClick={() => plugin.window.openRem(remAndType.rem)}
             title="Click to navigate to the rem"
           >
             📍 Navigate to Rem
