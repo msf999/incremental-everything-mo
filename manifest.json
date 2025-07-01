@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "mo-incremental-everything",
   "name": "Mo's Incremental Everything",
-  "author": "Jamesb",
+  "author": "Jamesb/Mo",
   "repoUrl": "https://github.com/bjsi/incremental-everything",
   "version": {
     "major": 0,

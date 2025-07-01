@@ -2,14 +2,14 @@
   "manifestVersion": 1,
   "id": "mo-incremental-everything",
   "name": "Mo's Incremental Everything",
-  "author": "Jamesb",
+  "author": "Jamesb/Mo",
   "repoUrl": "https://github.com/bjsi/incremental-everything",
   "version": {
     "major": 0,
     "minor": 0,
     "patch": 20
   },
-  "unlisted": false,
+  "unlisted": true,
   "theme": [],
   "enableOnMobile": true,
   "description": "Review notes, PDFs and web articles incrementally alongside your flashcards.",
