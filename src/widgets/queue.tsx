@@ -103,16 +103,7 @@ export function QueueComponent() {
           <DocumentViewer width={'100%'} height={'100%'} documentId={remAndType.rem._id} />
         ) : null}
         
-        {/* Navigation indicator */}
-        {remAndType?.rem && (
-          <div 
-            className="fixed top-2 right-2 bg-blue-500 text-white px-2 py-1 rounded text-xs cursor-pointer hover:bg-blue-600 transition-colors"
-            onClick={() => plugin.window.openRem(remAndType.rem)}
-            title="Click to navigate to the rem"
-          >
-            📍 Navigate to Rem
-          </div>
-        )}
+
       </div>
     </div>
   );
