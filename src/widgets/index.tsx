@@ -168,13 +168,15 @@ async function onActivate(plugin: ReactRNPlugin) {
 
       const intervalBetweenIncRem = typeof ratio === 'string' ? ratio : Math.round(1 / ratio);
       const totalElementsSeen = queueInfo.cardsPracticed + seenRem.size;
-      const sorted = _.sortBy(allIncrementalRem, (incRem) => {
-        if (queueInfo.mode === 'in-order') {
-          return allRemInFolderQueue!.indexOf(incRem.remId);
-        } else {
-          return incRem.priority;
-        }
-      });
+      const sorted = queueInfo.mode === 'in-order' 
+        ? _.sortBy(allIncrementalRem, (incRem) => allRemInFolderQueue!.indexOf(incRem.remId))
+        : _.pipe(
+            allIncrementalRem,
+            // First sort by nextRepDate (oldest first) - this will be the secondary sort
+            (items) => _.sortBy(items, (incRem) => incRem.nextRepDate),
+            // Then sort by priority (higher priority first) - this becomes the primary sort
+            (items) => _.sortBy(items, (incRem) => incRem.priority)
+          );
       const filtered = sorted.filter((x) =>
         queueInfo.mode === 'practice-all' || queueInfo.mode === 'in-order'
           ? (!queueInfo.subQueueId || allRemInFolderQueue?.includes(x.remId)) &&
