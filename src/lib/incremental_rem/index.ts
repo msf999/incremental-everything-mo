@@ -14,12 +14,12 @@ import {
   originalIncrementalDateSlotCode,
   firstAddedSlotCode,
   rotationSlotCode,
-  ROTATION_OPTIONS,
   initialIntervalId,
   defaultPriorityId,
   currentIncRemKey,
   incremReviewStartTimeKey,
 } from '../consts';
+import parseDuration from 'parse-duration';
 import { getNextSpacingDateForRem, updateSRSDataForRem } from '../scheduler';
 import { IncrementalRem } from './types';
 import { tryParseJson, getDailyDocReferenceForDate, sleep } from '../utils';
@@ -261,53 +261,17 @@ export const getIncrementalRemFromRem = async (
   }
 };
 
-const ROTATION_INTERVAL_DAYS: Record<string, number> = {
-  '1 Day': 1,
-  '2 Days': 2,
-  '3 Days': 3,
-  '5 Days': 5,
-  '1 Week': 7,
-  '2 Weeks': 14,
-  '1 Month': 30,
-  '2 Months': 60,
-  '3 Months': 90,
-  '6 Months': 180,
-  '1 Year': 365,
-};
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 export function getRotationIntervalMs(rotation: string | undefined): number | null {
-  if (!rotation || rotation === 'Default') return null;
-  const days = ROTATION_INTERVAL_DAYS[rotation];
-  return days != null ? days * 24 * 60 * 60 * 1000 : null;
+  if (!rotation || rotation.toLowerCase() === 'default') return null;
+  const ms = parseDuration(rotation);
+  return ms != null && ms > 0 ? ms : null;
 }
 
 export function getRotationIntervalDays(rotation: string | undefined): number | null {
-  if (!rotation || rotation === 'Default') return null;
-  return ROTATION_INTERVAL_DAYS[rotation] ?? null;
-}
-
-async function findRotationOptionRef(
-  plugin: RNPlugin,
-  label: string
-): Promise<RichTextElementRemInterface[] | null> {
-  try {
-    const rotationSlotRem = await plugin.powerup.getPowerupSlotByCode(
-      powerupCode,
-      rotationSlotCode
-    );
-    if (!rotationSlotRem) return null;
-
-    const children = await rotationSlotRem.getChildrenRem();
-    for (const child of children) {
-      const text = (await plugin.richText.toString(child.text)).trim();
-      if (text === label) {
-        return [{ _id: child._id }] as RichTextElementRemInterface[];
-      }
-    }
-  } catch (error) {
-    console.error('[findRotationOptionRef] Error:', error);
-  }
-  return null;
+  const ms = getRotationIntervalMs(rotation);
+  return ms != null ? Math.round((ms / MS_PER_DAY) * 10) / 10 : null;
 }
 
 async function getInitialRotation(
@@ -383,10 +347,7 @@ export async function initIncrementalRem(plugin: ReactRNPlugin, rem: PluginRem) 
 
       // Inherit Rotation from closest incremental ancestor, or default to "Default"
       const initialRotation = await getInitialRotation(plugin, rem);
-      const rotationRef = await findRotationOptionRef(plugin, initialRotation);
-      if (rotationRef) {
-        await rem.setPowerupProperty(powerupCode, rotationSlotCode, rotationRef);
-      }
+      await rem.setPowerupProperty(powerupCode, rotationSlotCode, [initialRotation]);
 
       // Create 'madeIncremental' marker to indicate the start of a new learning session
       // This is used by the scheduler to count only reps since this marker
