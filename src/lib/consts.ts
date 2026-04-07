@@ -4,6 +4,14 @@ export const prioritySlotCode = 'priority';
 export const nextRepDateSlotCode = 'nextRepDate';
 export const repHistorySlotCode = 'repHist';
 export const originalIncrementalDateSlotCode = 'originalIncDate';
+export const firstAddedSlotCode = 'firstAdded';
+export const rotationSlotCode = 'rotation';
+
+export const ROTATION_OPTIONS = [
+  'Default', '1 Day', '2 Days', '3 Days', '5 Days',
+  '1 Week', '2 Weeks', '1 Month', '2 Months',
+  '3 Months', '6 Months', '1 Year',
+] as const;
 
 // Dismissed Powerup
 export const dismissedPowerupCode = 'dismissed';

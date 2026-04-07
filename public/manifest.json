@@ -3,13 +3,13 @@
   "id": "incremental-everything",
   "name": "Incremental Everything",
   "author": "Jamesb, Hugomarins and Jonathangimeno",
-  "repoUrl": "https://github.com/bjsi/incremental-everything",
+  "repoUrl": "https://github.com/msf999/incremental-everything-mo",
   "version": {
     "major": 0,
     "minor": 2,
     "patch": 159
   },
-  "unlisted": false,
+  "unlisted": true,
   "theme": [],
   "enableOnMobile": true,
   "description": "Review notes, PDFs, Youtube videos and web articles incrementally alongside your flashcards.",

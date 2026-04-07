@@ -100,6 +100,7 @@ export const IncrementalRem = z.object({
   nextRepDate: z.number(),
   priority: z.number().min(0).max(100),
   history: z.array(IncrementalRep).optional(),
+  rotation: z.string().optional(),
 });
 
 export type IncrementalRem = z.infer<typeof IncrementalRem>;

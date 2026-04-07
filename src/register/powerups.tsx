@@ -9,6 +9,9 @@ import {
   nextRepDateSlotCode,
   repHistorySlotCode,
   originalIncrementalDateSlotCode,
+  firstAddedSlotCode,
+  rotationSlotCode,
+  ROTATION_OPTIONS,
   priorityGraphPowerupCode,
   dismissedPowerupCode,
   dismissedHistorySlotCode,
@@ -61,9 +64,23 @@ export async function registerPluginPowerups(plugin: ReactRNPlugin) {
           propertyType: PropertyType.DATE,
           hidden: true,
         },
+        {
+          code: firstAddedSlotCode,
+          name: 'First Added',
+          propertyType: PropertyType.DATE,
+          propertyLocation: PropertyLocation.BELOW,
+        },
+        {
+          code: rotationSlotCode,
+          name: 'Rotation',
+          propertyType: PropertyType.SINGLE_SELECT,
+          propertyLocation: PropertyLocation.BELOW,
+        },
       ],
     },
   });
+
+  await ensureRotationOptions(plugin);
 
   // Create Separate Flashcard Priority Powerup
   await plugin.app.registerPowerup({
@@ -155,4 +172,33 @@ export async function registerPluginPowerups(plugin: ReactRNPlugin) {
       ],
     },
   });
+}
+
+async function ensureRotationOptions(plugin: ReactRNPlugin) {
+  try {
+    const rotationSlotRem = await plugin.powerup.getPowerupSlotByCode(
+      powerupCode,
+      rotationSlotCode
+    );
+    if (!rotationSlotRem) return;
+
+    const existingChildren = await rotationSlotRem.getChildrenRem();
+    const existingLabels = new Set<string>();
+    for (const child of existingChildren) {
+      const text = await plugin.richText.toString(child.text);
+      existingLabels.add(text.trim());
+    }
+
+    for (const label of ROTATION_OPTIONS) {
+      if (!existingLabels.has(label)) {
+        const optionRem = await plugin.rem.createRem();
+        if (optionRem) {
+          await optionRem.setText([label]);
+          await optionRem.setParent(rotationSlotRem._id);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('[ensureRotationOptions] Failed to create rotation options:', error);
+  }
 }

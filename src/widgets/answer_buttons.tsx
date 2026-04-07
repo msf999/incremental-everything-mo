@@ -431,9 +431,11 @@ export function AnswerButtons() {
               console.error('Error opening document:', error);
               plugin.app.toast('Error opening document');
             }
+
+            await handleNextClick();
           }}
           style={{ minWidth: '100px' }}
-          title="Open Editor in New Tab: Instantly open the full source document in a new browser tab"
+          title="Open Editor in New Tab: Open document in a new tab, then advance the queue (same as Next)"
         >
           <div style={buttonStyles.label}>Open Editor</div>
           <div style={buttonStyles.sublabel}>New Tab</div>
