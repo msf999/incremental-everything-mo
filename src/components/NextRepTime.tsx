@@ -3,7 +3,7 @@ import dayjs from 'dayjs';
 import duration from 'dayjs/plugin/duration';
 import React from 'react';
 import { getNextSpacingDateForRem } from '../lib/scheduler';
-import { IncrementalRem } from '../lib/incremental_rem';
+import { IncrementalRem, getRotationIntervalMs } from '../lib/incremental_rem';
 dayjs.extend(duration);
 
 export interface NextRepTimeProps {
@@ -34,6 +34,12 @@ export function NextRepTime(props: NextRepTimeProps): React.ReactElement {
 
   React.useEffect(() => {
     const effect = async () => {
+      const rotMs = getRotationIntervalMs(props.rem.rotation);
+      if (rotMs !== null) {
+        setNextTime(Date.now() + rotMs);
+        return;
+      }
+
       const inLookbackMode = !!(await plugin.queue.inLookbackMode());
       const nt = await getNextSpacingDateForRem(plugin, props.rem.remId, inLookbackMode);
       if (nt) {
@@ -41,7 +47,7 @@ export function NextRepTime(props: NextRepTimeProps): React.ReactElement {
       }
     };
     effect();
-  }, [props.rem.remId]);
+  }, [props.rem.remId, props.rem.rotation]);
 
   const duration = dayjs.duration(dayjs(nextTime).diff(dayjs()));
   const longVersion = durationToHumanReadable(duration);
