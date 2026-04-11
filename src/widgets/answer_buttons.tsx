@@ -26,6 +26,7 @@ import {
   queueSessionCacheKey,
   priorityCalcScopeRemIdsKey,
   incremReviewStartTimeKey,
+  isMobileDeviceKey,
 } from '../lib/consts';
 import { getIncrementalRemFromRem, handleNextRepetitionClick, handleNextRepetitionManualOffset, updateReviewRemData } from '../lib/incremental_rem';
 import { removeIncrementalRemCache } from '../lib/incremental_rem/cache';
@@ -73,6 +74,11 @@ export function AnswerButtons() {
     (rp) => rp.storage.getSession<string[] | null>(priorityCalcScopeRemIdsKey),
     []
   );
+
+  const isMobile = useTrackerPlugin(
+    (rp) => rp.storage.getSession<boolean>(isMobileDeviceKey),
+    []
+  ) || false;
 
   const baseData = useTrackerPlugin(async (rp) => {
     const ctx = await rp.widget.getWidgetContext<WidgetLocation.FlashcardAnswerButtons>();
@@ -413,19 +419,23 @@ export function AnswerButtons() {
         <Button
           onClick={async () => {
             try {
-              const environment = await plugin.settings.getSetting<string>(remnoteEnvironmentId) || 'beta';
-              const remnoteDomain = environment === 'beta' ? 'https://beta.remnote.com' : 'https://www.remnote.com';
-              const newUrl = `${remnoteDomain}/document/${rem._id}`;
-              const newWindow = window.open(newUrl, '_blank');
+              if (isMobile) {
+                await plugin.window.openRem(rem);
+              } else {
+                const environment = await plugin.settings.getSetting<string>(remnoteEnvironmentId) || 'beta';
+                const remnoteDomain = environment === 'beta' ? 'https://beta.remnote.com' : 'https://www.remnote.com';
+                const newUrl = `${remnoteDomain}/document/${rem._id}`;
+                const newWindow = window.open(newUrl, '_blank');
 
-              if (!newWindow || newWindow.closed) {
-                const link = document.createElement('a');
-                link.href = newUrl;
-                link.target = '_blank';
-                link.rel = 'noopener noreferrer';
-                document.body.appendChild(link);
-                link.click();
-                setTimeout(() => document.body.removeChild(link), 100);
+                if (!newWindow || newWindow.closed) {
+                  const link = document.createElement('a');
+                  link.href = newUrl;
+                  link.target = '_blank';
+                  link.rel = 'noopener noreferrer';
+                  document.body.appendChild(link);
+                  link.click();
+                  setTimeout(() => document.body.removeChild(link), 100);
+                }
               }
             } catch (error) {
               console.error('Error opening document:', error);
@@ -435,10 +445,13 @@ export function AnswerButtons() {
             await handleNextClick();
           }}
           style={{ minWidth: '100px' }}
-          title="Open Editor in New Tab: Open document in a new tab, then advance the queue (same as Next)"
+          title={isMobile
+            ? "Open Editor: Navigate to this Rem in the editor, then advance the queue"
+            : "Open Editor in New Tab: Open document in a new tab, then advance the queue (same as Next)"
+          }
         >
           <div style={buttonStyles.label}>Open Editor</div>
-          <div style={buttonStyles.sublabel}>New Tab</div>
+          <div style={buttonStyles.sublabel}>{isMobile ? 'Edit Rem' : 'New Tab'}</div>
         </Button>
 
         {activeHighlightId && (
