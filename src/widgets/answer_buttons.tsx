@@ -578,58 +578,15 @@ export function AnswerButtons() {
           </>
         )}
 
-        {/* Desktop-only hint — compact informational badge */}
-        {['rem', 'pdf', 'pdf-highlight'].includes(remType || '') && (
-          <>
-            <div style={dividerStyle} />
-            <div
-              className="desktop-only-hint"
-              title="Press 'P' to open the Rem in RemNote's pop-up previewer for quick edits"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '5px',
-                padding: '4px 10px',
-                borderRadius: '20px',
-                border: '1px dashed var(--rn-clr-border-primary)',
-                backgroundColor: 'transparent',
-                cursor: 'default',
-                pointerEvents: 'none',
-                userSelect: 'none',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              <span style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: '20px',
-                height: '20px',
-                borderRadius: '4px',
-                backgroundColor: 'var(--rn-clr-background-tertiary)',
-                border: '1px solid var(--rn-clr-border-primary)',
-                boxShadow: '0 1px 2px rgba(0,0,0,0.08)',
-                fontSize: '11px',
-                fontWeight: 700,
-                color: 'var(--rn-clr-content-primary)',
-                fontFamily: 'monospace',
-                animation: 'keyHintPulse 2.5s ease-in-out infinite',
-              }}>P</span>
-              <span style={{
-                fontSize: '10.5px',
-                fontWeight: 500,
-                color: 'var(--rn-clr-content-tertiary)',
-                letterSpacing: '0.2px',
-              }}>Edit</span>
-            </div>
-            <style>{`
-              @keyframes keyHintPulse {
-                0%, 100% { opacity: 0.7; transform: scale(1); }
-                50% { opacity: 1; transform: scale(1.08); }
-              }
-            `}</style>
-          </>
-        )}
+        <Button
+          variant="secondary"
+          onClick={async () => {
+            await plugin.queue.removeCurrentCardFromQueue();
+          }}
+          title="Skip: Move to the next item without recording a review or rescheduling"
+        >
+          <div style={buttonStyles.label}>Skip</div>
+        </Button>
 
         <div style={dividerStyle} />
         <span
