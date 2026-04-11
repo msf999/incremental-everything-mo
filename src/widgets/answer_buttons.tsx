@@ -285,10 +285,13 @@ export function AnswerButtons() {
     await handleNextRepetitionClick(plugin, incRemInfo);
   };
 
-  const runManualNext = async (mode: 'today' | 'tomorrow') => {
-    const offset = mode === 'tomorrow' ? 1 : 0;
-    await handleNextRepetitionManualOffset(plugin, incRemInfo, offset);
+  const runManualNext = async (offsetDays: number) => {
+    await handleNextRepetitionManualOffset(plugin, incRemInfo, offsetDays);
   };
+
+  const today = dayjs().startOf('day');
+  const daysUntilSaturday = ((13 - today.day()) % 7) || 7;
+  const daysUntilMonday = ((8 - today.day()) % 7) || 7;
 
   const priorityColor = percentiles.kb ? percentileToHslColor(percentiles.kb) : '#6b7280';
   const buttonStyles = getButtonStyles();
@@ -379,8 +382,8 @@ export function AnswerButtons() {
           onClick={handleNextClick}
           title="Next (Cmd+Right on Mac; Ctrl+Right on Windows/Linux): Mark as reviewed, calculate next interval, and advance to next item"
           menuItems={[
-            { label: 'Repeat today', onClick: () => runManualNext('today') },
-            { label: 'Repeat tomorrow', onClick: () => runManualNext('tomorrow') },
+            { label: `Saturday (${daysUntilSaturday}d)`, onClick: () => runManualNext(daysUntilSaturday) },
+            { label: `Monday (${daysUntilMonday}d)`, onClick: () => runManualNext(daysUntilMonday) },
           ]}
           style={warningStyle}
         >
