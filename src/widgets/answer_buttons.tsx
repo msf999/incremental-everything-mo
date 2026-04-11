@@ -12,7 +12,7 @@ import * as _ from 'remeda';
 import dayjs from 'dayjs';
 import { IncrementalRep } from '../lib/incremental_rem/types';
 import { NextRepTime } from '../components/NextRepTime';
-import { DraggableButton } from '../components/buttons/DraggableButton';
+import { SplitButton } from '../components/buttons/SplitButton';
 import { Button } from '../components/buttons/Button';
 import { getButtonStyles } from '../components/buttons/styles';
 import {
@@ -327,19 +327,18 @@ export function AnswerButtons() {
     >
       {/* Single row of buttons */}
       <div style={buttonRowStyle}>
-        <DraggableButton
+        <SplitButton
           variant="primary"
           onClick={handleNextClick}
-          onDragUp={() => runManualNext('tomorrow')}
-          onDragDown={() => runManualNext('today')}
-          overlayUpText="Repeat tomorrow"
-          overlayDownText="Repeat today"
-          dragThreshold={12}
           title="Next (Cmd+Right on Mac; Ctrl+Right on Windows/Linux): Mark as reviewed, calculate next interval, and advance to next item"
+          menuItems={[
+            { label: 'Repeat today', onClick: () => runManualNext('today') },
+            { label: 'Repeat tomorrow', onClick: () => runManualNext('tomorrow') },
+          ]}
         >
           <div style={buttonStyles.label}>Next</div>
           <div style={buttonStyles.sublabel}><NextRepTime rem={incRemInfo} /></div>
-        </DraggableButton>
+        </SplitButton>
 
         <Button
           variant="secondary"
