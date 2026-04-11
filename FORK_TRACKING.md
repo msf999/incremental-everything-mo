@@ -104,7 +104,7 @@ This file has grown into the most heavily customised widget. All changes are add
 | **Imports** | Added `getRotationIntervalMs` from `../lib/incremental_rem`; replaced `DraggableButton` import with `SplitButton`; added `isMobileDeviceKey` from consts. |
 | **Hooks** | Added `isMobile` tracker (reads `isMobileDeviceKey` from session storage). |
 | **`hasInvalidRotation` + `warningStyle`** | Derived boolean + amber style object computed after `incRemInfo` is destructured. Applied to the Next and Open Editor buttons when the rotation value cannot be parsed. |
-| **Next button** | Replaced `DraggableButton` (drag-up/down gesture) with `SplitButton` (dropdown chevron). Menu items: "Repeat today", "Repeat tomorrow". When `hasInvalidRotation` is true, the sublabel shows `"invalid rotation"` in amber instead of `<NextRepTime />`. |
+| **Next button** | Replaced `DraggableButton` (drag-up/down gesture) with `SplitButton` (dropdown chevron). Menu items: "Saturday (Xd)", "Monday (Xd)" with dynamic day counts. When `hasInvalidRotation` is true, the sublabel shows `"invalid rotation"` in amber instead of `<NextRepTime />`. |
 | **Open Editor button** | On mobile (`isMobile`), calls `plugin.window.openRem(rem)` for in-app navigation instead of `window.open()` for a new tab. Sublabel changes to "Edit Rem" on mobile. Also receives `warningStyle` when rotation is invalid. Still calls `handleNextClick()` to advance queue. |
 | **Skip button** | Replaced the non-interactive "P Edit" keyboard-hint badge with a functional Skip button that calls `plugin.queue.removeCurrentCardFromQueue()` (advances queue without recording a review). |
 
@@ -224,3 +224,16 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 - 25 other files added or modified by upstream (new widgets, PDF improvements, batch operations, etc.)
 
 **Notes:** Clean merge with zero manual intervention. Upstream added significant features: weighted priority shield, queue toolbar priority display, PDF page range improvements, batch priority/interval updates, and various refactors. None overlapped with our custom code regions.
+
+---
+
+### 2026-04-11 — Edit (Next dropdown options changed to Saturday/Monday)
+
+**Upstream commit(s):** N/A (local edit)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes
+**Files touched:**
+- `src/widgets/answer_buttons.tsx` — replaced "Repeat today"/"Repeat tomorrow" dropdown items with "Saturday (Xd)"/"Monday (Xd)" showing dynamic day counts; simplified `runManualNext` to accept a numeric offset directly
+
+**Notes:** Saturday and Monday provide more practical scheduling landmarks than today/tomorrow. Day counts are computed dynamically using `dayjs().day()` so the labels always show the correct number of days until the next occurrence.
