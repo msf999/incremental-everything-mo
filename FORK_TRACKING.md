@@ -34,7 +34,7 @@ When working on this repository, follow these rules in order:
 |---|---|
 | **Upstream repo** | `https://github.com/bjsi/incremental-everything` (via `hugomarins` fork) |
 | **Our fork** | `https://github.com/msf999/incremental-everything-mo` |
-| **Last synced upstream commit** | `da4b9d2` — _Merge pull request #257 from hugomarins/main_ |
+| **Last synced upstream commit** | `8144672` — _Merge pull request #262 from hugomarins/main_ |
 | **Our first custom commit** | `88839e1` — _feat: add Rotation and First Added properties, make Open Editor advance queue_ |
 | **Branch** | `main` |
 
@@ -207,3 +207,20 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 - `src/components/buttons/SplitButton.tsx` — new component: split button with dropdown chevron menu, replaces the drag-gesture `DraggableButton`
 
 **Notes:** Four related UX improvements bundled together. The drag-up/drag-down gesture on the Next button was not discoverable; the split-button dropdown makes "Repeat today/tomorrow" visible. The P Edit badge occupied space without function; replaced with a Skip button that advances the queue without rescheduling. Mobile users get in-app navigation instead of a broken new-tab attempt. Invalid rotation values now produce a clear visual warning rather than silently falling back to the default scheduler.
+
+---
+
+### 2026-04-11 — Merge (upstream sync to `8144672`)
+
+**Upstream commit(s):** `da4b9d2` to `8144672` (PR #258 through PR #262)
+**Conflicts resolved:** None (all four overlapping files auto-merged cleanly)
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (only pre-existing TS errors, no new ones)
+**Files touched:**
+- `public/manifest.json` — patch version bumped from 159 to 167 upstream; our `repoUrl` and `unlisted` overrides preserved
+- `src/lib/consts.ts` — upstream added `incRemCacheReloadKey`, `displayQueueToolbarPriorityId`, weighted shield keys, `pendingIntervalBatchSaveKey`; our constants untouched
+- `src/lib/incremental_rem/index.ts` — upstream added `skipFlagManagement` option and cache reload trigger to `initIncrementalRem`; our rotation/firstAdded additions in different regions, merged cleanly
+- `src/widgets/answer_buttons.tsx` — upstream added weighted shield feature (new imports, hook, calculation, display); our SplitButton/Skip/mobile/warning changes in different regions, merged cleanly
+- 25 other files added or modified by upstream (new widgets, PDF improvements, batch operations, etc.)
+
+**Notes:** Clean merge with zero manual intervention. Upstream added significant features: weighted priority shield, queue toolbar priority display, PDF page range improvements, batch priority/interval updates, and various refactors. None overlapped with our custom code regions.
