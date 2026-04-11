@@ -28,7 +28,7 @@ import {
   incremReviewStartTimeKey,
   isMobileDeviceKey,
 } from '../lib/consts';
-import { getIncrementalRemFromRem, handleNextRepetitionClick, handleNextRepetitionManualOffset, updateReviewRemData } from '../lib/incremental_rem';
+import { getIncrementalRemFromRem, handleNextRepetitionClick, handleNextRepetitionManualOffset, updateReviewRemData, getRotationIntervalMs } from '../lib/incremental_rem';
 import { removeIncrementalRemCache } from '../lib/incremental_rem/cache';
 import { IncrementalRem } from '../lib/incremental_rem';
 import { percentileToHslColor, calculateRelativePercentile, calculateVolumeBasedPercentile, PERFORMANCE_MODE_LIGHT } from '../lib/utils';
@@ -222,6 +222,19 @@ export function AnswerButtons() {
 
   const { ctx, rem, incRemInfo, sessionCache } = coreData;
 
+  const hasInvalidRotation = !!(
+    incRemInfo.rotation &&
+    incRemInfo.rotation.toLowerCase() !== 'default' &&
+    getRotationIntervalMs(incRemInfo.rotation) === null
+  );
+
+  const warningStyle: React.CSSProperties = hasInvalidRotation
+    ? {
+        borderColor: 'var(--rn-clr-yellow, #f59e0b)',
+        color: 'var(--rn-clr-yellow-dark, #92400e)',
+      }
+    : {};
+
   const handleNextClick = async () => {
     if (remType === 'pdf') {
       const pdfRem = await findPDFinRem(plugin, rem);
@@ -335,9 +348,16 @@ export function AnswerButtons() {
             { label: 'Repeat today', onClick: () => runManualNext('today') },
             { label: 'Repeat tomorrow', onClick: () => runManualNext('tomorrow') },
           ]}
+          style={warningStyle}
         >
           <div style={buttonStyles.label}>Next</div>
-          <div style={buttonStyles.sublabel}><NextRepTime rem={incRemInfo} /></div>
+          {hasInvalidRotation ? (
+            <div style={{ ...buttonStyles.sublabel, color: 'var(--rn-clr-yellow, #f59e0b)' }}>
+              invalid rotation
+            </div>
+          ) : (
+            <div style={buttonStyles.sublabel}><NextRepTime rem={incRemInfo} /></div>
+          )}
         </SplitButton>
 
         <Button
@@ -443,7 +463,7 @@ export function AnswerButtons() {
 
             await handleNextClick();
           }}
-          style={{ minWidth: '100px' }}
+          style={{ minWidth: '100px', ...warningStyle }}
           title={isMobile
             ? "Open Editor: Navigate to this Rem in the editor, then advance the queue"
             : "Open Editor in New Tab: Open document in a new tab, then advance the queue (same as Next)"
