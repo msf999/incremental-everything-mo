@@ -423,16 +423,18 @@ export function AnswerButtons() {
           )}
         </SplitButton>
 
-        <Button
-          variant="secondary"
-          onClick={async () => {
-            await plugin.widget.openPopup('reschedule', { remId: ctx.remId });
-          }}
-          title="Reschedule (Ctrl+J): Manually set custom interval and adjust priority"
-        >
-          <div style={buttonStyles.label}>Reschedule</div>
-          <div style={buttonStyles.sublabel}>Set interval</div>
-        </Button>
+        {!isMobile && (
+          <Button
+            variant="secondary"
+            onClick={async () => {
+              await plugin.widget.openPopup('reschedule', { remId: ctx.remId });
+            }}
+            title="Reschedule (Ctrl+J): Manually set custom interval and adjust priority"
+          >
+            <div style={buttonStyles.label}>Reschedule</div>
+            <div style={buttonStyles.sublabel}>Set interval</div>
+          </Button>
+        )}
 
         <Button
           variant="danger"
@@ -476,27 +478,29 @@ export function AnswerButtons() {
           <div style={buttonStyles.label}>Dismiss</div>
         </Button>
 
-        {/* Divider */}
-        <div style={dividerStyle} />
+        {!isMobile && (
+          <>
+            <div style={dividerStyle} />
 
-        {/* Secondary Actions Group */}
-        <Button
-          onClick={async () => {
-            await plugin.widget.openPopup('priority', { remId: ctx.remId });
-          }}
-          title="Change Priority (Ctrl+P / Ctrl+Alt+P): Adjust item's priority on the fly"
-        >
-          <div style={buttonStyles.label}>Change</div>
-          <div style={buttonStyles.label}>Priority</div>
-        </Button>
+            <Button
+              onClick={async () => {
+                await plugin.widget.openPopup('priority', { remId: ctx.remId });
+              }}
+              title="Change Priority (Ctrl+P / Ctrl+Alt+P): Adjust item's priority on the fly"
+            >
+              <div style={buttonStyles.label}>Change</div>
+              <div style={buttonStyles.label}>Priority</div>
+            </Button>
 
-        <Button
-          onClick={() => handleReviewInEditorRem(plugin, rem, remType)}
-          title="Review in Editor (Ctrl+Shift+J): Reschedule item, open in editor, and start Editor Review Timer"
-        >
-          <div style={buttonStyles.label}>Review</div>
-          <div style={buttonStyles.label}>in Editor</div>
-        </Button>
+            <Button
+              onClick={() => handleReviewInEditorRem(plugin, rem, remType)}
+              title="Review in Editor (Ctrl+Shift+J): Reschedule item, open in editor, and start Editor Review Timer"
+            >
+              <div style={buttonStyles.label}>Review</div>
+              <div style={buttonStyles.label}>in Editor</div>
+            </Button>
+          </>
+        )}
 
         <SplitButton
           onClick={async () => {
@@ -655,33 +659,37 @@ export function AnswerButtons() {
           <div style={buttonStyles.label}>Skip</div>
         </SplitButton>
 
-        <div style={dividerStyle} />
-        <span
-          role="button"
-          style={{
-            cursor: 'pointer',
-            fontSize: '18px',
-            opacity: 0.7,
-            padding: '4px',
-            borderRadius: '6px',
-            transition: 'opacity 0.2s, background-color 0.2s',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-          onClick={() => window.open('https://github.com/bjsi/incremental-everything/wiki/Reviewing-Items-in-the-Queue', '_blank')}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.opacity = '1';
-            e.currentTarget.style.backgroundColor = 'var(--rn-clr-background-tertiary)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.opacity = '0.7';
-            e.currentTarget.style.backgroundColor = 'transparent';
-          }}
-          title="Help: Guide to Answer Buttons"
-        >
-          ℹ️
-        </span>
+        {!isMobile && (
+          <>
+            <div style={dividerStyle} />
+            <span
+              role="button"
+              style={{
+                cursor: 'pointer',
+                fontSize: '18px',
+                opacity: 0.7,
+                padding: '4px',
+                borderRadius: '6px',
+                transition: 'opacity 0.2s, background-color 0.2s',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+              onClick={() => window.open('https://github.com/bjsi/incremental-everything/wiki/Reviewing-Items-in-the-Queue', '_blank')}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.opacity = '1';
+                e.currentTarget.style.backgroundColor = 'var(--rn-clr-background-tertiary)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.opacity = '0.7';
+                e.currentTarget.style.backgroundColor = 'transparent';
+              }}
+              title="Help: Guide to Answer Buttons"
+            >
+              ℹ️
+            </span>
+          </>
+        )}
       </div>
 
       {/* Priority and Shield Info Bar */}
