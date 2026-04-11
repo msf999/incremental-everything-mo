@@ -89,11 +89,11 @@ This file has the most custom code. All additions are in clearly separated block
 |---|---|
 | **Imports** | Added `firstAddedSlotCode`, `rotationSlotCode` from consts; added `import parseDuration from 'parse-duration'`. |
 | **`getIncrementalRemFromRem()`** | After priority reading (~line 235), added a block that reads the `rotation` powerup property and includes it in `rawData`. |
-| **New helpers (before `initIncrementalRem`)** | Added `getRotationIntervalMs()`, `getRotationIntervalDays()`, and `getInitialRotation()`. These are standalone functions — no upstream code was modified. |
+| **New helpers (before `initIncrementalRem`)** | Added `getRotationIntervalMs()`, `getRotationIntervalDays()`, `getInitialRotation()`, and `rescheduleWithoutReview()`. These are standalone functions — no upstream code was modified. |
 | **`initIncrementalRem()`** | After `setPowerupProperty(prioritySlotCode, ...)`, added two blocks: (a) set `firstAddedSlotCode` to today's daily doc ref, (b) inherit rotation from closest ancestor via `getInitialRotation()` and set as text. |
 | **`updateReviewRemData()`** | Replaced the simple `nextRepDateToUse` assignment with a branching block: explicit overrides take precedence, then rotation interval (via `getRotationIntervalMs`), then normal scheduler. |
 
-**Merge rule:** If upstream modifies `getIncrementalRemFromRem`, `initIncrementalRem`, or `updateReviewRemData`, carefully re-apply our additions into the updated function bodies. Our helpers (`getRotationIntervalMs`, `getRotationIntervalDays`, `getInitialRotation`) are freestanding and should not conflict.
+**Merge rule:** If upstream modifies `getIncrementalRemFromRem`, `initIncrementalRem`, or `updateReviewRemData`, carefully re-apply our additions into the updated function bodies. Our helpers (`getRotationIntervalMs`, `getRotationIntervalDays`, `getInitialRotation`, `rescheduleWithoutReview`) are freestanding and should not conflict.
 
 ### 6. `src/widgets/answer_buttons.tsx`
 
@@ -101,18 +101,19 @@ This file has grown into the most heavily customised widget. All changes are add
 
 | Region | What Changed |
 |---|---|
-| **Imports** | Added `getRotationIntervalMs` from `../lib/incremental_rem`; replaced `DraggableButton` import with `SplitButton`; added `isMobileDeviceKey` from consts. |
+| **Imports** | Added `getRotationIntervalMs`, `rescheduleWithoutReview` from `../lib/incremental_rem`; replaced `DraggableButton` import with `SplitButton`; added `isMobileDeviceKey` from consts. |
 | **Hooks** | Added `isMobile` tracker (reads `isMobileDeviceKey` from session storage). |
 | **`hasInvalidRotation` + `warningStyle`** | Derived boolean + amber style object computed after `incRemInfo` is destructured. Applied to the Next and Open Editor buttons when the rotation value cannot be parsed. |
 | **Next button** | Replaced `DraggableButton` (drag-up/down gesture) with `SplitButton` (dropdown chevron). Menu items: "Saturday (Xd)", "Monday (Xd)" with dynamic day counts. When `hasInvalidRotation` is true, the sublabel shows `"invalid rotation"` in amber instead of `<NextRepTime />`. |
-| **Open Editor button** | On mobile (`isMobile`), calls `plugin.window.openRem(rem)` for in-app navigation instead of `window.open()` for a new tab. Sublabel changes to "Edit Rem" on mobile. Also receives `warningStyle` when rotation is invalid. Still calls `handleNextClick()` to advance queue. |
-| **Skip button** | Replaced the non-interactive "P Edit" keyboard-hint badge with a functional Skip button that calls `plugin.queue.removeCurrentCardFromQueue()` (advances queue without recording a review). |
+| **`openEditorAction` helper** | Extracted editor-opening logic (mobile in-app nav vs desktop new tab) into a reusable async function, used by the main click and dropdown items. |
+| **Open Editor button** | Converted from `Button` to `SplitButton`. On mobile (`isMobile`), calls `plugin.window.openRem(rem)` for in-app navigation instead of `window.open()`. Dropdown items: "Saturday (Xd)", "Monday (Xd)" — each opens the editor then records a review with the chosen offset. Also receives `warningStyle` when rotation is invalid. |
+| **Skip button** | Converted from `Button` to `SplitButton`. Main click calls `plugin.queue.removeCurrentCardFromQueue()` (advances queue without recording a review). Dropdown items: "Saturday (Xd)", "Monday (Xd)" — each reschedules to the chosen date without recording a review via `rescheduleWithoutReview`. |
 
-**Merge rule:** If upstream modifies the answer buttons layout, the Next button component, or the Open Editor button, re-apply our changes: (1) SplitButton with dropdown menu items, (2) mobile branch in Open Editor, (3) Skip button in place of the old P Edit hint, (4) `hasInvalidRotation` warning on Next + Open Editor, (5) `handleNextClick()` call in Open Editor's onClick.
+**Merge rule:** If upstream modifies the answer buttons layout, the Next button component, the Open Editor button, or the Skip area, re-apply our changes: (1) SplitButton with Saturday/Monday dropdown on Next, Open Editor, and Skip, (2) mobile branch in Open Editor via `openEditorAction`, (3) `hasInvalidRotation` warning on Next + Open Editor, (4) `rescheduleWithoutReview` for Skip dropdown items.
 
 ### 7. `src/components/buttons/SplitButton.tsx` *(new file)*
 
-**What changed:** New component that renders a split button — main click area on the left, small chevron on the right that opens a dropdown menu. Used by the Next button. Replaces the upstream `DraggableButton` pattern.
+**What changed:** New component that renders a split button — main click area on the left, small chevron on the right that opens a dropdown menu. Used by the Next, Open Editor, and Skip buttons. Replaces the upstream `DraggableButton` pattern.
 
 **Merge rule:** Freestanding new file. No conflict expected. If upstream introduces its own split-button or dropdown component, consider consolidating.
 
@@ -237,3 +238,17 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 - `src/widgets/answer_buttons.tsx` — replaced "Repeat today"/"Repeat tomorrow" dropdown items with "Saturday (Xd)"/"Monday (Xd)" showing dynamic day counts; simplified `runManualNext` to accept a numeric offset directly
 
 **Notes:** Saturday and Monday provide more practical scheduling landmarks than today/tomorrow. Day counts are computed dynamically using `dayjs().day()` so the labels always show the correct number of days until the next occurrence.
+
+---
+
+### 2026-04-11 — Edit (Saturday/Monday dropdowns on Open Editor and Skip)
+
+**Upstream commit(s):** N/A (local edit)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes
+**Files touched:**
+- `src/lib/incremental_rem/index.ts` — added `rescheduleWithoutReview()` helper: sets next rep date without recording a history entry
+- `src/widgets/answer_buttons.tsx` — converted Open Editor and Skip from `Button` to `SplitButton` with Saturday/Monday dropdown items; extracted `openEditorAction` helper for reuse across main click and dropdown items
+
+**Notes:** Open Editor dropdown items open the editor then record a review with the chosen offset (same as Next). Skip dropdown items reschedule to the chosen date without recording a review, using the new `rescheduleWithoutReview` helper. All three action buttons (Next, Open Editor, Skip) now share consistent Saturday/Monday dropdown options.
