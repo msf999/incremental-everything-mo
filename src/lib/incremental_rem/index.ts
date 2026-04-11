@@ -181,6 +181,34 @@ export async function handleNextRepetitionManualOffset(
 }
 
 /**
+ * Reschedules an incremental rem to a future date without recording a review.
+ * Used by the Skip + Saturday/Monday dropdown to defer an item without
+ * affecting history, rep count, or review time statistics.
+ */
+export async function rescheduleWithoutReview(
+  plugin: RNPlugin,
+  incRem: IncrementalRem | undefined,
+  offsetDays: number
+) {
+  if (!incRem) return;
+
+  try {
+    await plugin.storage.setSession('plugin_operation_active', true);
+
+    const targetDay = dayjs().startOf('day').add(Math.max(offsetDays, 0), 'day').valueOf();
+
+    await updateSRSDataForRem(plugin, incRem.remId, targetDay, incRem.history || []);
+
+    const updatedIncRem = await getIncrementalRemFromRem(plugin, await plugin.rem.findOne(incRem.remId));
+    if (updatedIncRem) await updateIncrementalRemCache(plugin as any, updatedIncRem);
+
+    await plugin.queue.removeCurrentCardFromQueue();
+  } finally {
+    await plugin.storage.setSession('plugin_operation_active', false);
+  }
+}
+
+/**
  * Constructs an IncrementalRem object from a PluginRem by reading and parsing its powerup properties.
  *
  * This function acts as a factory/constructor that:

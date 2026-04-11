@@ -29,7 +29,7 @@ import {
   incremReviewStartTimeKey,
   isMobileDeviceKey,
 } from '../lib/consts';
-import { getIncrementalRemFromRem, handleNextRepetitionClick, handleNextRepetitionManualOffset, updateReviewRemData, getRotationIntervalMs } from '../lib/incremental_rem';
+import { getIncrementalRemFromRem, handleNextRepetitionClick, handleNextRepetitionManualOffset, rescheduleWithoutReview, updateReviewRemData, getRotationIntervalMs } from '../lib/incremental_rem';
 import { removeIncrementalRemCache } from '../lib/incremental_rem/cache';
 import { IncrementalRem } from '../lib/incremental_rem';
 import { percentileToHslColor, calculateRelativePercentile, calculateVolumeBasedPercentile, calculateWeightedShield, PERFORMANCE_MODE_LIGHT } from '../lib/utils';
@@ -289,6 +289,32 @@ export function AnswerButtons() {
     await handleNextRepetitionManualOffset(plugin, incRemInfo, offsetDays);
   };
 
+  const openEditorAction = async () => {
+    try {
+      if (isMobile) {
+        await plugin.window.openRem(rem);
+      } else {
+        const environment = await plugin.settings.getSetting<string>(remnoteEnvironmentId) || 'beta';
+        const remnoteDomain = environment === 'beta' ? 'https://beta.remnote.com' : 'https://www.remnote.com';
+        const newUrl = `${remnoteDomain}/document/${rem._id}`;
+        const newWindow = window.open(newUrl, '_blank');
+
+        if (!newWindow || newWindow.closed) {
+          const link = document.createElement('a');
+          link.href = newUrl;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          document.body.appendChild(link);
+          link.click();
+          setTimeout(() => document.body.removeChild(link), 100);
+        }
+      }
+    } catch (error) {
+      console.error('Error opening document:', error);
+      plugin.app.toast('Error opening document');
+    }
+  };
+
   const today = dayjs().startOf('day');
   const daysUntilSaturday = ((13 - today.day()) % 7) || 7;
   const daysUntilMonday = ((8 - today.day()) % 7) || 7;
@@ -472,32 +498,9 @@ export function AnswerButtons() {
           <div style={buttonStyles.label}>in Editor</div>
         </Button>
 
-        <Button
+        <SplitButton
           onClick={async () => {
-            try {
-              if (isMobile) {
-                await plugin.window.openRem(rem);
-              } else {
-                const environment = await plugin.settings.getSetting<string>(remnoteEnvironmentId) || 'beta';
-                const remnoteDomain = environment === 'beta' ? 'https://beta.remnote.com' : 'https://www.remnote.com';
-                const newUrl = `${remnoteDomain}/document/${rem._id}`;
-                const newWindow = window.open(newUrl, '_blank');
-
-                if (!newWindow || newWindow.closed) {
-                  const link = document.createElement('a');
-                  link.href = newUrl;
-                  link.target = '_blank';
-                  link.rel = 'noopener noreferrer';
-                  document.body.appendChild(link);
-                  link.click();
-                  setTimeout(() => document.body.removeChild(link), 100);
-                }
-              }
-            } catch (error) {
-              console.error('Error opening document:', error);
-              plugin.app.toast('Error opening document');
-            }
-
+            await openEditorAction();
             await handleNextClick();
           }}
           style={{ minWidth: '100px', ...warningStyle }}
@@ -505,10 +508,14 @@ export function AnswerButtons() {
             ? "Open Editor: Navigate to this Rem in the editor, then advance the queue"
             : "Open Editor in New Tab: Open document in a new tab, then advance the queue (same as Next)"
           }
+          menuItems={[
+            { label: `Saturday (${daysUntilSaturday}d)`, onClick: async () => { await openEditorAction(); await runManualNext(daysUntilSaturday); } },
+            { label: `Monday (${daysUntilMonday}d)`, onClick: async () => { await openEditorAction(); await runManualNext(daysUntilMonday); } },
+          ]}
         >
           <div style={buttonStyles.label}>Open Editor</div>
           <div style={buttonStyles.sublabel}>{isMobile ? 'Edit Rem' : 'New Tab'}</div>
-        </Button>
+        </SplitButton>
 
         {activeHighlightId && (
           <>
@@ -634,15 +641,19 @@ export function AnswerButtons() {
           </>
         )}
 
-        <Button
+        <SplitButton
           variant="secondary"
           onClick={async () => {
             await plugin.queue.removeCurrentCardFromQueue();
           }}
           title="Skip: Move to the next item without recording a review or rescheduling"
+          menuItems={[
+            { label: `Saturday (${daysUntilSaturday}d)`, onClick: () => rescheduleWithoutReview(plugin, incRemInfo, daysUntilSaturday) },
+            { label: `Monday (${daysUntilMonday}d)`, onClick: () => rescheduleWithoutReview(plugin, incRemInfo, daysUntilMonday) },
+          ]}
         >
           <div style={buttonStyles.label}>Skip</div>
-        </Button>
+        </SplitButton>
 
         <div style={dividerStyle} />
         <span
