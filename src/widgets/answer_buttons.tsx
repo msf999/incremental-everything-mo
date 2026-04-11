@@ -500,8 +500,8 @@ export function AnswerButtons() {
 
         <SplitButton
           onClick={async () => {
-            await openEditorAction();
             await handleNextClick();
+            await openEditorAction();
           }}
           style={{ minWidth: '100px', ...warningStyle }}
           title={isMobile
@@ -509,8 +509,8 @@ export function AnswerButtons() {
             : "Open Editor in New Tab: Open document in a new tab, then advance the queue (same as Next)"
           }
           menuItems={[
-            { label: `Saturday (${daysUntilSaturday}d)`, onClick: async () => { await openEditorAction(); await runManualNext(daysUntilSaturday); } },
-            { label: `Monday (${daysUntilMonday}d)`, onClick: async () => { await openEditorAction(); await runManualNext(daysUntilMonday); } },
+            { label: `Saturday (${daysUntilSaturday}d)`, onClick: async () => { await runManualNext(daysUntilSaturday); await openEditorAction(); } },
+            { label: `Monday (${daysUntilMonday}d)`, onClick: async () => { await runManualNext(daysUntilMonday); await openEditorAction(); } },
           ]}
         >
           <div style={buttonStyles.label}>Open Editor</div>
