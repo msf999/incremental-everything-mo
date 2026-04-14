@@ -109,9 +109,9 @@ This file has grown into the most heavily customised widget. All changes are add
 | **Open Editor button** | Converted from `Button` to `SplitButton`. On mobile (`isMobile`), calls `plugin.window.openRem(rem)` for in-app navigation instead of `window.open()`. Scheduling runs **before** navigation so the widget is not destroyed before the review is recorded. Dropdown items: "Saturday (Xd)", "Monday (Xd)" — each records a review with the chosen offset then opens the editor. Also receives `warningStyle` when rotation is invalid. |
 | **Skip button** | Converted from `Button` to `SplitButton`. Main click calls `plugin.queue.removeCurrentCardFromQueue()` (advances queue without recording a review). Dropdown items: "Saturday (Xd)", "Monday (Xd)" — each reschedules to the chosen date without recording a review via `rescheduleWithoutReview`. |
 | **Mobile layout** | On mobile (`isMobile`), hides Reschedule, Change Priority, Review in Editor, and the help icon (plus their dividers) to reduce clutter. Only Next, Dismiss, Open Editor, and Skip remain visible. |
-| **Link Auto-Open** | Added `openExtractedUrls` helper function to recursively extract external URLs from `rem.text` and open them in new tabs. Injected into `handleNextClick` and `runManualNext` so links open automatically when clicking Next or Open Editor. |
+| **Link Auto-Open** | Added `externalUrls` via `useTrackerPlugin` to synchronously extract external URLs from `rem.text` and `BuiltInPowerupCodes.Link` bookmarks. Injected `openExtractedUrlsSynchronously()` explicitly as the very first operation across Open Editor `onClick` handlers to ensure links open cleanly before popup blockers activate. |
 
-**Merge rule:** If upstream modifies the answer buttons layout, the Next button component, the Open Editor button, or the Skip area, re-apply our changes: (1) SplitButton with Saturday/Monday dropdown on Next, Open Editor, and Skip, (2) mobile branch in Open Editor via `openEditorAction`, (3) `hasInvalidRotation` warning on Next + Open Editor, (4) `rescheduleWithoutReview` for Skip dropdown items, (5) `!isMobile` guards on Reschedule, Change Priority, Review in Editor, and help icon.
+**Merge rule:** If upstream modifies the answer buttons layout, the Next button component, the Open Editor button, or the Skip area, re-apply our changes: (1) SplitButton with Saturday/Monday dropdown on Next, Open Editor, and Skip, (2) mobile branch in Open Editor via `openEditorAction`, (3) `hasInvalidRotation` warning on Next + Open Editor, (4) `rescheduleWithoutReview` for Skip dropdown items, (5) `!isMobile` guards on Reschedule, Change Priority, Review in Editor, and help icon, (6) inject `openExtractedUrlsSynchronously()` at the start of Open Editor click handlers.
 
 ### 7. `src/components/buttons/SplitButton.tsx` *(new file)*
 
@@ -292,4 +292,13 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 **Files touched:**
 - `src/widgets/answer_buttons.tsx` — added `openExtractedUrls` helper function to parse `rem.text` looking for strings matching `http*` or `node.url` string components; injected call into `handleNextClick` and `runManualNext`. Filters out `remnote.com` internal dashboard links.
 
-**Notes:** If a user includes external hyperlinks in the Rem queue (like a Jira ticket or Outlook mail link), they want to open it *and* advance the queue simultaneously. This checks for non-RemNote URLs and automatically pops them open when pressing Next, Sunday/Monday dropdown variants, or Open Editor.
+### 2026-04-14 — Fix (Open Editor blocked by popup blockers)
+
+**Upstream commit(s):** N/A (local fix)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes
+**Files touched:**
+- `src/widgets/answer_buttons.tsx` — migrated `openExtractedUrls` to a `useTrackerPlugin` hook (`externalUrls`) so URLs are precomputed during render rather than read asynchronously on click via `await rem.text`. Also precomputed `remnoteDomain`. Added support for extracting URLs from the `BuiltInPowerupCodes.Link` Powerup, which handles bookmark Rems correctly. Finally, completely extracted the URL-opening out of `handleNextClick()` and placed it explicitly as the *very first* synchronous line of code inside the `onClick` and `menuItem` targets of the Open Editor button (removed from Next).
+
+**Notes:** Adding `await rem.text` to `handleNextClick` introduced enough async delay (an RPC hop to RemNote) that the browser's user-gesture token expired by the time `openEditorAction` tried to run `window.open`, causing popups to be silently blocked. Precomputing dependencies and firing `window.open` synchronously on line 1 of the click handler resolves this without triggering browser security filters. Furthermore, when multiple tabs attempt to open simultaneously (the hyperlink AND the editor), browsers strictly block anything past the first. We inverted the order so the hyperlink is guaranteed to consume the trusted interaction token.

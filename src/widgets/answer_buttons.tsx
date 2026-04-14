@@ -207,6 +207,61 @@ export function AnswerButtons() {
     return url;
   }, [baseData?.rem?._id, remType]);
 
+  const externalUrls = useTrackerPlugin(async (rp) => {
+    if (!baseData?.rem) return [];
+    try {
+      const urls: string[] = [];
+
+      // 1. Check if the rem itself operates as a hyperlink (has the Link powerup)
+      const hasLinkPowerup = await baseData.rem.hasPowerup(BuiltInPowerupCodes.Link);
+      if (hasLinkPowerup) {
+        const urlProp = await baseData.rem.getPowerupProperty<BuiltInPowerupCodes.Link>(
+          BuiltInPowerupCodes.Link,
+          'URL'
+        );
+        if (urlProp && typeof urlProp === 'string') {
+          urls.push(urlProp);
+        }
+      }
+
+      // 2. Scan the text array for any inline links
+      const text = await baseData.rem.text;
+      const seen = new Set();
+      
+      const traverseSafe = (node: any) => {
+        if (!node) return;
+        if (typeof node === 'string') {
+          const matches = node.match(/https?:\/\/[^\s"'<\[\]{}()]+/g);
+          if (matches) urls.push(...matches);
+        } else if (typeof node === 'object') {
+          if (seen.has(node)) return;
+          seen.add(node);
+          
+          if (Array.isArray(node)) {
+            node.forEach(traverseSafe);
+          } else {
+            if (node.url && typeof node.url === 'string' && node.url.startsWith('http')) {
+              urls.push(node.url);
+            }
+            Object.values(node).forEach(traverseSafe);
+          }
+        }
+      };
+      
+      traverseSafe(text);
+      const extracted = Array.from(new Set(urls)).filter(url => !url.includes('remnote.com'));
+      return extracted;
+    } catch (e) {
+      console.error('[externalUrls] error:', e);
+      return [];
+    }
+  }, [baseData?.rem]);
+
+  const remnoteDomain = useTrackerPlugin(async (rp) => {
+    const environment = await rp.settings.getSetting<string>(remnoteEnvironmentId) || 'beta';
+    return environment === 'beta' ? 'https://beta.remnote.com' : 'https://www.remnote.com';
+  }, []) || 'https://www.remnote.com';
+
   // ✅ MEMOIZE CALCULATIONS (but they must run every render, not conditionally)
   const percentiles = useMemo(() => {
     if (!coreData) return { kb: null, doc: null };
@@ -269,48 +324,11 @@ export function AnswerButtons() {
       }
     : {};
 
-  const openExtractedUrls = async () => {
-    try {
-      const text = await rem.text;
-      const urls: string[] = [];
-      const seen = new Set();
-      
-      const traverseSafe = (node: any) => {
-        if (!node) return;
-        if (typeof node === 'string') {
-          const matches = node.match(/https?:\/\/[^\s"'<\[\]{}()]+/g);
-          if (matches) urls.push(...matches);
-        } else if (typeof node === 'object') {
-          if (seen.has(node)) return;
-          seen.add(node);
-          
-          if (Array.isArray(node)) {
-            node.forEach(traverseSafe);
-          } else {
-            if (node.url && typeof node.url === 'string' && node.url.startsWith('http')) {
-              urls.push(node.url);
-            }
-            Object.values(node).forEach(traverseSafe);
-          }
-        }
-      };
-      
-      traverseSafe(text);
-      const uniqueUrls = Array.from(new Set(urls));
-      
-      for (const url of uniqueUrls) {
-        if (!url.includes('remnote.com')) {
-          window.open(url, '_blank');
-        }
-      }
-    } catch (e) {
-      console.error("Failed to open urls", e);
-    }
+  const openExtractedUrlsSynchronously = () => {
+    externalUrls?.forEach(url => window.open(url, '_blank'));
   };
 
   const handleNextClick = async () => {
-    await openExtractedUrls();
-
     if (remType === 'pdf') {
       const pdfRem = await findPDFinRem(plugin, rem);
       if (pdfRem) {
@@ -327,7 +345,6 @@ export function AnswerButtons() {
   };
 
   const runManualNext = async (offsetDays: number) => {
-    await openExtractedUrls();
     await handleNextRepetitionManualOffset(plugin, incRemInfo, offsetDays);
   };
 
@@ -336,8 +353,6 @@ export function AnswerButtons() {
       if (isMobile) {
         await plugin.window.openRem(rem);
       } else {
-        const environment = await plugin.settings.getSetting<string>(remnoteEnvironmentId) || 'beta';
-        const remnoteDomain = environment === 'beta' ? 'https://beta.remnote.com' : 'https://www.remnote.com';
         const newUrl = `${remnoteDomain}/document/${rem._id}`;
         const newWindow = window.open(newUrl, '_blank');
 
@@ -546,8 +561,14 @@ export function AnswerButtons() {
 
         <SplitButton
           onClick={async () => {
-            await handleNextClick();
-            await openEditorAction();
+            openExtractedUrlsSynchronously();
+            if (isMobile) {
+              await handleNextClick();
+              await openEditorAction();
+            } else {
+              openEditorAction();
+              await handleNextClick();
+            }
           }}
           style={{ minWidth: '100px', ...warningStyle }}
           title={isMobile
@@ -555,8 +576,20 @@ export function AnswerButtons() {
             : "Open Editor in New Tab: Open document in a new tab, then advance the queue (same as Next)"
           }
           menuItems={[
-            { label: `Saturday (${daysUntilSaturday}d)`, onClick: async () => { await runManualNext(daysUntilSaturday); await openEditorAction(); } },
-            { label: `Monday (${daysUntilMonday}d)`, onClick: async () => { await runManualNext(daysUntilMonday); await openEditorAction(); } },
+            { label: `Saturday (${daysUntilSaturday}d)`, onClick: async () => { 
+                openExtractedUrlsSynchronously();
+                if (!isMobile) openEditorAction(); 
+                await runManualNext(daysUntilSaturday); 
+                if (isMobile) await openEditorAction(); 
+              } 
+            },
+            { label: `Monday (${daysUntilMonday}d)`, onClick: async () => { 
+                openExtractedUrlsSynchronously();
+                if (!isMobile) openEditorAction(); 
+                await runManualNext(daysUntilMonday); 
+                if (isMobile) await openEditorAction(); 
+              } 
+            },
           ]}
         >
           <div style={buttonStyles.label}>Open Editor</div>
