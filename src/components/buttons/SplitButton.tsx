@@ -27,14 +27,24 @@ export function SplitButton({
   const containerRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
-    if (!menuOpen) return;
+    if (menuOpen) {
+      // Force iframe to expand to fit the absolute dropdown
+      document.body.style.paddingBottom = '150px';
+    } else {
+      document.body.style.paddingBottom = '';
+      return; 
+    }
+
     const handleClickOutside = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setMenuOpen(false);
       }
     };
     document.addEventListener('pointerdown', handleClickOutside);
-    return () => document.removeEventListener('pointerdown', handleClickOutside);
+    return () => {
+      document.removeEventListener('pointerdown', handleClickOutside);
+      document.body.style.paddingBottom = '';
+    };
   }, [menuOpen]);
 
   const styles = getButtonStyles();

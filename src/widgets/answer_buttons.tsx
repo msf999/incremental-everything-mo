@@ -7,13 +7,14 @@ import {
   PluginRem,
   BuiltInPowerupCodes,
 } from '@remnote/plugin-sdk';
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import * as _ from 'remeda';
 import dayjs from 'dayjs';
 import { IncrementalRep } from '../lib/incremental_rem/types';
 import { NextRepTime } from '../components/NextRepTime';
 import { SplitButton } from '../components/buttons/SplitButton';
 import { Button } from '../components/buttons/Button';
+import { DropdownMenu } from '../components/buttons/DropdownMenu';
 import { getButtonStyles } from '../components/buttons/styles';
 import {
   allIncrementalRemKey,
@@ -45,6 +46,7 @@ import { handleCardPriorityInheritance } from '../lib/card_priority/card_priorit
 
 export function AnswerButtons() {
   const plugin = usePlugin();
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
 
   // Separate lightweight trackers for UI state
   const useLightMode = useTrackerPlugin(
@@ -480,18 +482,56 @@ export function AnswerButtons() {
           )}
         </SplitButton>
 
-        {!isMobile && (
-          <Button
-            variant="secondary"
-            onClick={async () => {
-              await plugin.widget.openPopup('reschedule', { remId: ctx.remId });
-            }}
-            title="Reschedule (Ctrl+J): Manually set custom interval and adjust priority"
-          >
-            <div style={buttonStyles.label}>Reschedule</div>
-            <div style={buttonStyles.sublabel}>Set interval</div>
-          </Button>
-        )}
+        <SplitButton
+          onClick={async () => {
+            openExtractedUrlsSynchronously();
+            if (isMobile) {
+              await handleNextClick();
+              await openEditorAction();
+            } else {
+              openEditorAction();
+              await handleNextClick();
+            }
+          }}
+          style={{ minWidth: '100px', ...warningStyle }}
+          title={isMobile
+            ? "Open Editor: Navigate to this Rem in the editor, then advance the queue"
+            : "Open Editor in New Tab: Open document in a new tab, then advance the queue (same as Next)"
+          }
+          menuItems={[
+            { label: `Saturday (${daysUntilSaturday}d)`, onClick: async () => { 
+                openExtractedUrlsSynchronously();
+                if (!isMobile) openEditorAction(); 
+                await runManualNext(daysUntilSaturday); 
+                if (isMobile) await openEditorAction(); 
+              } 
+            },
+            { label: `Monday (${daysUntilMonday}d)`, onClick: async () => { 
+                openExtractedUrlsSynchronously();
+                if (!isMobile) openEditorAction(); 
+                await runManualNext(daysUntilMonday); 
+                if (isMobile) await openEditorAction(); 
+              } 
+            },
+          ]}
+        >
+          <div style={buttonStyles.label}>Open Editor</div>
+          <div style={buttonStyles.sublabel}>{isMobile ? 'Edit Rem' : 'New Tab'}</div>
+        </SplitButton>
+
+        <SplitButton
+          variant="secondary"
+          onClick={async () => {
+            await plugin.queue.removeCurrentCardFromQueue();
+          }}
+          title="Skip: Move to the next item without recording a review or rescheduling"
+          menuItems={[
+            { label: `Saturday (${daysUntilSaturday}d)`, onClick: () => rescheduleWithoutReview(plugin, incRemInfo, daysUntilSaturday) },
+            { label: `Monday (${daysUntilMonday}d)`, onClick: () => rescheduleWithoutReview(plugin, incRemInfo, daysUntilMonday) },
+          ]}
+        >
+          <div style={buttonStyles.label}>Skip</div>
+        </SplitButton>
 
         <Button
           variant="danger"
@@ -535,237 +575,77 @@ export function AnswerButtons() {
           <div style={buttonStyles.label}>Dismiss</div>
         </Button>
 
-        {!isMobile && (
-          <>
-            <div style={dividerStyle} />
-
-            <Button
-              onClick={async () => {
-                await plugin.widget.openPopup('priority', { remId: ctx.remId });
-              }}
-              title="Change Priority (Ctrl+P / Ctrl+Alt+P): Adjust item's priority on the fly"
-            >
-              <div style={buttonStyles.label}>Change</div>
-              <div style={buttonStyles.label}>Priority</div>
-            </Button>
-
-            <Button
-              onClick={() => handleReviewInEditorRem(plugin, rem, remType)}
-              title="Review in Editor (Ctrl+Shift+J): Reschedule item, open in editor, and start Editor Review Timer"
-            >
-              <div style={buttonStyles.label}>Review</div>
-              <div style={buttonStyles.label}>in Editor</div>
-            </Button>
-          </>
-        )}
-
-        <SplitButton
-          onClick={async () => {
-            openExtractedUrlsSynchronously();
-            if (isMobile) {
-              await handleNextClick();
-              await openEditorAction();
-            } else {
-              openEditorAction();
-              await handleNextClick();
-            }
-          }}
-          style={{ minWidth: '100px', ...warningStyle }}
-          title={isMobile
-            ? "Open Editor: Navigate to this Rem in the editor, then advance the queue"
-            : "Open Editor in New Tab: Open document in a new tab, then advance the queue (same as Next)"
-          }
-          menuItems={[
-            { label: `Saturday (${daysUntilSaturday}d)`, onClick: async () => { 
-                openExtractedUrlsSynchronously();
-                if (!isMobile) openEditorAction(); 
-                await runManualNext(daysUntilSaturday); 
-                if (isMobile) await openEditorAction(); 
-              } 
-            },
-            { label: `Monday (${daysUntilMonday}d)`, onClick: async () => { 
-                openExtractedUrlsSynchronously();
-                if (!isMobile) openEditorAction(); 
-                await runManualNext(daysUntilMonday); 
-                if (isMobile) await openEditorAction(); 
-              } 
-            },
-          ]}
+        <Button
+          onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
+          variant={showAdvancedOptions ? "primary" : "secondary"}
+          title="Toggle advanced options"
         >
-          <div style={buttonStyles.label}>Open Editor</div>
-          <div style={buttonStyles.sublabel}>{isMobile ? 'Edit Rem' : 'New Tab'}</div>
-        </SplitButton>
-
-        {activeHighlightId && (
-          <>
-            <div style={dividerStyle} />
-            <Button
-              onClick={async () => {
-                const highlightRem = await plugin.rem.findOne(activeHighlightId);
-                await highlightRem?.scrollToReaderHighlight();
-              }}
-              style={{
-                backgroundColor: 'var(--rn-clr-yellow, #fbbf24)',
-                color: 'var(--rn-clr-content-primary)',
-                border: '2px solid var(--rn-clr-yellow, #f59e0b)',
-                animation: 'highlightPulse 2s ease-in-out 3',
-                fontWeight: 600,
-              }}
-              title="Scroll to Highlight: Instantly snap view back to highlight's position"
-            >
-              <div style={buttonStyles.label}>Scroll to</div>
-              <div style={buttonStyles.sublabel}>Highlight</div>
-            </Button>
-            <style>{`
-              @keyframes highlightPulse {
-                0%, 100% {
-                  transform: translateY(0) scale(1);
-                  box-shadow: 0 2px 4px rgba(251, 191, 36, 0.3);
-                }
-                50% {
-                  transform: translateY(-2px) scale(1.05);
-                  box-shadow: 0 6px 12px rgba(251, 191, 36, 0.5);
-                }
-              }
-            `}</style>
-          </>
-        )}
-
-        {/* Open URL for Clipper - Only for HTML type rems */}
-        {(remType === 'html' || remType === 'html-highlight') && htmlSourceUrl && (
-          <>
-            <div style={dividerStyle} />
-            <Button
-              onClick={async () => {
-                try {
-                  // Open the URL in a new tab
-                  const newWindow = window.open(htmlSourceUrl, '_blank');
-
-                  // Fallback if popup was blocked
-                  if (!newWindow || newWindow.closed) {
-                    const link = document.createElement('a');
-                    link.href = htmlSourceUrl;
-                    link.target = '_blank';
-                    link.rel = 'noopener noreferrer';
-                    document.body.appendChild(link);
-                    link.click();
-                    setTimeout(() => document.body.removeChild(link), 100);
-                  }
-
-                  // Show a helpful toast
-                  await plugin.app.toast('📎 URL opened! Use RemNote Clipper in the browser to take notes.');
-                } catch (error) {
-                  console.error('Error opening URL:', error);
-                  await plugin.app.toast('Error opening URL');
-                }
-              }}
-              className="clipper-button"
-              style={{
-                backgroundColor: 'var(--rn-clr-blue-light, #dbeafe)',
-                color: 'var(--rn-clr-blue-dark, #1e40af)',
-                border: '2px solid var(--rn-clr-blue, #3b82f6)',
-                animation: 'clipperPulse 2.5s ease-in-out infinite',
-                fontWeight: 600,
-                minWidth: '110px',
-              }}
-              title="Open URL for Web Clipper 📎: Open original URL in a new tab"
-            >
-              <div style={{ ...buttonStyles.label, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <span>📎</span>
-                <span>Open URL</span>
-              </div>
-              <div style={buttonStyles.sublabel}>Use Clipper</div>
-            </Button>
-            <style>{`
-              @keyframes clipperPulse {
-                0%, 100% {
-                  transform: translateY(0) scale(1);
-                  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
-                }
-                50% {
-                  transform: translateY(-2px) scale(1.02);
-                  box-shadow: 0 6px 16px rgba(59, 130, 246, 0.5);
-                }
-              }
-              @keyframes clipperShine {
-                0% {
-                  background-position: -200% center;
-                }
-                100% {
-                  background-position: 200% center;
-                }
-              }
-              .clipper-button {
-                position: relative;
-                overflow: hidden;
-              }
-              .clipper-button::after {
-                content: '';
-                position: absolute;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                background: linear-gradient(
-                  90deg,
-                  transparent 0%,
-                  rgba(255, 255, 255, 0.2) 50%,
-                  transparent 100%
-                );
-                background-size: 200% 100%;
-                animation: clipperShine 3s ease-in-out infinite;
-                pointer-events: none;
-              }
-            `}</style>
-          </>
-        )}
-
-        <SplitButton
-          variant="secondary"
-          onClick={async () => {
-            await plugin.queue.removeCurrentCardFromQueue();
-          }}
-          title="Skip: Move to the next item without recording a review or rescheduling"
-          menuItems={[
-            { label: `Saturday (${daysUntilSaturday}d)`, onClick: () => rescheduleWithoutReview(plugin, incRemInfo, daysUntilSaturday) },
-            { label: `Monday (${daysUntilMonday}d)`, onClick: () => rescheduleWithoutReview(plugin, incRemInfo, daysUntilMonday) },
-          ]}
-        >
-          <div style={buttonStyles.label}>Skip</div>
-        </SplitButton>
-
-        {!isMobile && (
-          <>
-            <div style={dividerStyle} />
-            <span
-              role="button"
-              style={{
-                cursor: 'pointer',
-                fontSize: '18px',
-                opacity: 0.7,
-                padding: '4px',
-                borderRadius: '6px',
-                transition: 'opacity 0.2s, background-color 0.2s',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-              onClick={() => window.open('https://github.com/bjsi/incremental-everything/wiki/Reviewing-Items-in-the-Queue', '_blank')}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.opacity = '1';
-                e.currentTarget.style.backgroundColor = 'var(--rn-clr-background-tertiary)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.opacity = '0.7';
-                e.currentTarget.style.backgroundColor = 'transparent';
-              }}
-              title="Help: Guide to Answer Buttons"
-            >
-              ℹ️
-            </span>
-          </>
-        )}
+          <div style={buttonStyles.label}>⚙️ Options</div>
+        </Button>
       </div>
+
+      {/* Advanced Options Toolbar */}
+      {showAdvancedOptions && (
+        <div style={{ 
+          display: 'flex', 
+          gap: '8px', 
+          flexWrap: 'wrap', 
+          alignItems: 'center', 
+          justifyContent: 'center',
+          backgroundColor: 'var(--rn-clr-background-secondary)',
+          padding: '8px',
+          borderRadius: '8px',
+          border: '1px solid var(--rn-clr-border-primary)'
+        }}>
+          <Button onClick={async () => { await plugin.widget.openPopup('reschedule', { remId: ctx.remId }); }}>
+            <div style={buttonStyles.label}>🗓️ Reschedule</div>
+          </Button>
+
+          <Button onClick={async () => { await plugin.widget.openPopup('priority', { remId: ctx.remId }); }}>
+            <div style={buttonStyles.label}>⚡ Change Priority</div>
+          </Button>
+
+          <Button onClick={async () => { await handleReviewInEditorRem(plugin, rem, remType); }}>
+            <div style={buttonStyles.label}>📝 Review in Editor</div>
+          </Button>
+
+          {activeHighlightId && (
+            <Button onClick={async () => {
+              const highlightRem = await plugin.rem.findOne(activeHighlightId);
+              await highlightRem?.scrollToReaderHighlight();
+            }} style={{ color: 'var(--rn-clr-yellow, #d97706)' }}>
+              <div style={buttonStyles.label}>✨ Scroll to Highlight</div>
+            </Button>
+          )}
+
+          {(remType === 'html' || remType === 'html-highlight') && htmlSourceUrl && (
+            <Button onClick={async () => {
+              try {
+                const newWindow = window.open(htmlSourceUrl, '_blank');
+                if (!newWindow || newWindow.closed) {
+                  const link = document.createElement('a');
+                  link.href = htmlSourceUrl;
+                  link.target = '_blank';
+                  link.rel = 'noopener noreferrer';
+                  document.body.appendChild(link);
+                  link.click();
+                  setTimeout(() => document.body.removeChild(link), 100);
+                }
+                await plugin.app.toast('📎 URL opened! Use RemNote Clipper in the browser to take notes.');
+              } catch (error) {
+                console.error('Error opening URL:', error);
+                await plugin.app.toast('Error opening URL');
+              }
+            }} style={{ color: 'var(--rn-clr-blue, #2563eb)' }}>
+              <div style={buttonStyles.label}>📎 Open Web Clipper URL</div>
+            </Button>
+          )}
+
+          <Button onClick={() => window.open('https://github.com/bjsi/incremental-everything/wiki/Reviewing-Items-in-the-Queue', '_blank')}>
+            <div style={buttonStyles.label}>ℹ️ Help</div>
+          </Button>
+        </div>
+      )}
 
       {/* Priority and Shield Info Bar */}
       {(incRemInfo || (shouldDisplayShield && shieldStatusAsync)) && (
