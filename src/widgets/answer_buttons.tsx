@@ -269,7 +269,48 @@ export function AnswerButtons() {
       }
     : {};
 
+  const openExtractedUrls = async () => {
+    try {
+      const text = await rem.text;
+      const urls: string[] = [];
+      const seen = new Set();
+      
+      const traverseSafe = (node: any) => {
+        if (!node) return;
+        if (typeof node === 'string') {
+          const matches = node.match(/https?:\/\/[^\s"'<\[\]{}()]+/g);
+          if (matches) urls.push(...matches);
+        } else if (typeof node === 'object') {
+          if (seen.has(node)) return;
+          seen.add(node);
+          
+          if (Array.isArray(node)) {
+            node.forEach(traverseSafe);
+          } else {
+            if (node.url && typeof node.url === 'string' && node.url.startsWith('http')) {
+              urls.push(node.url);
+            }
+            Object.values(node).forEach(traverseSafe);
+          }
+        }
+      };
+      
+      traverseSafe(text);
+      const uniqueUrls = Array.from(new Set(urls));
+      
+      for (const url of uniqueUrls) {
+        if (!url.includes('remnote.com')) {
+          window.open(url, '_blank');
+        }
+      }
+    } catch (e) {
+      console.error("Failed to open urls", e);
+    }
+  };
+
   const handleNextClick = async () => {
+    await openExtractedUrls();
+
     if (remType === 'pdf') {
       const pdfRem = await findPDFinRem(plugin, rem);
       if (pdfRem) {
@@ -286,6 +327,7 @@ export function AnswerButtons() {
   };
 
   const runManualNext = async (offsetDays: number) => {
+    await openExtractedUrls();
     await handleNextRepetitionManualOffset(plugin, incRemInfo, offsetDays);
   };
 

@@ -109,6 +109,7 @@ This file has grown into the most heavily customised widget. All changes are add
 | **Open Editor button** | Converted from `Button` to `SplitButton`. On mobile (`isMobile`), calls `plugin.window.openRem(rem)` for in-app navigation instead of `window.open()`. Scheduling runs **before** navigation so the widget is not destroyed before the review is recorded. Dropdown items: "Saturday (Xd)", "Monday (Xd)" — each records a review with the chosen offset then opens the editor. Also receives `warningStyle` when rotation is invalid. |
 | **Skip button** | Converted from `Button` to `SplitButton`. Main click calls `plugin.queue.removeCurrentCardFromQueue()` (advances queue without recording a review). Dropdown items: "Saturday (Xd)", "Monday (Xd)" — each reschedules to the chosen date without recording a review via `rescheduleWithoutReview`. |
 | **Mobile layout** | On mobile (`isMobile`), hides Reschedule, Change Priority, Review in Editor, and the help icon (plus their dividers) to reduce clutter. Only Next, Dismiss, Open Editor, and Skip remain visible. |
+| **Link Auto-Open** | Added `openExtractedUrls` helper function to recursively extract external URLs from `rem.text` and open them in new tabs. Injected into `handleNextClick` and `runManualNext` so links open automatically when clicking Next or Open Editor. |
 
 **Merge rule:** If upstream modifies the answer buttons layout, the Next button component, the Open Editor button, or the Skip area, re-apply our changes: (1) SplitButton with Saturday/Monday dropdown on Next, Open Editor, and Skip, (2) mobile branch in Open Editor via `openEditorAction`, (3) `hasInvalidRotation` warning on Next + Open Editor, (4) `rescheduleWithoutReview` for Skip dropdown items, (5) `!isMobile` guards on Reschedule, Change Priority, Review in Editor, and help icon.
 
@@ -279,3 +280,16 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 - `src/widgets/answer_buttons.tsx` — wrapped Reschedule, Change Priority, Review in Editor, and help icon in `!isMobile` guards to hide them on mobile
 
 **Notes:** Mobile queue was too crowded with all buttons visible. Reduced to four essential actions: Next, Dismiss, Open Editor, Skip. The hidden buttons are desktop power-user features with keyboard shortcuts and are less useful on a phone.
+
+---
+
+### 2026-04-14 — Edit (Auto-open external URLs when advancing queue)
+
+**Upstream commit(s):** N/A (local feature)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes
+**Files touched:**
+- `src/widgets/answer_buttons.tsx` — added `openExtractedUrls` helper function to parse `rem.text` looking for strings matching `http*` or `node.url` string components; injected call into `handleNextClick` and `runManualNext`. Filters out `remnote.com` internal dashboard links.
+
+**Notes:** If a user includes external hyperlinks in the Rem queue (like a Jira ticket or Outlook mail link), they want to open it *and* advance the queue simultaneously. This checks for non-RemNote URLs and automatically pops them open when pressing Next, Sunday/Monday dropdown variants, or Open Editor.
