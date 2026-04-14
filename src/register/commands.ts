@@ -18,6 +18,7 @@ import {
   nextInQueueCommandId,
   currentIncrementalRemTypeKey,
   incremReviewStartTimeKey,
+  remnoteEnvironmentId,
 } from '../lib/consts';
 import { initIncrementalRem } from './powerups';
 import { getIncrementalRemFromRem, handleNextRepetitionClick, getCurrentIncrementalRem } from '../lib/incremental_rem';
@@ -1234,6 +1235,113 @@ export async function registerCommands(plugin: ReactRNPlugin) {
 
       // Advance the queue (updates SRS data + removes current card)
       await handleNextRepetitionClick(plugin, incRemInfo);
+    },
+  });
+
+  // Open Incremental Editor command (Ctrl+G)
+  // Operates identically to the Open Editor answer button: opens links, opens document, advances queue.
+  plugin.app.registerCommand({
+    id: 'open-incremental-editor',
+    name: 'Open Incremental Editor',
+    keyboardShortcut: 'ctrl+g',
+    action: async () => {
+      const url = await plugin.window.getURL();
+
+      if (!url || !url.includes('/flashcards')) {
+        await plugin.app.toast('This command only works in the queue.');
+        return;
+      }
+
+      // Get current incremental rem
+      const currentQueueItem = await plugin.queue.getCurrentCard();
+      let remId = currentQueueItem?.remId || (await plugin.storage.getSession<string>(currentIncRemKey)) || undefined;
+
+      if (!remId) {
+        await plugin.app.toast('No Incremental Rem currently active in the queue.');
+        return;
+      }
+
+      const rem = await plugin.rem.findOne(remId);
+      if (!rem) {
+        await plugin.app.toast('Could not find the Rem.');
+        return;
+      }
+
+      const hasIncPowerup = await rem.hasPowerup(powerupCode);
+      if (!hasIncPowerup) {
+        await plugin.app.toast('This command only works with Incremental Rems, not regular flashcards.');
+        return;
+      }
+
+      const incRemInfo = await getIncrementalRemFromRem(plugin, rem);
+      if (!incRemInfo) {
+        await plugin.app.toast('Could not retrieve Incremental Rem information.');
+        return;
+      }
+
+      // 1. Extract and open any external links
+      try {
+        const urlsToOpen: string[] = [];
+        const hasLinkPowerup = await rem.hasPowerup(BuiltInPowerupCodes.Link);
+        
+        if (hasLinkPowerup) {
+          const urlProp = await rem.getPowerupProperty<BuiltInPowerupCodes.Link>(BuiltInPowerupCodes.Link, 'URL');
+          if (urlProp && typeof urlProp === 'string') {
+            urlsToOpen.push(urlProp);
+          }
+        }
+        
+        const text = await rem.text;
+        const seen = new Set();
+        const traverseSafe = (node: any) => {
+          if (!node) return;
+          if (typeof node === 'string') {
+            const matches = node.match(/https?:\/\/[^\s"'<\[\]{}()]+/g);
+            if (matches) urlsToOpen.push(...matches);
+          } else if (typeof node === 'object') {
+            if (seen.has(node)) return;
+            seen.add(node);
+            if (Array.isArray(node)) node.forEach(traverseSafe);
+            else {
+              if (node.url && typeof node.url === 'string' && node.url.startsWith('http')) urlsToOpen.push(node.url);
+              Object.values(node).forEach(traverseSafe);
+            }
+          }
+        };
+        traverseSafe(text);
+        
+        const uniqueUrls = Array.from(new Set(urlsToOpen)).filter(u => !u.includes('remnote.com'));
+        uniqueUrls.forEach(u => window.open(u, '_blank'));
+      } catch (e) {
+        console.error('Failed to parse URL in Open Editor command', e);
+      }
+
+      // 2. Open Editor mechanics
+      const isMobile = await isMobileDevice(plugin);
+      if (isMobile) {
+        await handleNextRepetitionClick(plugin, incRemInfo);
+        await plugin.window.openRem(rem);
+      } else {
+        const environment = await plugin.settings.getSetting<string>(remnoteEnvironmentId) || 'beta';
+        const remnoteDomain = environment === 'beta' ? 'https://beta.remnote.com' : 'https://www.remnote.com';
+        
+        // Open Editor in New Tab
+        window.open(`${remnoteDomain}/document/${rem._id}`, '_blank');
+        
+        // Handle PDF page history
+        const remType = await plugin.storage.getSession<string | null>(currentIncrementalRemTypeKey);
+        if (remType === 'pdf') {
+          const pdfRem = await findPDFinRem(plugin, rem);
+          if (pdfRem) {
+            const pageKey = getCurrentPageKey(rem._id, pdfRem._id);
+            const currentPage = await plugin.storage.getSynced<number>(pageKey);
+            if (currentPage) await addPageToHistory(plugin, rem._id, pdfRem._id, currentPage);
+          }
+        }
+        
+        // Advance queue
+        await handleNextRepetitionClick(plugin, incRemInfo);
+      }
     },
   });
 

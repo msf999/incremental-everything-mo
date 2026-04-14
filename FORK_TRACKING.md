@@ -75,6 +75,12 @@ rotationSlotCode  = 'rotation'
 
 **Merge rule:** Our slots are appended to the end of the existing `slots` array. If upstream adds new slots in the same array, ensure ours remain at the end. If upstream changes the `registerPowerup` call signature, adapt our additions to match.
 
+### 3.1. `src/register/commands.ts`
+
+**What changed:** Added `open-incremental-editor` macro bound to `Ctrl+G` that replicates the AnswerButtons "Open Editor" behavior (including Auto-Opening external URLs) entirely from keyboard.
+
+**Merge rule:** Retain the `open-incremental-editor` command registration.
+
 ### 4. `src/lib/incremental_rem/types.ts`
 
 **What changed:** Added `rotation: z.string().optional()` to the `IncrementalRem` Zod schema.
@@ -302,3 +308,16 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 - `src/widgets/answer_buttons.tsx` — migrated `openExtractedUrls` to a `useTrackerPlugin` hook (`externalUrls`) so URLs are precomputed during render rather than read asynchronously on click via `await rem.text`. Also precomputed `remnoteDomain`. Added support for extracting URLs from the `BuiltInPowerupCodes.Link` Powerup, which handles bookmark Rems correctly. Finally, completely extracted the URL-opening out of `handleNextClick()` and placed it explicitly as the *very first* synchronous line of code inside the `onClick` and `menuItem` targets of the Open Editor button (removed from Next).
 
 **Notes:** Adding `await rem.text` to `handleNextClick` introduced enough async delay (an RPC hop to RemNote) that the browser's user-gesture token expired by the time `openEditorAction` tried to run `window.open`, causing popups to be silently blocked. Precomputing dependencies and firing `window.open` synchronously on line 1 of the click handler resolves this without triggering browser security filters. Furthermore, when multiple tabs attempt to open simultaneously (the hyperlink AND the editor), browsers strictly block anything past the first. We inverted the order so the hyperlink is guaranteed to consume the trusted interaction token.
+
+---
+
+### 2026-04-14 — Edit (Open Editor Keyboard Shortcut)
+
+**Upstream commit(s):** N/A (local feature)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes
+**Files touched:**
+- `src/register/commands.ts` — added `open-incremental-editor` command triggered by `Ctrl+G`. It directly executes the same compound logic as the "Open Editor" queue UI button (extract/open URLs, jump to document, advance queue). This included a local port of the `externalUrls` parsing code so the keyboard command functions natively without traversing the React UI wrapper.
+
+**Notes:** User requested `Ctrl+G` to explicitly trigger the "Open Editor" flow entirely via keyboard.
