@@ -113,10 +113,10 @@ This file has grown into the most heavily customised widget. All changes are add
 | **`openEditorAction` helper** | Extracted editor-opening logic (mobile in-app nav vs desktop new tab) into a reusable async function, used by the main click and dropdown items. |
 | **Open Editor button** | Converted from `Button` to `SplitButton`. On mobile (`isMobile`), calls `plugin.window.openRem(rem)` for in-app navigation instead of `window.open()`. Scheduling runs **before** navigation so the widget is not destroyed before the review is recorded. Dropdown items: "Saturday (Xd)", "Monday (Xd)" — each records a review with the chosen offset then opens the editor. Also receives `warningStyle` when rotation is invalid. |
 | **Skip button** | Converted from `Button` to `SplitButton`. Main click calls `plugin.queue.removeCurrentCardFromQueue()` (advances queue without recording a review). Dropdown items: "Saturday (Xd)", "Monday (Xd)" — each reschedules to the chosen date without recording a review via `rescheduleWithoutReview`. |
-| **Unified layout (Accordion)** | Removed all `!isMobile` conditional rendering guards. Consolidated the top row into a minimalist 5-button layout: Next, Open Editor, Skip, Dismiss, and `⚙️ Options`. Built a dynamic `showAdvancedOptions` local state variable. Clicking `⚙️ Options` opens a visually clean secondary row positioned underneath to host the power-user buttons: Reschedule, Change Priority, Review in Editor, Scroll to Highlight, URL clipping, and Help. |
+| **Unified layout (Accordion)** | Removed all `!isMobile` conditional rendering guards. Consolidated the top row into a minimalist 6-button layout: Previous, Next, Open Editor, Skip, Dismiss, and `⚙️ Options`. Built a dynamic `showAdvancedOptions` local state variable. Clicking `⚙️ Options` opens a visually clean secondary row positioned underneath to host the power-user buttons: Reschedule, Change Priority, Review in Editor, Scroll to Highlight, URL clipping, and Help. |
 | **Link Auto-Open** | Added `externalUrls` via `useTrackerPlugin` to synchronously extract external URLs from `rem.text` and `BuiltInPowerupCodes.Link` bookmarks. Injected `openExtractedUrlsSynchronously()` explicitly as the very first operation across Open Editor `onClick` handlers to ensure links open cleanly before popup blockers activate. |
 
-**Merge rule:** If upstream modifies the answer buttons layout, the Next button component, the Open Editor button, or the Skip area, re-apply our changes: (1) SplitButton with Saturday/Monday dropdown on Next, Open Editor, and Skip, (2) mobile branch in Open Editor via `openEditorAction`, (3) `hasInvalidRotation` warning on Next + Open Editor, (4) `rescheduleWithoutReview` for Skip dropdown items, (5) accordion-style toggle logic for the power-user button array (`showAdvancedOptions` state block), (6) inject `openExtractedUrlsSynchronously()` at the start of Open Editor click handlers.
+**Merge rule:** If upstream modifies the answer buttons layout, the Next button component, the Open Editor button, or the Skip area, re-apply our changes: (0) Previous button via `goBackToPreviousCard()`, (1) SplitButton with Saturday/Monday dropdown on Next, Open Editor, and Skip, (2) mobile branch in Open Editor via `openEditorAction`, (3) `hasInvalidRotation` warning on Next + Open Editor, (4) `rescheduleWithoutReview` for Skip dropdown items, (5) accordion-style toggle logic for the power-user button array (`showAdvancedOptions` state block), (6) inject `openExtractedUrlsSynchronously()` at the start of Open Editor click handlers.
 
 ### 7. `src/components/buttons/SplitButton.tsx` *(new file)*
 
@@ -333,3 +333,16 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 - `src/widgets/answer_buttons.tsx` — Completely reorganized the buttons row. Unified the mobile and desktop views by removing `!isMobile` constraints. The top-level `buttonRowStyle` now only displays: Next, Open Editor, Skip, Dismiss, and a new `⚙️ Options` toggle button. Clicking `⚙️ Options` conditionally renders a secondary horizontal toolbar row underneath the main row for advanced UI components (Reschedule, Change Priority, Review in Editor, Scroll to Highlight, Web Clipper, Help array).
 
 **Notes:** Consolidating into a clean 5-button footprint prevents the main row from wrapping and reduces visual overload. By moving mobile-excluded buttons into the inline expandable toolbar, we bypassed iframe bounding limitations of floating absolute menus and were able to drop device-specific toggles entirely.
+
+---
+
+### 2026-04-14 — Edit (Queue 'Previous' Button addition)
+
+**Upstream commit(s):** N/A (local feature)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes
+**Files touched:**
+- `src/widgets/answer_buttons.tsx` — Inserted a new explicit `Previous` button into the `buttonRowStyle` layout map directly to the left of the `Next` button.
+
+**Notes:** Wired directly into the native RemNote SDK's `plugin.queue.goBackToPreviousCard()` API to let users rapidly rewind the queue stack inline. Our queue actions row now consists of 6 primary top-level footprint buttons: Previous, Next, Open Editor, Skip, Dismiss, and Options.

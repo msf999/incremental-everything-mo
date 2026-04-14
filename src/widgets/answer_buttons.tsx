@@ -462,6 +462,16 @@ export function AnswerButtons() {
     >
       {/* Single row of buttons */}
       <div style={buttonRowStyle}>
+        <Button
+          variant="secondary"
+          onClick={async () => {
+            await plugin.queue.goBackToPreviousCard();
+          }}
+          title="Previous: Go back to the previous card in the queue"
+        >
+          <div style={buttonStyles.label}>Previous</div>
+        </Button>
+
         <SplitButton
           variant="primary"
           onClick={handleNextClick}
