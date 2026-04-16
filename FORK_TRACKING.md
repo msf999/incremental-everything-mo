@@ -77,9 +77,9 @@ rotationSlotCode  = 'rotation'
 
 ### 3.1. `src/register/commands.ts`
 
-**What changed:** Added `open-incremental-editor` macro bound to `Ctrl+G` that replicates the AnswerButtons "Open Editor" behavior (including Auto-Opening external URLs) entirely from keyboard.
+**What changed:** Added `open-incremental-editor` macro bound to `Ctrl+G` that replicates the AnswerButtons "Open Editor" behavior from the keyboard. External `http(s)` tabs open **only** when the visible title ends with **`(OpenLink)`** (case-sensitive; see `open_editor_link_tag.ts`). If `(OpenLink)` **and** at least one extracted URL: open those URL tab(s) only and **do not** open `remnote.com/document/...` or in-app `openRem`. If the title does **not** end with `(OpenLink)`: open **only** the Rem document (then advance); extracted URLs are not opened in browser tabs.
 
-**Merge rule:** Retain the `open-incremental-editor` command registration.
+**Merge rule:** Retain the `open-incremental-editor` command registration, `remTitleEndsWithOpenLinkTag`, and the guarded URL-opening + skip-doc logic.
 
 ### 4. `src/lib/incremental_rem/types.ts`
 
@@ -114,9 +114,20 @@ This file has grown into the most heavily customised widget. All changes are add
 | **Open Editor button** | Converted from `Button` to `SplitButton`. On mobile (`isMobile`), calls `plugin.window.openRem(rem)` for in-app navigation instead of `window.open()`. Scheduling runs **before** navigation so the widget is not destroyed before the review is recorded. Dropdown items: "Saturday (Xd)", "Monday (Xd)" — each records a review with the chosen offset then opens the editor. Also receives `warningStyle` when rotation is invalid. |
 | **Skip button** | Converted from `Button` to `SplitButton`. Main click calls `plugin.queue.removeCurrentCardFromQueue()` (advances queue without recording a review). Dropdown items: "Saturday (Xd)", "Monday (Xd)" — each reschedules to the chosen date without recording a review via `rescheduleWithoutReview`. |
 | **Unified layout (Accordion)** | Removed all `!isMobile` conditional rendering guards. Consolidated the top row into a minimalist 6-button layout: Previous, Next, Open Editor, Skip, Dismiss, and `⚙️ Options`. Built a dynamic `showAdvancedOptions` local state variable. Clicking `⚙️ Options` opens a visually clean secondary row positioned underneath to host the power-user buttons: Reschedule, Change Priority, Review in Editor, Scroll to Highlight, URL clipping, and Help. |
-| **Link Auto-Open** | Added `externalUrls` via `useTrackerPlugin` to synchronously extract external URLs from `rem.text` and `BuiltInPowerupCodes.Link` bookmarks. Injected `openExtractedUrlsSynchronously()` explicitly as the very first operation across Open Editor `onClick` handlers to ensure links open cleanly before popup blockers activate. |
+| **Link Auto-Open (guarded)** | Added `externalUrls` via `useTrackerPlugin` (extract from `rem.text`, `rem.backText`, Link powerup). `openExternalLinkTabsWhenOpenLinkTagged()` runs **first** on Open Editor clicks (sync `window.open` while the gesture is valid) but **only** when the title ends with **`(OpenLink)`**. If the title does **not** end with `(OpenLink)`, only the Rem document opens — external URLs are not opened in new tabs. |
+| **Title `(OpenLink)` → external tabs, no Rem doc** | `remTitleEndsWithOpenLinkTag` (`open_editor_link_tag.ts`) **and** non-empty `externalUrls`: `performOpenEditorFlow` skips `openEditorAction` so only external URL(s) open (one tab per URL). If the title has `(OpenLink)` but no URL was extracted, the Rem document still opens. Saturday/Monday dropdown paths use the same rules. |
 
-**Merge rule:** If upstream modifies the answer buttons layout, the Next button component, the Open Editor button, or the Skip area, re-apply our changes: (0) Previous button via `goBackToPreviousCard()`, (1) SplitButton with Saturday/Monday dropdown on Next, Open Editor, and Skip, (2) mobile branch in Open Editor via `openEditorAction`, (3) `hasInvalidRotation` warning on Next + Open Editor, (4) `rescheduleWithoutReview` for Skip dropdown items, (5) accordion-style toggle logic for the power-user button array (`showAdvancedOptions` state block), (6) inject `openExtractedUrlsSynchronously()` at the start of Open Editor click handlers.
+**Merge rule:** If upstream modifies the answer buttons layout, the Next button component, the Open Editor button, or the Skip area, re-apply our changes: (0) Previous button via `goBackToPreviousCard()`, (1) SplitButton with Saturday/Monday dropdown on Next, Open Editor, and Skip, (2) mobile branch in Open Editor via `openEditorAction`, (3) `hasInvalidRotation` warning on Next + Open Editor, (4) `rescheduleWithoutReview` for Skip dropdown items, (5) accordion-style toggle logic for the power-user button array (`showAdvancedOptions` state block), (6) inject `openExternalLinkTabsWhenOpenLinkTagged()` at the start of Open Editor click handlers (URLs only when `(OpenLink)`), (7) skip `openEditorAction` when the title ends with `(OpenLink)` and `externalUrls` is non-empty.
+
+### 6.1. `src/lib/open_editor_link_tag.ts` *(new file)*
+
+**What changed:** Shared `remTitleEndsWithOpenLinkTag()` helper: checks **front and back** (`rem.text` / `rem.backText`). First walks rich text with `richTextVisibleForLinkSuffix()` (strings + `.text` + nested arrays; **does not** append raw `url` so hyperlinked titles like `Article (OpenLink)` still match), then falls back to `safeRemTextToString` + regex **`/\(\s*OpenLink\s*\)\s*$/`** (**case-sensitive** — must be exactly `OpenLink` inside the parens). Also exports `extractExternalHttpUrlsFromRem()` (scans front + back). Used by answer buttons and `Ctrl+G`.
+
+### 6.2. `docs/open-editor-behavior.md` *(new file)*
+
+**What changed:** Human-readable description of Open Editor / Ctrl+G behavior (including `(OpenLink)` rules and URL vs document tab policy).
+
+**Merge rule:** Keep in sync when editing open-editor flow.
 
 ### 7. `src/components/buttons/SplitButton.tsx` *(new file)*
 
@@ -297,6 +308,8 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 **Files touched:**
 - `src/widgets/answer_buttons.tsx` — added `openExtractedUrls` helper function to parse `rem.text` looking for strings matching `http*` or `node.url` string components; injected call into `handleNextClick` and `runManualNext`. Filters out `remnote.com` internal dashboard links.
 
+**Notes:** **Superseded in behavior** by **2026-04-16 — Fix / Edit (Open Editor / Ctrl+G: `(OpenLink)` suffix and tab policy)**. URL extraction and where it is invoked evolved; see Current Deviations and that entry for when external tabs open today.
+
 ### 2026-04-14 — Fix (Open Editor blocked by popup blockers)
 
 **Upstream commit(s):** N/A (local fix)
@@ -307,6 +320,8 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 - `src/widgets/answer_buttons.tsx` — migrated `openExtractedUrls` to a `useTrackerPlugin` hook (`externalUrls`) so URLs are precomputed during render rather than read asynchronously on click via `await rem.text`. Also precomputed `remnoteDomain`. Added support for extracting URLs from the `BuiltInPowerupCodes.Link` Powerup, which handles bookmark Rems correctly. Finally, completely extracted the URL-opening out of `handleNextClick()` and placed it explicitly as the *very first* synchronous line of code inside the `onClick` and `menuItem` targets of the Open Editor button (removed from Next).
 
 **Notes:** Adding `await rem.text` to `handleNextClick` introduced enough async delay (an RPC hop to RemNote) that the browser's user-gesture token expired by the time `openEditorAction` tried to run `window.open`, causing popups to be silently blocked. Precomputing dependencies and firing `window.open` synchronously on line 1 of the click handler resolves this without triggering browser security filters. Furthermore, when multiple tabs attempt to open simultaneously (the hyperlink AND the editor), browsers strictly block anything past the first. We inverted the order so the hyperlink is guaranteed to consume the trusted interaction token.
+
+**Superseded in policy** by **2026-04-16** — external URL tabs are no longer opened on every Open Editor click; they open only when the title ends with `(OpenLink)` (see that entry and Current Deviations). The synchronous-first `window.open` approach still applies whenever URL tabs *are* opened.
 
 ---
 
@@ -320,6 +335,8 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 - `src/register/commands.ts` — added `open-incremental-editor` command triggered by `Ctrl+G`. It directly executes the same compound logic as the "Open Editor" queue UI button (extract/open URLs, jump to document, advance queue). This included a local port of the `externalUrls` parsing code so the keyboard command functions natively without traversing the React UI wrapper.
 
 **Notes:** User requested `Ctrl+G` to explicitly trigger the "Open Editor" flow entirely via keyboard.
+
+**Superseded in policy** by **2026-04-16** — `Ctrl+G` now follows the same `(OpenLink)` / document-only URL rules as the Open Editor button (see that changelog entry).
 
 ---
 
@@ -346,3 +363,19 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 - `src/widgets/answer_buttons.tsx` — Inserted a new explicit `Previous` button into the `buttonRowStyle` layout map directly to the left of the `Next` button.
 
 **Notes:** Wired directly into the native RemNote SDK's `plugin.queue.goBackToPreviousCard()` API to let users rapidly rewind the queue stack inline. Our queue actions row now consists of 6 primary top-level footprint buttons: Previous, Next, Open Editor, Skip, Dismiss, and Options.
+
+---
+
+### 2026-04-16 — Fix / Edit (Open Editor / Ctrl+G: `(OpenLink)` suffix and tab policy)
+
+**Upstream commit(s):** N/A (local fix + behavior tweak)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`npm run build`)
+**Files touched:**
+- `src/lib/open_editor_link_tag.ts` — `remTitleEndsWithOpenLinkTag()`; visible title must end with **`(OpenLink)`** (case-sensitive `OpenLink`; optional spaces inside parens). Checks front + back; rich-text walk before plain fallback.
+- `src/widgets/answer_buttons.tsx` — `remTitleEndsWithOpenLinkTagState`, `openExternalLinkTabsWhenOpenLinkTagged()` (opens URL tabs **only** when `(OpenLink)`), `shouldSkipRemDocumentForOpenEditor` (requires `(OpenLink)` + non-empty `externalUrls`)
+- `src/register/commands.ts` — same rules for `Ctrl+G`
+- `docs/open-editor-behavior.md` — documents behavior
+
+**Notes:** **Supersedes** the Open Editor / external-URL behavior logged under **2026-04-14** (Auto-open URLs, popup-blocker fix, Ctrl+G); those entries now note that policy was superseded here. **(1)** Suffix renamed from `(Link)` to **`(OpenLink)`** and matching is **case-sensitive**. **(2)** If the title does **not** end with `(OpenLink)`, Open Editor opens **only** the Rem document (external URLs are not opened in new tabs). **(3)** If `(OpenLink)` **and** at least one extracted URL: open those URL tab(s) and **skip** the Rem document tab. **(4)** If `(OpenLink)` but extraction finds no URLs, the Rem document still opens. Multiple extracted URLs produce multiple tabs. **(5)** `richText.toString` alone could miss a trailing suffix when the title contains an inline hyperlink; detection walks visible rich-text characters first.

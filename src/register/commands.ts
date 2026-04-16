@@ -48,6 +48,7 @@ import {
 import { loadCardPriorityCache } from '../lib/card_priority/cache';
 import { getPerformanceMode } from '../lib/utils';
 import { handleReviewInEditorRem } from '../lib/review_actions';
+import { remTitleEndsWithOpenLinkTag, extractExternalHttpUrlsFromRem } from '../lib/open_editor_link_tag';
 
 export async function registerCommands(plugin: ReactRNPlugin) {
   const createExtract = async (): Promise<PluginRem | PluginRem[] | undefined> => {
@@ -1239,7 +1240,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
   });
 
   // Open Incremental Editor command (Ctrl+G)
-  // Operates identically to the Open Editor answer button: opens links, opens document, advances queue.
+  // Same as Open Editor answer button: open external URLs, optionally open the Rem document, advance queue.
   plugin.app.registerCommand({
     id: 'open-incremental-editor',
     name: 'Open Incremental Editor',
@@ -1279,67 +1280,46 @@ export async function registerCommands(plugin: ReactRNPlugin) {
         return;
       }
 
-      // 1. Extract and open any external links
+      const titleEndsWithOpenLinkTag = await remTitleEndsWithOpenLinkTag(plugin, rem);
+
+      let uniqueUrls: string[] = [];
       try {
-        const urlsToOpen: string[] = [];
-        const hasLinkPowerup = await rem.hasPowerup(BuiltInPowerupCodes.Link);
-        
-        if (hasLinkPowerup) {
-          const urlProp = await rem.getPowerupProperty<BuiltInPowerupCodes.Link>(BuiltInPowerupCodes.Link, 'URL');
-          if (urlProp && typeof urlProp === 'string') {
-            urlsToOpen.push(urlProp);
-          }
+        uniqueUrls = await extractExternalHttpUrlsFromRem(plugin, rem);
+        if (titleEndsWithOpenLinkTag) {
+          uniqueUrls.forEach((u) => window.open(u, '_blank'));
         }
-        
-        const text = await rem.text;
-        const seen = new Set();
-        const traverseSafe = (node: any) => {
-          if (!node) return;
-          if (typeof node === 'string') {
-            const matches = node.match(/https?:\/\/[^\s"'<\[\]{}()]+/g);
-            if (matches) urlsToOpen.push(...matches);
-          } else if (typeof node === 'object') {
-            if (seen.has(node)) return;
-            seen.add(node);
-            if (Array.isArray(node)) node.forEach(traverseSafe);
-            else {
-              if (node.url && typeof node.url === 'string' && node.url.startsWith('http')) urlsToOpen.push(node.url);
-              Object.values(node).forEach(traverseSafe);
-            }
-          }
-        };
-        traverseSafe(text);
-        
-        const uniqueUrls = Array.from(new Set(urlsToOpen)).filter(u => !u.includes('remnote.com'));
-        uniqueUrls.forEach(u => window.open(u, '_blank'));
       } catch (e) {
         console.error('Failed to parse URL in Open Editor command', e);
       }
 
-      // 2. Open Editor mechanics
+      const skipRemDocument = titleEndsWithOpenLinkTag && uniqueUrls.length > 0;
       const isMobile = await isMobileDevice(plugin);
+
       if (isMobile) {
         await handleNextRepetitionClick(plugin, incRemInfo);
-        await plugin.window.openRem(rem);
+        if (!skipRemDocument) {
+          await plugin.window.openRem(rem);
+        }
       } else {
-        const environment = await plugin.settings.getSetting<string>(remnoteEnvironmentId) || 'beta';
-        const remnoteDomain = environment === 'beta' ? 'https://beta.remnote.com' : 'https://www.remnote.com';
-        
-        // Open Editor in New Tab
-        window.open(`${remnoteDomain}/document/${rem._id}`, '_blank');
-        
-        // Handle PDF page history
-        const remType = await plugin.storage.getSession<string | null>(currentIncrementalRemTypeKey);
-        if (remType === 'pdf') {
-          const pdfRem = await findPDFinRem(plugin, rem);
-          if (pdfRem) {
-            const pageKey = getCurrentPageKey(rem._id, pdfRem._id);
-            const currentPage = await plugin.storage.getSynced<number>(pageKey);
-            if (currentPage) await addPageToHistory(plugin, rem._id, pdfRem._id, currentPage);
+        if (!skipRemDocument) {
+          const environment = (await plugin.settings.getSetting<string>(remnoteEnvironmentId)) || 'beta';
+          const remnoteDomain = environment === 'beta' ? 'https://beta.remnote.com' : 'https://www.remnote.com';
+
+          window.open(`${remnoteDomain}/document/${rem._id}`, '_blank');
+
+          const remType = await plugin.storage.getSession<string | null>(currentIncrementalRemTypeKey);
+          if (remType === 'pdf') {
+            const pdfRem = await findPDFinRem(plugin, rem);
+            if (pdfRem) {
+              const pageKey = getCurrentPageKey(rem._id, pdfRem._id);
+              const currentPage = await plugin.storage.getSynced<number>(pageKey);
+              if (currentPage) {
+                await addPageToHistory(plugin, rem._id, pdfRem._id, currentPage);
+              }
+            }
           }
         }
-        
-        // Advance queue
+
         await handleNextRepetitionClick(plugin, incRemInfo);
       }
     },

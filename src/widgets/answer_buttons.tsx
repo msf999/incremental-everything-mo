@@ -5,7 +5,6 @@ import {
   WidgetLocation,
   RNPlugin,
   PluginRem,
-  BuiltInPowerupCodes,
 } from '@remnote/plugin-sdk';
 import React, { useMemo, useState } from 'react';
 import * as _ from 'remeda';
@@ -24,10 +23,10 @@ import {
   displayPriorityShieldId,
   displayWeightedShieldId,
   seenRemInSessionKey,
-  remnoteEnvironmentId,
   queueSessionCacheKey,
   priorityCalcScopeRemIdsKey,
   incremReviewStartTimeKey,
+  remnoteEnvironmentId,
   isMobileDeviceKey,
 } from '../lib/consts';
 import { getIncrementalRemFromRem, handleNextRepetitionClick, handleNextRepetitionManualOffset, rescheduleWithoutReview, updateReviewRemData, getRotationIntervalMs } from '../lib/incremental_rem';
@@ -35,6 +34,7 @@ import { removeIncrementalRemCache } from '../lib/incremental_rem/cache';
 import { IncrementalRem } from '../lib/incremental_rem';
 import { percentileToHslColor, calculateRelativePercentile, calculateVolumeBasedPercentile, calculateWeightedShield, PERFORMANCE_MODE_LIGHT } from '../lib/utils';
 import { safeRemTextToString, findPDFinRem, addPageToHistory, getCurrentPageKey, getDescendantsToDepth } from '../lib/pdfUtils';
+import { remTitleEndsWithOpenLinkTag, extractExternalHttpUrlsFromRem } from '../lib/open_editor_link_tag';
 import { QueueSessionCache, setCardPriority } from '../lib/card_priority';
 import { WeightedShieldTooltip } from '../components';
 import { shouldUseLightMode } from '../lib/mobileUtils';
@@ -212,51 +212,17 @@ export function AnswerButtons() {
   const externalUrls = useTrackerPlugin(async (rp) => {
     if (!baseData?.rem) return [];
     try {
-      const urls: string[] = [];
-
-      // 1. Check if the rem itself operates as a hyperlink (has the Link powerup)
-      const hasLinkPowerup = await baseData.rem.hasPowerup(BuiltInPowerupCodes.Link);
-      if (hasLinkPowerup) {
-        const urlProp = await baseData.rem.getPowerupProperty<BuiltInPowerupCodes.Link>(
-          BuiltInPowerupCodes.Link,
-          'URL'
-        );
-        if (urlProp && typeof urlProp === 'string') {
-          urls.push(urlProp);
-        }
-      }
-
-      // 2. Scan the text array for any inline links
-      const text = await baseData.rem.text;
-      const seen = new Set();
-      
-      const traverseSafe = (node: any) => {
-        if (!node) return;
-        if (typeof node === 'string') {
-          const matches = node.match(/https?:\/\/[^\s"'<\[\]{}()]+/g);
-          if (matches) urls.push(...matches);
-        } else if (typeof node === 'object') {
-          if (seen.has(node)) return;
-          seen.add(node);
-          
-          if (Array.isArray(node)) {
-            node.forEach(traverseSafe);
-          } else {
-            if (node.url && typeof node.url === 'string' && node.url.startsWith('http')) {
-              urls.push(node.url);
-            }
-            Object.values(node).forEach(traverseSafe);
-          }
-        }
-      };
-      
-      traverseSafe(text);
-      const extracted = Array.from(new Set(urls)).filter(url => !url.includes('remnote.com'));
-      return extracted;
+      return await extractExternalHttpUrlsFromRem(rp, baseData.rem);
     } catch (e) {
       console.error('[externalUrls] error:', e);
       return [];
     }
+  }, [baseData?.rem]);
+
+  /** Plain-text title ends with "(OpenLink)" (case-sensitive) — with extracted URLs, Open Editor skips the Rem document tab. */
+  const remTitleEndsWithOpenLinkTagState = useTrackerPlugin(async (rp) => {
+    if (!baseData?.rem) return false;
+    return remTitleEndsWithOpenLinkTag(rp, baseData.rem);
   }, [baseData?.rem]);
 
   const remnoteDomain = useTrackerPlugin(async (rp) => {
@@ -326,10 +292,6 @@ export function AnswerButtons() {
       }
     : {};
 
-  const openExtractedUrlsSynchronously = () => {
-    externalUrls?.forEach(url => window.open(url, '_blank'));
-  };
-
   const handleNextClick = async () => {
     if (remType === 'pdf') {
       const pdfRem = await findPDFinRem(plugin, rem);
@@ -348,6 +310,12 @@ export function AnswerButtons() {
 
   const runManualNext = async (offsetDays: number) => {
     await handleNextRepetitionManualOffset(plugin, incRemInfo, offsetDays);
+  };
+
+  /** External http(s) tabs only when title ends with "(OpenLink)" — otherwise Open Editor opens the Rem document only. */
+  const openExternalLinkTabsWhenOpenLinkTagged = () => {
+    if (remTitleEndsWithOpenLinkTagState !== true) return;
+    externalUrls?.forEach((url) => window.open(url, '_blank'));
   };
 
   const openEditorAction = async () => {
@@ -371,6 +339,22 @@ export function AnswerButtons() {
     } catch (error) {
       console.error('Error opening document:', error);
       plugin.app.toast('Error opening document');
+    }
+  };
+
+  const shouldSkipRemDocumentForOpenEditor =
+    remTitleEndsWithOpenLinkTagState === true && (externalUrls?.length ?? 0) > 0;
+
+  /** "(OpenLink)" + URLs: external tabs, no Rem doc; else Rem document only, then advance. */
+  const performOpenEditorFlow = async () => {
+    const skipRemDocument = shouldSkipRemDocumentForOpenEditor;
+    openExternalLinkTabsWhenOpenLinkTagged();
+    if (isMobile) {
+      await handleNextClick();
+      if (!skipRemDocument) await openEditorAction();
+    } else {
+      if (!skipRemDocument) await openEditorAction();
+      await handleNextClick();
     }
   };
 
@@ -493,36 +477,30 @@ export function AnswerButtons() {
         </SplitButton>
 
         <SplitButton
-          onClick={async () => {
-            openExtractedUrlsSynchronously();
-            if (isMobile) {
-              await handleNextClick();
-              await openEditorAction();
-            } else {
-              openEditorAction();
-              await handleNextClick();
-            }
-          }}
+          onClick={performOpenEditorFlow}
           style={{ minWidth: '100px', ...warningStyle }}
-          title={isMobile
-            ? "Open Editor: Navigate to this Rem in the editor, then advance the queue"
-            : "Open Editor in New Tab: Open document in a new tab, then advance the queue (same as Next)"
+          title={
+            shouldSkipRemDocumentForOpenEditor
+              ? 'Open external link(s) in new tab(s), then advance the queue (title ends with "(OpenLink)" — no Rem document tab)'
+              : isMobile
+                ? 'Open Editor: Open this Rem in the editor, then advance (external URLs open in tabs only when the title ends with "(OpenLink)")'
+                : 'Open Editor: Open the Rem document in a new tab, then advance (external URLs open in tabs only when the title ends with "(OpenLink)")'
           }
           menuItems={[
-            { label: `Saturday (${daysUntilSaturday}d)`, onClick: async () => { 
-                openExtractedUrlsSynchronously();
-                if (!isMobile) openEditorAction(); 
-                await runManualNext(daysUntilSaturday); 
-                if (isMobile) await openEditorAction(); 
-              } 
-            },
-            { label: `Monday (${daysUntilMonday}d)`, onClick: async () => { 
-                openExtractedUrlsSynchronously();
-                if (!isMobile) openEditorAction(); 
-                await runManualNext(daysUntilMonday); 
-                if (isMobile) await openEditorAction(); 
-              } 
-            },
+            { label: `Saturday (${daysUntilSaturday}d)`, onClick: async () => {
+                openExternalLinkTabsWhenOpenLinkTagged();
+                const skipRem = shouldSkipRemDocumentForOpenEditor;
+                if (!isMobile && !skipRem) await openEditorAction();
+                await runManualNext(daysUntilSaturday);
+                if (isMobile && !skipRem) await openEditorAction();
+              } },
+            { label: `Monday (${daysUntilMonday}d)`, onClick: async () => {
+                openExternalLinkTabsWhenOpenLinkTagged();
+                const skipRem = shouldSkipRemDocumentForOpenEditor;
+                if (!isMobile && !skipRem) await openEditorAction();
+                await runManualNext(daysUntilMonday);
+                if (isMobile && !skipRem) await openEditorAction();
+              } },
           ]}
         >
           <div style={buttonStyles.label}>Open Editor</div>
