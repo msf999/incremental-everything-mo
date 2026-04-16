@@ -58,6 +58,8 @@ export const nextInQueueCommandId = 'next-in-queue';
 
 // --- Keys for our successful fixes ---
 export const queueLayoutFixId = 'incremental-everything-queue-layout-fix';
+export const queueHideElementsId = 'incremental-everything-queue-hide-elements';
+export const collapseTopBarCssId = 'incremental-everything-collapse-top-bar'; // CSS registration ID
 export const incrementalQueueActiveKey = 'incremental-queue-active';
 export const activeHighlightIdKey = 'active-highlight-id-key';
 export const currentIncrementalRemTypeKey = 'current-incremental-rem-type-key';
@@ -88,6 +90,7 @@ export const remnoteEnvironmentId = 'remnote-environment';
 export const noIncRemTimerKey = 'no-inc-rem-timer-end';
 export const noIncRemMenuItemId = 'no-inc-rem-15-min';
 export const noIncRemTimerWidgetId = 'no-inc-rem-timer-widget';
+export const incRemDisabledDeviceKey = 'inc-rem-disabled-device';
 
 export const cardPriorityCacheRefreshKey = 'cardPriorityCacheRefreshKey';
 // Pending priority save job: written by priority_light popup before closing,

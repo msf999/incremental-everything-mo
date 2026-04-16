@@ -43,7 +43,7 @@ export function registerWidgets(plugin: ReactRNPlugin) {
   plugin.app.registerWidget('batch_card_priority', WidgetLocation.Popup, {
     dimensions: {
       width: 1000,
-      height: 'auto',
+      height: 1100,
     },
   });
 
@@ -158,7 +158,7 @@ export function registerWidgets(plugin: ReactRNPlugin) {
 
   // Register incremental rem list popup
   plugin.app.registerWidget('inc_rem_list', WidgetLocation.Popup, {
-    dimensions: { height: 600, width: 800 },
+    dimensions: { height: 800, width: 1000 },
   });
 
   // Register incremental rem main view - comprehensive view with filters
@@ -215,6 +215,38 @@ export function registerWidgets(plugin: ReactRNPlugin) {
   plugin.app.registerWidget('weighted_shield_popup', WidgetLocation.Popup, {
     dimensions: {
       width: '560px',
+      height: 700,
+    },
+  });
+
+  // PDF Bookmark Flow
+  plugin.app.registerWidget('pdf_bookmark_toolbar', WidgetLocation.PDFHighlightToolbarLocation, {
+    dimensions: {
+      width: 'auto',
+      height: 'auto',
+    },
+  });
+
+  // Create Incremental Rem Toolbar Button
+  plugin.app.registerWidget('create_inc_rem_toolbar', WidgetLocation.PDFHighlightToolbarLocation, {
+    dimensions: {
+      width: 'auto',
+      height: 'auto',
+    },
+  });
+
+  // Toggle Incremental Rem Toolbar Button
+  plugin.app.registerWidget('toggle_incremental_toolbar', WidgetLocation.PDFHighlightToolbarLocation, {
+    dimensions: {
+      width: 'auto',
+      height: 'auto',
+    },
+  });
+
+
+  plugin.app.registerWidget('pdf_bookmark_popup', WidgetLocation.Popup, {
+    dimensions: {
+      width: '350px',
       height: 'auto',
     },
   });

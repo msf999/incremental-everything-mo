@@ -27,6 +27,7 @@ import {
   createTreeNode,
 } from '../lib/hierarchical_parent_selector/treeHelpers';
 import { createRemUnderParent } from '../lib/highlightActions';
+import { getIncrementalPageRange } from '../lib/pdfUtils';
 
 // ============================================================================
 // STYLES
@@ -198,16 +199,19 @@ interface TreeNodeRowProps {
   node: ParentTreeNode;
   isSelected: boolean;
   isLoadingChildren: boolean;
+  isSuggested: boolean;
   onSelect: () => void;
   onToggleExpand: () => void;
   onMouseEnter: () => void;
   onAddChild: () => void;
 }
 
-const TreeNodeRow = React.forwardRef<HTMLDivElement, TreeNodeRowProps>(({
+const TreeNodeRow = React.forwardRef<HTMLDivElement, TreeNodeRowProps>((
+{
   node,
   isSelected,
   isLoadingChildren,
+  isSuggested,
   onSelect,
   onToggleExpand,
   onMouseEnter,
@@ -228,9 +232,13 @@ const TreeNodeRow = React.forwardRef<HTMLDivElement, TreeNodeRowProps>(({
         cursor: 'pointer',
         backgroundColor: isSelected
           ? 'var(--rn-clr-background-tertiary)'
+          : isSuggested
+          ? 'var(--rn-clr-blue-light, #eff6ff)'
           : 'transparent',
         borderLeft: isSelected
           ? '3px solid #3b82f6'
+          : isSuggested
+          ? '3px solid var(--rn-clr-blue, #3b82f6)'
           : '3px solid transparent',
         transition: 'background-color 0.1s ease',
       }}
@@ -251,16 +259,23 @@ const TreeNodeRow = React.forwardRef<HTMLDivElement, TreeNodeRowProps>(({
         </span>
       )}
 
+      {isSuggested && !isSelected && (
+        <span style={{ fontSize: '11px', color: 'var(--rn-clr-blue, #3b82f6)' }} title="Suggested: this rem's page range contains the highlighted page">
+          ★
+        </span>
+      )}
+
       <span
         style={{
           flex: 1,
           fontSize: '13px',
-          color: 'var(--rn-clr-content-primary)',
+          color: isSuggested && !isSelected ? 'var(--rn-clr-blue, #1e40af)' : 'var(--rn-clr-content-primary)',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
+          fontWeight: isSuggested ? 600 : 400,
         }}
-        title={node.name}
+        title={isSuggested ? `Suggested — its page range contains page ${node.name}` : node.name}
       >
         {node.name.length > 50 ? `${node.name.slice(0, 50)}...` : node.name}
       </span>
@@ -416,6 +431,7 @@ function ParentSelectorWidget() {
   const [isCreating, setIsCreating] = useState(false);
   const [loadingNodeId, setLoadingNodeId] = useState<RemId | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [suggestedRemId, setSuggestedRemId] = useState<RemId | null>(null);
   const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
   const hasInitiallyScrolled = useRef(false);
   const listContainerRef = useRef<HTMLDivElement>(null);
@@ -462,23 +478,23 @@ function ParentSelectorWidget() {
   // Scroll to selected item whenever selectedIndex changes or after initialization
   useEffect(() => {
     if (!isInitialized || itemRefs.current.length === 0) return;
-    
+
     let attempts = 0;
     const maxAttempts = 20; // Allow up to 1 second of retries to outlast UI animations
-    
+
     // We use a retry mechanism because inside the sandboxed iframe, the DOM layout 
     // might not have non-zero dimensions immediately after the render commit.
     const tryScroll = () => {
       const selectedEl = itemRefs.current[selectedIndex];
       const container = listContainerRef.current;
-      
-      console.log(`[ParentSelector:Scroll] attempt ${attempts} at index ${selectedIndex}`, { 
-        hasScrolled: hasInitiallyScrolled.current, 
-        elFound: !!selectedEl, 
+
+      console.log(`[ParentSelector:Scroll] attempt ${attempts} at index ${selectedIndex}`, {
+        hasScrolled: hasInitiallyScrolled.current,
+        elFound: !!selectedEl,
         containerFound: !!container,
         clientHeight: selectedEl?.clientHeight,
       });
-      
+
       if (selectedEl && container) {
         // If layout hasn't populated, wait for next paint
         if (selectedEl.clientHeight === 0 && attempts < maxAttempts) {
@@ -491,7 +507,7 @@ function ParentSelectorWidget() {
           // Manual nearest block logic for keyboard navigation
           const elRect = selectedEl.getBoundingClientRect();
           const containerRect = container.getBoundingClientRect();
-          
+
           if (elRect.top < containerRect.top) {
             container.scrollTop -= (containerRect.top - elRect.top);
           } else if (elRect.bottom > containerRect.bottom) {
@@ -502,13 +518,13 @@ function ParentSelectorWidget() {
           // We use offsetTop because getBoundingClientRect gives incorrect warped 
           // coordinates while the popup is scaling/animating into view natively.
           const scrollOffset = selectedEl.offsetTop - container.clientHeight / 2 + selectedEl.clientHeight / 2;
-          
+
           console.log(`[ParentSelector:Scroll] Initial load centering:`, {
-             offsetTop: selectedEl.offsetTop,
-             containerHeight: container.clientHeight,
-             calcScrollOffset: scrollOffset
+            offsetTop: selectedEl.offsetTop,
+            containerHeight: container.clientHeight,
+            calcScrollOffset: scrollOffset
           });
-          
+
           container.scrollTop = scrollOffset;
           hasInitiallyScrolled.current = true;
         }
@@ -517,10 +533,10 @@ function ParentSelectorWidget() {
         setTimeout(tryScroll, 50);
       }
     };
-    
+
     // Wait slightly bit initially to allow DOM to attach inside the plugin iframe
     const initialTimer = setTimeout(tryScroll, 100);
-    
+
     return () => clearTimeout(initialTimer);
   }, [selectedIndex, isInitialized, displayList.length]);
 
@@ -578,6 +594,40 @@ function ParentSelectorWidget() {
         }
       } else {
         console.log('[ParentSelector:Widget] No last destination to expand to');
+
+        // No prior memory: suggest the tightest-range IncRem containing the highlight page
+        const pageIndex = (contextData as any).highlightPageIndex as number | null | undefined;
+        if (pageIndex != null && contextData.pdfRemId) {
+          try {
+            let bestRemId: RemId | null = null;
+            let bestSize = Infinity;
+
+            const flatAll = flattenTreeForDisplay(initialTree);
+            for (const node of flatAll) {
+              if (!node.isIncremental) continue;
+              const range = await getIncrementalPageRange(plugin, node.remId, contextData.pdfRemId);
+              if (!range) continue;
+              const rangeEnd = range.end ?? Infinity;
+              if (pageIndex >= range.start && pageIndex <= rangeEnd) {
+                const size = rangeEnd - range.start;
+                if (size < bestSize) {
+                  bestSize = size;
+                  bestRemId = node.remId;
+                }
+              }
+            }
+
+            if (bestRemId) {
+              setSuggestedRemId(bestRemId);
+              // Also pre-select it so keyboard Enter works immediately
+              const suggestedIdx = flatAll.findIndex(n => n.remId === bestRemId);
+              if (suggestedIdx >= 0) setSelectedIndex(suggestedIdx);
+              console.log('[ParentSelector:Widget] Suggested IncRem:', bestRemId);
+            }
+          } catch (e) {
+            console.error('[ParentSelector:Widget] Error computing suggestion:', e);
+          }
+        }
       }
 
       setTree(initialTree);
@@ -683,7 +733,14 @@ function ParentSelectorWidget() {
         await newRem.setText([childName]);
         await newRem.setParent(creatingChildForNodeId);
 
-        console.log('[ParentSelector:Widget] Child rem created:', newRem._id);
+        // Pick a heading level that respects the parent's heading hierarchy:
+        // H1 parent → H2 child; anything else → H3.
+        const parentRem = await plugin.rem.findOne(creatingChildForNodeId);
+        const parentFontSize = await parentRem?.getFontSize();
+        const headingLevel = parentFontSize === 'H1' ? 'H2' : 'H3';
+        await newRem.setFontSize(headingLevel);
+
+        console.log(`[ParentSelector:Widget] Child rem created: ${newRem._id} (${headingLevel}, parent was ${parentFontSize ?? 'normal'})`);
 
         // Create a tree node for the new child using the helper function
         // Note: We need to fetch the rem again to get the full PluginRem object
@@ -971,6 +1028,7 @@ function ParentSelectorWidget() {
           }}
           node={node}
           isSelected={index === selectedIndex && !creatingChildForNodeId}
+          isSuggested={node.remId === suggestedRemId}
           isLoadingChildren={loadingNodeId === node.remId}
           onSelect={() => handleSelect(node)}
           onToggleExpand={() => handleToggleExpand(node.remId)}

@@ -112,7 +112,7 @@ export async function updateReviewRemData(
 
   await updateSRSDataForRem(plugin, incRem.remId, nextRepDateToUse, newHistory);
 
-  return { ...nextSpacing, newHistory };
+  return { ...nextSpacing, newNextRepDate: nextRepDateToUse, newHistory };
 }
 
 export async function handleNextRepetitionClick(
@@ -124,13 +124,22 @@ export async function handleNextRepetitionClick(
   try {
     await plugin.storage.setSession('plugin_operation_active', true);
 
-    await updateReviewRemData(plugin, incRem);
+    // 1. Capture the exact new data calculated by the review
+    const reviewResult = await updateReviewRemData(plugin, incRem);
 
-    // Because we suppress the event listener, we manually refresh the cache
-    const updatedIncRem = await getIncrementalRemFromRem(plugin, await plugin.rem.findOne(incRem.remId));
-    if (updatedIncRem) await updateIncrementalRemCache(plugin as any, updatedIncRem);
+    if (reviewResult) {
+      // 2. Manually patch the object using the new data
+      const updatedIncRem: IncrementalRem = {
+        ...incRem,
+        nextRepDate: reviewResult.newNextRepDate,
+        history: reviewResult.newHistory,
+      };
 
-    // Keep the sleep to be safe, but it's less critical now
+      // 3. Update the cache with guaranteed fresh data
+      await updateIncrementalRemCache(plugin as any, updatedIncRem);
+    }
+
+    // Keep the sleep to be safe
     await sleep(150);
 
     await plugin.queue.removeCurrentCardFromQueue();
@@ -156,7 +165,6 @@ export async function handleNextRepetitionManualOffset(
   try {
     await plugin.storage.setSession('plugin_operation_active', true);
 
-    // Simple: set next rep date to today or tomorrow without multiplier math
     const targetDay = dayjs().startOf('day').add(Math.max(offsetDays, 0), 'day').valueOf();
 
     const newHistory = [
@@ -170,9 +178,14 @@ export async function handleNextRepetitionManualOffset(
 
     await updateSRSDataForRem(plugin, incRem.remId, targetDay, newHistory);
 
-    // Because we suppress the event listener, we manually refresh the cache
-    const updatedIncRem = await getIncrementalRemFromRem(plugin, await plugin.rem.findOne(incRem.remId));
-    if (updatedIncRem) await updateIncrementalRemCache(plugin as any, updatedIncRem);
+    // MANUALLY CONSTRUCT THE UPDATED OBJECT
+    const updatedIncRem: IncrementalRem = {
+      ...incRem,
+      nextRepDate: targetDay,
+      history: newHistory,
+    };
+
+    await updateIncrementalRemCache(plugin as any, updatedIncRem);
 
     await plugin.queue.removeCurrentCardFromQueue();
   } finally {
@@ -268,12 +281,32 @@ export const getIncrementalRemFromRem = async (
     if (rotationStr) rotation = rotationStr;
   }
 
+  // Read the original incremental date slot (Daily Document reference)
+  let createdAt: number | undefined;
+  const createdAtRichText = (await r.getPowerupPropertyAsRichText(
+    powerupCode,
+    originalIncrementalDateSlotCode
+  )) as RichTextElementRemInterface[];
+  if (createdAtRichText && createdAtRichText.length > 0 && createdAtRichText[0]?._id) {
+    const createdAtDoc = await plugin.rem.findOne(createdAtRichText[0]._id);
+    if (createdAtDoc) {
+      const createdAtYYYYMMDD = await createdAtDoc.getPowerupProperty<BuiltInPowerupCodes.DailyDocument>(
+        BuiltInPowerupCodes.DailyDocument,
+        'Date'
+      );
+      if (createdAtYYYYMMDD) {
+        createdAt = dayjs(createdAtYYYYMMDD, 'YYYY-MM-DD').valueOf();
+      }
+    }
+  }
+
   const rawData = {
     remId: r._id,
     nextRepDate: date.valueOf(),
     priority: priority,
     history: tryParseJson(await r.getPowerupProperty(powerupCode, repHistorySlotCode)),
     rotation,
+    createdAt,
   };
 
   const parsed = IncrementalRem.safeParse(rawData);
@@ -404,6 +437,8 @@ export async function initIncrementalRem(plugin: ReactRNPlugin, rem: PluginRem, 
         if (todayRef) {
           await rem.setPowerupProperty(powerupCode, originalIncrementalDateSlotCode, todayRef);
         }
+        // Record creation event in incremental history (fire and forget)
+        addCreationToIncrementalHistory(plugin, rem._id).catch(console.error);
       }
 
       const newIncRem = await getIncrementalRemFromRem(plugin, rem);
@@ -441,7 +476,7 @@ export const getCurrentIncrementalRem = async (plugin: RNPlugin) => {
   return rem;
 };
 
-import { addToIncrementalHistory } from '../history_utils';
+import { addToIncrementalHistory, addCreationToIncrementalHistory } from '../history_utils';
 
 /**
  * Sets the current Incremental Rem in session storage.

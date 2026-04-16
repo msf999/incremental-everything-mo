@@ -33,7 +33,7 @@ import { getIncrementalRemFromRem, handleNextRepetitionClick, handleNextRepetiti
 import { removeIncrementalRemCache } from '../lib/incremental_rem/cache';
 import { IncrementalRem } from '../lib/incremental_rem';
 import { percentileToHslColor, calculateRelativePercentile, calculateVolumeBasedPercentile, calculateWeightedShield, PERFORMANCE_MODE_LIGHT } from '../lib/utils';
-import { safeRemTextToString, findPDFinRem, addPageToHistory, getCurrentPageKey, getDescendantsToDepth } from '../lib/pdfUtils';
+import { safeRemTextToString, findPDFinRem, addPageToHistory, getPageHistory, getCurrentPageKey, getDescendantsToDepth } from '../lib/pdfUtils';
 import { remTitleEndsWithOpenLinkTag, extractExternalHttpUrlsFromRem } from '../lib/open_editor_link_tag';
 import { QueueSessionCache, setCardPriority } from '../lib/card_priority';
 import { WeightedShieldTooltip } from '../components';
@@ -229,6 +229,24 @@ export function AnswerButtons() {
     const environment = await rp.settings.getSetting<string>(remnoteEnvironmentId) || 'beta';
     return environment === 'beta' ? 'https://beta.remnote.com' : 'https://www.remnote.com';
   }, []) || 'https://www.remnote.com';
+
+  // Fetch the most recent PDF bookmark highlightId for this IncRem (only for pdf type)
+  const bookmarkHighlightId = useTrackerPlugin(async (rp) => {
+    if (!baseData?.rem) return null;
+    const type = await rp.storage.getSession<string | null>(currentIncrementalRemTypeKey);
+    if (type !== 'pdf') return null;
+
+    const pdfRem = await findPDFinRem(rp, baseData.rem);
+    if (!pdfRem) return null;
+
+    const history = await getPageHistory(rp, baseData.rem._id, pdfRem._id);
+    // Only use the highlight if the LAST entry carries a highlightId.
+    // If a manual position was recorded after the highlight bookmark, the button
+    // would scroll to a stale position, so we suppress it in that case.
+    const lastEntry = history[history.length - 1];
+    return lastEntry?.highlightId ?? null;
+  }, [baseData?.rem?._id, remType]);
+
 
   // ✅ MEMOIZE CALCULATIONS (but they must run every render, not conditionally)
   const percentiles = useMemo(() => {
@@ -603,6 +621,24 @@ export function AnswerButtons() {
               await highlightRem?.scrollToReaderHighlight();
             }} style={{ color: 'var(--rn-clr-yellow, #d97706)' }}>
               <div style={buttonStyles.label}>✨ Scroll to Highlight</div>
+            </Button>
+          )}
+
+          {bookmarkHighlightId && (
+            <Button
+              onClick={async () => {
+                const bookmarkRem = await plugin.rem.findOne(bookmarkHighlightId);
+                await bookmarkRem?.scrollToReaderHighlight();
+              }}
+              style={{
+                backgroundColor: 'var(--rn-clr-background-secondary)',
+                color: 'var(--rn-clr-blue, #3b82f6)',
+                border: '2px solid var(--rn-clr-blue, #3b82f6)',
+                fontWeight: 600,
+              }}
+              title="Scroll to Bookmark: Jump to your last saved reading position in the PDF"
+            >
+              <div style={buttonStyles.label}>🔖 Scroll to Bookmark</div>
             </Button>
           )}
 

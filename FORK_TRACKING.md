@@ -34,7 +34,7 @@ When working on this repository, follow these rules in order:
 |---|---|
 | **Upstream repo** | `https://github.com/bjsi/incremental-everything` (via `hugomarins` fork) |
 | **Our fork** | `https://github.com/msf999/incremental-everything-mo` |
-| **Last synced upstream commit** | `8144672` — _Merge pull request #262 from hugomarins/main_ |
+| **Last synced upstream commit** | `7e0bc0d` — _Merge pull request #271 from hugomarins/main_ |
 | **Our first custom commit** | `88839e1` — _feat: add Rotation and First Added properties, make Open Editor advance queue_ |
 | **Branch** | `main` |
 
@@ -83,9 +83,9 @@ rotationSlotCode  = 'rotation'
 
 ### 4. `src/lib/incremental_rem/types.ts`
 
-**What changed:** Added `rotation: z.string().optional()` to the `IncrementalRem` Zod schema.
+**What changed:** Added `rotation: z.string().optional()` to the `IncrementalRem` Zod schema. Upstream also added optional `createdAt` (ms) for when the Rem was first made Incremental; both fields are kept.
 
-**Merge rule:** Single field addition. No conflict unless upstream restructures the schema object.
+**Merge rule:** Preserve both `rotation` and `createdAt` when merging schema changes.
 
 ### 5. `src/lib/incremental_rem/index.ts`
 
@@ -93,11 +93,12 @@ This file has the most custom code. All additions are in clearly separated block
 
 | Region | What Changed |
 |---|---|
-| **Imports** | Added `firstAddedSlotCode`, `rotationSlotCode` from consts; added `import parseDuration from 'parse-duration'`. |
-| **`getIncrementalRemFromRem()`** | After priority reading (~line 235), added a block that reads the `rotation` powerup property and includes it in `rawData`. |
+| **Imports** | Added `firstAddedSlotCode`, `rotationSlotCode` from consts; added `import parseDuration from 'parse-duration'`. Also imports `addCreationToIncrementalHistory` from `history_utils` (with upstream). |
+| **`getIncrementalRemFromRem()`** | After priority reading, reads `rotation` into `rawData`; also reads `createdAt` from `originalIncrementalDateSlotCode` (upstream) into `rawData`. |
 | **New helpers (before `initIncrementalRem`)** | Added `getRotationIntervalMs()`, `getRotationIntervalDays()`, `getInitialRotation()`, and `rescheduleWithoutReview()`. These are standalone functions — no upstream code was modified. |
-| **`initIncrementalRem()`** | After `setPowerupProperty(prioritySlotCode, ...)`, added two blocks: (a) set `firstAddedSlotCode` to today's daily doc ref, (b) inherit rotation from closest ancestor via `getInitialRotation()` and set as text. |
-| **`updateReviewRemData()`** | Replaced the simple `nextRepDateToUse` assignment with a branching block: explicit overrides take precedence, then rotation interval (via `getRotationIntervalMs`), then normal scheduler. |
+| **`initIncrementalRem()`** | After `setPowerupProperty(prioritySlotCode, ...)`, added two blocks: (a) set `firstAddedSlotCode` to today's daily doc ref, (b) inherit rotation from closest ancestor via `getInitialRotation()` and set as text. When setting `originalIncrementalDateSlotCode`, also calls `addCreationToIncrementalHistory` (upstream). |
+| **`handleNextRepetitionClick()` / `handleNextRepetitionManualOffset()`** | Use manual in-memory `IncrementalRem` patch + `updateIncrementalRemCache` from review result / constructed state (upstream) instead of re-fetching from the Rem after write. |
+| **`updateReviewRemData()`** | Branching `nextRepDateToUse`: explicit overrides, then rotation interval (`getRotationIntervalMs`), then normal scheduler. Returns `{ ...nextSpacing, newNextRepDate: nextRepDateToUse, newHistory }` so callers patch the cache with the **persisted** next date (required when rotation overrides the scheduler). |
 
 **Merge rule:** If upstream modifies `getIncrementalRemFromRem`, `initIncrementalRem`, or `updateReviewRemData`, carefully re-apply our additions into the updated function bodies. Our helpers (`getRotationIntervalMs`, `getRotationIntervalDays`, `getInitialRotation`, `rescheduleWithoutReview`) are freestanding and should not conflict.
 
@@ -113,7 +114,7 @@ This file has grown into the most heavily customised widget. All changes are add
 | **`openEditorAction` helper** | Extracted editor-opening logic (mobile in-app nav vs desktop new tab) into a reusable async function, used by the main click and dropdown items. |
 | **Open Editor button** | Converted from `Button` to `SplitButton`. On mobile (`isMobile`), calls `plugin.window.openRem(rem)` for in-app navigation instead of `window.open()`. Scheduling runs **before** navigation so the widget is not destroyed before the review is recorded. Dropdown items: "Saturday (Xd)", "Monday (Xd)" — each records a review with the chosen offset then opens the editor. Also receives `warningStyle` when rotation is invalid. |
 | **Skip button** | Converted from `Button` to `SplitButton`. Main click calls `plugin.queue.removeCurrentCardFromQueue()` (advances queue without recording a review). Dropdown items: "Saturday (Xd)", "Monday (Xd)" — each reschedules to the chosen date without recording a review via `rescheduleWithoutReview`. |
-| **Unified layout (Accordion)** | Removed all `!isMobile` conditional rendering guards. Consolidated the top row into a minimalist 6-button layout: Previous, Next, Open Editor, Skip, Dismiss, and `⚙️ Options`. Built a dynamic `showAdvancedOptions` local state variable. Clicking `⚙️ Options` opens a visually clean secondary row positioned underneath to host the power-user buttons: Reschedule, Change Priority, Review in Editor, Scroll to Highlight, URL clipping, and Help. |
+| **Unified layout (Accordion)** | Removed all `!isMobile` conditional rendering guards. Consolidated the top row into a minimalist 6-button layout: Previous, Next, Open Editor, Skip, Dismiss, and `⚙️ Options`. Built a dynamic `showAdvancedOptions` local state variable. Clicking `⚙️ Options` opens a visually clean secondary row positioned underneath to host the power-user buttons: Reschedule, Change Priority, Review in Editor, Scroll to Highlight, **Scroll to Bookmark** (PDF: last page-history entry with `highlightId`; upstream feature merged into this row), URL clipping, and Help. |
 | **Link Auto-Open (guarded)** | Added `externalUrls` via `useTrackerPlugin` (extract from `rem.text`, `rem.backText`, Link powerup). `openExternalLinkTabsWhenOpenLinkTagged()` runs **first** on Open Editor clicks (sync `window.open` while the gesture is valid) but **only** when the title ends with **`(OpenLink)`**. If the title does **not** end with `(OpenLink)`, only the Rem document opens — external URLs are not opened in new tabs. |
 | **Title `(OpenLink)` → external tabs, no Rem doc** | `remTitleEndsWithOpenLinkTag` (`open_editor_link_tag.ts`) **and** non-empty `externalUrls`: `performOpenEditorFlow` skips `openEditorAction` so only external URL(s) open (one tab per URL). If the title has `(OpenLink)` but no URL was extracted, the Rem document still opens. Saturday/Monday dropdown paths use the same rules. |
 
@@ -379,3 +380,20 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 - `docs/open-editor-behavior.md` — documents behavior
 
 **Notes:** **Supersedes** the Open Editor / external-URL behavior logged under **2026-04-14** (Auto-open URLs, popup-blocker fix, Ctrl+G); those entries now note that policy was superseded here. **(1)** Suffix renamed from `(Link)` to **`(OpenLink)`** and matching is **case-sensitive**. **(2)** If the title does **not** end with `(OpenLink)`, Open Editor opens **only** the Rem document (external URLs are not opened in new tabs). **(3)** If `(OpenLink)` **and** at least one extracted URL: open those URL tab(s) and **skip** the Rem document tab. **(4)** If `(OpenLink)` but extraction finds no URLs, the Rem document still opens. Multiple extracted URLs produce multiple tabs. **(5)** `richText.toString` alone could miss a trailing suffix when the title contains an inline hyperlink; detection walks visible rich-text characters first.
+
+---
+
+### 2026-04-16 — Merge (upstream sync to `7e0bc0d`)
+
+**Upstream commit(s):** `8144672` to `7e0bc0d` (PR #263 through PR #271)
+**Conflicts resolved:** `src/lib/incremental_rem/index.ts`, `src/lib/incremental_rem/types.ts`, `src/widgets/answer_buttons.tsx`
+**Custom code preserved:** Yes — adapted
+**Compilation verified:** Yes (production `webpack` build; pre-existing `tsc` errors unchanged)
+**Files touched:**
+- `public/manifest.json` — patch 174 from upstream; `repoUrl` and `unlisted` preserved
+- `src/lib/incremental_rem/types.ts` — merged upstream `createdAt` with fork `rotation`
+- `src/lib/incremental_rem/index.ts` — merged `createdAt` read, `addCreationToIncrementalHistory`, manual cache patching after review; `updateReviewRemData` return includes `newNextRepDate: nextRepDateToUse` for correct rotation + cache
+- `src/widgets/answer_buttons.tsx` — merged `getPageHistory` / `bookmarkHighlightId`; Open Editor / `(OpenLink)` trackers retained; PDF “Scroll to Bookmark” placed in advanced options row
+- Plus upstream-only changes across queue CSS, PDF bookmark widgets, commands (`createExtract` rewrite), settings, and 30+ other files
+
+**Notes:** Upstream added PDF bookmark tooling, queue UI/CSS improvements, incremental history creation tracking, and extract/queue context fixes. Fork-specific queue button layout and Open Editor rules were reconciled manually in the three conflicted files.

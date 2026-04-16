@@ -11,35 +11,77 @@ import {
   currentScopeRemIdsKey,
   queueCounterId,
   queueLayoutFixId,
+  queueHideElementsId,
   seenRemInSessionKey,
   noIncRemTimerKey,
   incremReviewStartTimeKey,
   incrementalQueueActiveKey,
+  incRemDisabledDeviceKey,
 } from '../lib/consts';
 import { getIncrementalRemFromRem, IncrementalRem } from '../lib/incremental_rem';
 import { getCardsPerRem, getSortingRandomness } from '../lib/sorting';
 
 
+// Registered once globally — safe because all selectors are highly specific to the
+// incremental-everything plugin iframe and do not affect regular flashcard layout.
 const QUEUE_LAYOUT_FIX_CSS = `
-  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue"]) {
+  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]) {
     height: 100% !important;
   }
-  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue"]) .rn-queue__content,
-  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue"]) .rn-queue__content .rn-flashcard,
-  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue"]) .rn-queue__content .rn-flashcard__content,
-  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue"]) .box-border:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue"]),
-  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue"]) div.fade-in-first-load:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue"]),
-  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue"]) div.fade-in-first-load:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue"]) > div,
-  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue"]) iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue"] {
+  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]) .rn-queue__content,
+  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]) .rn-queue__content .rn-flashcard,
+  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]) .rn-queue__content .rn-flashcard__content,
+  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]) .box-border:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]),
+  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]) div.fade-in-first-load:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]),
+  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]) div.fade-in-first-load:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]) > div,
+  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]) iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"] {
     flex-grow: 1 !important;
   }
 
-  /* Hide unwanted UI elements during incremental rem review */
-  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue"]):has([data-queue-rem-tags~="incremental"]) .rn-flashcard-insights,
-  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue"]):has([data-queue-rem-tags~="incremental"]) [data-cy="bottom-of-card-ai-suggestions"],
-  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue"]):has([data-queue-rem-tags~="incremental"]) div.fade-in-first-load:has(div[data-cy="bottom-of-card-suggestions"]),
-  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue"]):has([data-queue-rem-tags~="incremental"]) div.fade-in-first-load:has(iframe[data-plugin-id="flashcard-repetition-history"]) {
+  /* Ensure card_priority_display (our widget) renders above flashcard-repetition-history.
+     The parent flashcard container is already "flex flex-col", so flex order is sufficient.
+     Scoped to only activate when our card_priority_display iframe is present, so regular
+     flashcards without the plugin widget are not affected. */
+  .box-border.flex.flex-col:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=card_priority_display&"])
+    .fade-in-first-load:has(iframe[data-plugin-id="flashcard-repetition-history"]) {
+    order: 1;
+  }
+
+  /* Remove the default pt-6 top padding from the bottom action bar when our
+     answer_buttons widget is present — the widget provides its own internal spacing. */
+  .spaced-repetition__bottom:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=answer_buttons&"]) {
+    padding-top: 0 !important;
+  }
+`;
+
+// Registered once globally — safe because the :has(iframe[...widgetName=queue...]) gate
+// activates ONLY while the Plugin-type queue iframe is in the DOM:
+//   • Race condition: if GetNextCard pre-fetches and returns null, the iframe is already
+//     gone and the :has() selector stops matching automatically.
+//   • Dual-type rems on flashcard turns: the queue widget uses
+//     queueItemTypeFilter: QueueItemType.Plugin, so the iframe is never mounted on
+//     plain flashcard turns — the selector never fires.
+const QUEUE_HIDE_ELEMENTS_CSS = `
+  /* Hide unwanted UI elements during incremental rem review.
+     Gated on the Plugin queue iframe presence — self-deactivates the instant
+     the iframe leaves the DOM, making timing-based race conditions impossible. */
+  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]) .rn-flashcard-insights,
+  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]) [data-cy="bottom-of-card-ai-suggestions"],
+  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]) div.fade-in-first-load:has(div[data-cy="bottom-of-card-suggestions"]),
+  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]) div.fade-in-first-load:has(iframe[data-plugin-id="flashcard-repetition-history"]) {
     display: none !important;
+  }
+`;
+
+const REMOVE_FROM_QUEUE_CSS = `
+  /* Remove from Queue Styles */
+  .rn-queue__content [data-queue-rem-container-tags~="remove-from-queue"]:not(.rn-question-rem) > .rn-queue-rem {
+    display: none;
+  }
+
+  .rn-queue__content [data-queue-rem-container-tags~="remove-from-queue"]:not(.rn-question-rem),
+  .rn-breadcrumb-item[data-rem-tags~="remove-from-queue"] {
+    margin-left: 0px !important; /* makes it look like its not indented to the removed parent */
   }
 `;
 
@@ -49,8 +91,10 @@ export const resetSessionItemCounter = () => {
   sessionItemCounter = 0;
 };
 
-  export function registerCallbacks(plugin: ReactRNPlugin) {
+export function registerCallbacks(plugin: ReactRNPlugin) {
   plugin.app.registerCSS(queueLayoutFixId, QUEUE_LAYOUT_FIX_CSS);
+  plugin.app.registerCSS(queueHideElementsId, QUEUE_HIDE_ELEMENTS_CSS);
+  plugin.app.registerCSS('remove-from-queue-css', REMOVE_FROM_QUEUE_CSS);
 
   plugin.app.registerCallback<SpecialPluginCallback.GetNextCard>(
     SpecialPluginCallback.GetNextCard,
@@ -58,32 +102,28 @@ export const resetSessionItemCounter = () => {
       console.log('queueInfo', queueInfo);
 
       const noIncRemTimerEnd = await plugin.storage.getSynced<number>(noIncRemTimerKey);
+      const isDeviceDisabled = await plugin.storage.getLocal<boolean>(incRemDisabledDeviceKey);
       const now = Date.now();
-      // console.log('⏰ TIMER CHECK:', {
-      //   noIncRemTimerEnd,
-      //   now,
-      //   isTimerActive: noIncRemTimerEnd && noIncRemTimerEnd > now,
-      //   timerWillExpireIn: noIncRemTimerEnd
-      //     ? Math.ceil((noIncRemTimerEnd - now) / 1000) + ' seconds'
-      //     : 'no timer set',
-      // });
 
       const isTimerActive = noIncRemTimerEnd && noIncRemTimerEnd > now;
 
-      if (isTimerActive) {
-        const remainingSeconds = Math.ceil((noIncRemTimerEnd - now) / 1000);
-        // console.log('⚠️ TIMER IS ACTIVE - BLOCKING INCREM! Time remaining:', remainingSeconds, 'seconds');
+      if (isTimerActive || isDeviceDisabled) {
+        if (isTimerActive) {
+          const remainingSeconds = Math.ceil((noIncRemTimerEnd - now) / 1000);
+          // console.log('⚠️ TIMER IS ACTIVE - BLOCKING INCREM! Time remaining:', remainingSeconds, 'seconds');
+        } else {
+          // console.log('⚠️ DEVICE IS DISABLED - BLOCKING INCREM!');
+        }
 
-        // Removed dynamic unregistration: plugin.app.registerCSS(queueLayoutFixId, '');
-        await plugin.app.registerCSS(queueCounterId, '');
-
+        // Timer or Device is blocking IncRem — this turn will be a flashcard.
+        plugin.app.registerCSS(queueCounterId, '');
         return null;
       } else if (noIncRemTimerEnd && noIncRemTimerEnd <= now) {
-        console.log('🧹 Timer expired, cleaning up...');
+        // console.log('🧹 Timer expired, cleaning up...');
         await plugin.storage.setSynced(noIncRemTimerKey, null);
-        console.log('No Inc Rem timer expired and cleared');
+        // console.log('No Inc Rem timer expired and cleared');
       } else {
-        console.log('✅ No timer active - IncRem allowed');
+        // console.log('✅ No timer active and device enabled - IncRem allowed');
       }
 
       const allIncrementalRem: IncrementalRem[] =
@@ -191,7 +231,7 @@ export const resetSessionItemCounter = () => {
 
         if (filtered.length === 0) {
           // console.log('⚠️ FILTERED LENGTH IS 0 - Returning null, will show a flashcard.');
-          // Removed dynamic unregistration: plugin.app.registerCSS(queueLayoutFixId, '');
+          plugin.app.registerCSS(queueCounterId, '');
           sessionItemCounter++;
           return null;
         }
@@ -211,14 +251,16 @@ export const resetSessionItemCounter = () => {
           filtered.shift();
           if (filtered.length === 0) {
             console.log('❌ All filtered items were invalid after verification - Returning null');
+            plugin.app.registerCSS(queueCounterId, '');
             return null;
           }
           first = filtered[0];
         }
-        // Removed dynamic registration: plugin.app.registerCSS(queueLayoutFixId, QUEUE_LAYOUT_FIX_CSS);
         await plugin.storage.setSession(seenRemInSessionKey, [...seenRemIds, first.remId]);
-
         await plugin.storage.setSession(incremReviewStartTimeKey, Date.now());
+
+        // Activate hide CSS now that we know we're genuinely showing a Plugin (IncRem) item.
+        // (No-op: the CSS is now registered globally and self-gates via :has().)
 
         // console.log('✅ SHOWING INCREM:', first, 'due', dayjs(first.nextRepDate).fromNow());
         sessionItemCounter++;
@@ -244,10 +286,8 @@ export const resetSessionItemCounter = () => {
         //       : 'N/A',
         // });
         sessionItemCounter++;
-        // Removed dynamic unregistration: plugin.app.registerCSS(queueLayoutFixId, '');
-        // Bullet-proof mid-session reset: if the previous IncRem widget unmounted
-        // unceremoniously (skipping its useEffect cleanup), ensure the flag is cleared
-        // so regular flashcards can render their widgets (like CardPriorityDisplay).
+        // Flashcard turn — the hide CSS is globally registered and self-deactivates via :has()
+        // when the Plugin iframe is absent; no manual clearing needed.
         await plugin.storage.setSession(incrementalQueueActiveKey, false);
         return null;
       }
