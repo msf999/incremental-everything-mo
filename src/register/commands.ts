@@ -20,7 +20,6 @@ import {
   nextInQueueCommandId,
   currentIncrementalRemTypeKey,
   incremReviewStartTimeKey,
-  remnoteEnvironmentId,
 } from '../lib/consts';
 import { initIncrementalRem } from './powerups';
 import { getIncrementalRemFromRem, handleNextRepetitionClick, getCurrentIncrementalRem } from '../lib/incremental_rem';
@@ -51,6 +50,7 @@ import { loadCardPriorityCache } from '../lib/card_priority/cache';
 import { getPerformanceMode } from '../lib/utils';
 import { handleReviewInEditorRem } from '../lib/review_actions';
 import { remTitleEndsWithOpenLinkTag, extractExternalHttpUrlsFromRem } from '../lib/open_editor_link_tag';
+import { determineIncRemType } from '../lib/incRemHelpers';
 
 
 export async function registerCommands(plugin: ReactRNPlugin) {
@@ -1532,34 +1532,27 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       }
 
       const skipRemDocument = titleEndsWithOpenLinkTag && uniqueUrls.length > 0;
-      const isMobile = await isMobileDevice(plugin);
-
-      if (isMobile) {
-        await handleNextRepetitionClick(plugin, incRemInfo);
-        if (!skipRemDocument) {
-          await plugin.window.openRem(rem);
-        }
-      } else {
-        if (!skipRemDocument) {
-          const environment = (await plugin.settings.getSetting<string>(remnoteEnvironmentId)) || 'beta';
-          const remnoteDomain = environment === 'beta' ? 'https://beta.remnote.com' : 'https://www.remnote.com';
-
-          window.open(`${remnoteDomain}/document/${rem._id}`, '_blank');
-
-          const remType = await plugin.storage.getSession<string | null>(currentIncrementalRemTypeKey);
-          if (remType === 'pdf') {
-            const pdfRem = await findPDFinRem(plugin, rem);
-            if (pdfRem) {
-              const pageKey = getCurrentPageKey(rem._id, pdfRem._id);
-              const currentPage = await plugin.storage.getSynced<number>(pageKey);
-              if (currentPage) {
-                await addPageToHistory(plugin, rem._id, pdfRem._id, currentPage);
-              }
-            }
+      const remType = await plugin.storage.getSession<string | null>(currentIncrementalRemTypeKey);
+      if (remType === 'pdf') {
+        const pdfRem = await findPDFinRem(plugin, rem);
+        if (pdfRem) {
+          const pageKey = getCurrentPageKey(rem._id, pdfRem._id);
+          const currentPage = await plugin.storage.getSynced<number>(pageKey);
+          if (currentPage) {
+            await addPageToHistory(plugin, rem._id, pdfRem._id, currentPage);
           }
         }
+      }
 
-        await handleNextRepetitionClick(plugin, incRemInfo);
+      await handleNextRepetitionClick(plugin, incRemInfo);
+
+      if (!skipRemDocument) {
+        const incRemType = await determineIncRemType(plugin, rem);
+        if (incRemType === 'pdf-note') {
+          await rem.openRemAsPage();
+        } else {
+          await plugin.window.openRem(rem);
+        }
       }
     },
   });

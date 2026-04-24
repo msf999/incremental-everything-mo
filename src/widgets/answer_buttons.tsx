@@ -13,7 +13,6 @@ import { IncrementalRep } from '../lib/incremental_rem/types';
 import { NextRepTime } from '../components/NextRepTime';
 import { SplitButton } from '../components/buttons/SplitButton';
 import { Button } from '../components/buttons/Button';
-import { DropdownMenu } from '../components/buttons/DropdownMenu';
 import { getButtonStyles } from '../components/buttons/styles';
 import {
   allIncrementalRemKey,
@@ -26,11 +25,9 @@ import {
   queueSessionCacheKey,
   priorityCalcScopeRemIdsKey,
   incremReviewStartTimeKey,
-  remnoteEnvironmentId,
-  isMobileDeviceKey,
 } from '../lib/consts';
 import { getIncrementalRemFromRem, handleNextRepetitionClick, handleNextRepetitionManualOffset, rescheduleWithoutReview, updateReviewRemData, getRotationIntervalMs } from '../lib/incremental_rem';
-import { removeIncrementalRemCache } from '../lib/incremental_rem/cache';
+import { removeIncrementalRemCache, updateIncrementalRemCache } from '../lib/incremental_rem/cache';
 import { IncrementalRem } from '../lib/incremental_rem';
 import { percentileToHslColor, calculateRelativePercentile, calculateVolumeBasedPercentile, calculateWeightedShield, PERFORMANCE_MODE_LIGHT } from '../lib/utils';
 import { safeRemTextToString, findPDFinRem, addPageToHistory, getPageHistory, getCurrentPageKey, getDescendantsToDepth } from '../lib/pdfUtils';
@@ -38,7 +35,7 @@ import { remTitleEndsWithOpenLinkTag, extractExternalHttpUrlsFromRem } from '../
 import { QueueSessionCache, setCardPriority } from '../lib/card_priority';
 import { WeightedShieldTooltip } from '../components';
 import { shouldUseLightMode } from '../lib/mobileUtils';
-import { getHtmlSourceUrl } from '../lib/incRemHelpers';
+import { getHtmlSourceUrl, determineIncRemType } from '../lib/incRemHelpers';
 import { transferToDismissed } from '../lib/dismissed';
 import { handleReviewInEditorRem } from '../lib/review_actions';
 
@@ -83,11 +80,6 @@ export function AnswerButtons() {
     (rp) => rp.storage.getSession<string[] | null>(priorityCalcScopeRemIdsKey),
     []
   );
-
-  const isMobile = useTrackerPlugin(
-    (rp) => rp.storage.getSession<boolean>(isMobileDeviceKey),
-    []
-  ) || false;
 
   const baseData = useTrackerPlugin(async (rp) => {
     const ctx = await rp.widget.getWidgetContext<WidgetLocation.FlashcardAnswerButtons>();
@@ -225,11 +217,6 @@ export function AnswerButtons() {
     return remTitleEndsWithOpenLinkTag(rp, baseData.rem);
   }, [baseData?.rem]);
 
-  const remnoteDomain = useTrackerPlugin(async (rp) => {
-    const environment = await rp.settings.getSetting<string>(remnoteEnvironmentId) || 'beta';
-    return environment === 'beta' ? 'https://beta.remnote.com' : 'https://www.remnote.com';
-  }, []) || 'https://www.remnote.com';
-
   // Fetch the most recent PDF bookmark highlightId for this IncRem (only for pdf type)
   const bookmarkHighlightId = useTrackerPlugin(async (rp) => {
     if (!baseData?.rem) return null;
@@ -310,7 +297,7 @@ export function AnswerButtons() {
       }
     : {};
 
-  const handleNextClick = async () => {
+  const capturePdfPageHistoryIfNeeded = async () => {
     if (remType === 'pdf') {
       const pdfRem = await findPDFinRem(plugin, rem);
       if (pdfRem) {
@@ -322,6 +309,10 @@ export function AnswerButtons() {
         }
       }
     }
+  };
+
+  const handleNextClick = async () => {
+    await capturePdfPageHistoryIfNeeded();
 
     await handleNextRepetitionClick(plugin, incRemInfo);
   };
@@ -336,23 +327,13 @@ export function AnswerButtons() {
     externalUrls?.forEach((url) => window.open(url, '_blank'));
   };
 
-  const openEditorAction = async () => {
+  const openEditorAction = async (incRemTypeOverride?: string) => {
     try {
-      if (isMobile) {
-        await plugin.window.openRem(rem);
+      const incRemType = incRemTypeOverride ?? await determineIncRemType(plugin, rem);
+      if (incRemType === 'pdf-note') {
+        await rem.openRemAsPage();
       } else {
-        const newUrl = `${remnoteDomain}/document/${rem._id}`;
-        const newWindow = window.open(newUrl, '_blank');
-
-        if (!newWindow || newWindow.closed) {
-          const link = document.createElement('a');
-          link.href = newUrl;
-          link.target = '_blank';
-          link.rel = 'noopener noreferrer';
-          document.body.appendChild(link);
-          link.click();
-          setTimeout(() => document.body.removeChild(link), 100);
-        }
+        await plugin.window.openRem(rem);
       }
     } catch (error) {
       console.error('Error opening document:', error);
@@ -367,12 +348,30 @@ export function AnswerButtons() {
   const performOpenEditorFlow = async () => {
     const skipRemDocument = shouldSkipRemDocumentForOpenEditor;
     openExternalLinkTabsWhenOpenLinkTagged();
-    if (isMobile) {
+    if (skipRemDocument) {
       await handleNextClick();
-      if (!skipRemDocument) await openEditorAction();
-    } else {
-      if (!skipRemDocument) await openEditorAction();
-      await handleNextClick();
+      return;
+    }
+    await capturePdfPageHistoryIfNeeded();
+    try {
+      await plugin.storage.setSession('plugin_operation_active', true);
+      const reviewResult = await updateReviewRemData(plugin, incRemInfo);
+      if (reviewResult) {
+        const updatedIncRem: IncrementalRem = {
+          ...incRemInfo,
+          nextRepDate: reviewResult.newNextRepDate,
+          history: reviewResult.newHistory,
+        };
+        await updateIncrementalRemCache(plugin as any, updatedIncRem);
+      }
+      const incRemType = await determineIncRemType(plugin, rem);
+      // Dispatch both critical operations before widget teardown can interrupt either.
+      await Promise.allSettled([
+        plugin.queue.removeCurrentCardFromQueue(),
+        openEditorAction(incRemType),
+      ]);
+    } finally {
+      await plugin.storage.setSession('plugin_operation_active', false);
     }
   };
 
@@ -500,29 +499,41 @@ export function AnswerButtons() {
           title={
             shouldSkipRemDocumentForOpenEditor
               ? 'Open external link(s) in new tab(s), then advance the queue (title ends with "(OpenLink)" — no Rem document tab)'
-              : isMobile
-                ? 'Open Editor: Open this Rem in the editor, then advance (external URLs open in tabs only when the title ends with "(OpenLink)")'
-                : 'Open Editor: Open the Rem document in a new tab, then advance (external URLs open in tabs only when the title ends with "(OpenLink)")'
+              : 'Open Editor: Open this Rem in the editor, then advance (external URLs open in tabs only when the title ends with "(OpenLink)")'
           }
           menuItems={[
             { label: `Saturday (${daysUntilSaturday}d)`, onClick: async () => {
                 openExternalLinkTabsWhenOpenLinkTagged();
                 const skipRem = shouldSkipRemDocumentForOpenEditor;
-                if (!isMobile && !skipRem) await openEditorAction();
-                await runManualNext(daysUntilSaturday);
-                if (isMobile && !skipRem) await openEditorAction();
+                if (skipRem) {
+                  await runManualNext(daysUntilSaturday);
+                  return;
+                }
+                const incRemType = await determineIncRemType(plugin, rem);
+                // Fire both operations together so queue teardown does not prevent editor open.
+                await Promise.allSettled([
+                  runManualNext(daysUntilSaturday),
+                  openEditorAction(incRemType),
+                ]);
               } },
             { label: `Monday (${daysUntilMonday}d)`, onClick: async () => {
                 openExternalLinkTabsWhenOpenLinkTagged();
                 const skipRem = shouldSkipRemDocumentForOpenEditor;
-                if (!isMobile && !skipRem) await openEditorAction();
-                await runManualNext(daysUntilMonday);
-                if (isMobile && !skipRem) await openEditorAction();
+                if (skipRem) {
+                  await runManualNext(daysUntilMonday);
+                  return;
+                }
+                const incRemType = await determineIncRemType(plugin, rem);
+                // Fire both operations together so queue teardown does not prevent editor open.
+                await Promise.allSettled([
+                  runManualNext(daysUntilMonday),
+                  openEditorAction(incRemType),
+                ]);
               } },
           ]}
         >
           <div style={buttonStyles.label}>Open Editor</div>
-          <div style={buttonStyles.sublabel}>{isMobile ? 'Edit Rem' : 'New Tab'}</div>
+          <div style={buttonStyles.sublabel}>Edit Rem</div>
         </SplitButton>
 
         <SplitButton
@@ -612,7 +623,7 @@ export function AnswerButtons() {
           </Button>
 
           <Button onClick={async () => { await handleReviewInEditorRem(plugin, rem, remType); }}>
-            <div style={buttonStyles.label}>📝 Review in Editor</div>
+            <div style={buttonStyles.label}>📝 Review with Timer</div>
           </Button>
 
           {activeHighlightId && (
