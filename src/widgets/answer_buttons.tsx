@@ -494,8 +494,15 @@ export function AnswerButtons() {
         </SplitButton>
 
         <SplitButton
+          variant="secondary"
           onClick={performOpenEditorFlow}
-          style={{ minWidth: '100px', ...warningStyle }}
+          style={{
+            minWidth: '100px',
+            backgroundColor: '#16a34a',
+            color: '#ffffff',
+            border: '1px solid #16a34a',
+            ...warningStyle,
+          }}
           title={
             shouldSkipRemDocumentForOpenEditor
               ? 'Open external link(s) in new tab(s), then advance the queue (title ends with "(OpenLink)" — no Rem document tab)'
@@ -533,7 +540,13 @@ export function AnswerButtons() {
           ]}
         >
           <div style={buttonStyles.label}>Open Editor</div>
-          <div style={buttonStyles.sublabel}>Edit Rem</div>
+          {hasInvalidRotation ? (
+            <div style={{ ...buttonStyles.sublabel, color: 'var(--rn-clr-yellow, #f59e0b)' }}>
+              invalid rotation
+            </div>
+          ) : (
+            <div style={buttonStyles.sublabel}><NextRepTime rem={incRemInfo} /></div>
+          )}
         </SplitButton>
 
         <SplitButton

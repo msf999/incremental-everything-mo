@@ -61,7 +61,9 @@ export function SplitButton({
       : 'var(--rn-clr-background-secondary)';
 
   const chevronBorderColor =
-    variant === 'primary'
+    style?.backgroundColor
+      ? 'rgba(255,255,255,0.3)'
+      : variant === 'primary'
       ? 'rgba(255,255,255,0.3)'
       : 'var(--rn-clr-border-primary)';
 
@@ -107,6 +109,13 @@ export function SplitButton({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
+          ...style,
+          minWidth: 'unset',
+          width: '28px',
+          padding: '0 4px',
+          borderTopLeftRadius: 0,
+          borderBottomLeftRadius: 0,
+          borderLeft: `1px solid ${chevronBorderColor}`,
         }}
         onMouseEnter={(e) => {
           e.currentTarget.style.transform = 'translateY(-2px)';

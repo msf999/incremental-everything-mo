@@ -112,7 +112,7 @@ This file has grown into the most heavily customised widget. All changes are add
 | **`hasInvalidRotation` + `warningStyle`** | Derived boolean + amber style object computed after `incRemInfo` is destructured. Applied to the Next and Open Editor buttons when the rotation value cannot be parsed. |
 | **Next button** | Replaced `DraggableButton` (drag-up/down gesture) with `SplitButton` (dropdown chevron). Menu items: "Saturday (Xd)", "Monday (Xd)" with dynamic day counts. When `hasInvalidRotation` is true, the sublabel shows `"invalid rotation"` in amber instead of `<NextRepTime />`. |
 | **`openEditorAction` helper** | Extracted editor-opening logic into a reusable async function. It now always opens in-app (`openRemAsPage` for `pdf-note`, otherwise `plugin.window.openRem`) on both mobile and desktop. |
-| **Open Editor button** | Converted from `Button` to `SplitButton`. Scheduling runs **before** navigation so the widget is not destroyed before the review is recorded. Dropdown items: "Saturday (Xd)", "Monday (Xd)" — each records a review with the chosen offset then opens the editor in-app. Also receives `warningStyle` when rotation is invalid. |
+| **Open Editor button** | Converted from `Button` to `SplitButton`. Scheduling runs **before** navigation so the widget is not destroyed before the review is recorded. Dropdown items: "Saturday (Xd)", "Monday (Xd)" — each records a review with the chosen offset then opens the editor in-app. The sublabel now mirrors Next (`<NextRepTime />`) and shows `invalid rotation` in amber when parsing fails. Styled with a custom green theme for visual distinction. |
 | **Skip button** | Converted from `Button` to `SplitButton`. Main click calls `plugin.queue.removeCurrentCardFromQueue()` (advances queue without recording a review). Dropdown items: "Saturday (Xd)", "Monday (Xd)" — each reschedules to the chosen date without recording a review via `rescheduleWithoutReview`. |
 | **Unified layout (Accordion)** | Removed all `!isMobile` conditional rendering guards. Consolidated the top row into a minimalist 6-button layout: Previous, Next, Open Editor, Skip, Dismiss, and `⚙️ Options`. Built a dynamic `showAdvancedOptions` local state variable. Clicking `⚙️ Options` opens a visually clean secondary row positioned underneath to host the power-user buttons: Reschedule, Change Priority, Review with Timer, Scroll to Highlight, **Scroll to Bookmark** (PDF: last page-history entry with `highlightId`; upstream feature merged into this row), URL clipping, and Help. |
 | **Link Auto-Open (guarded)** | Added `externalUrls` via `useTrackerPlugin` (extract from `rem.text`, `rem.backText`, Link powerup). `openExternalLinkTabsWhenOpenLinkTagged()` runs **first** on Open Editor clicks (sync `window.open` while the gesture is valid) but **only** when the title ends with **`(OpenLink)`**. If the title does **not** end with `(OpenLink)`, only the Rem document opens — external URLs are not opened in new tabs. |
@@ -126,7 +126,7 @@ This file has grown into the most heavily customised widget. All changes are add
 
 ### 6.2. `src/components/buttons/SplitButton.tsx` *(new file)*
 
-**What changed:** New component that renders a split button — main click area on the left, small chevron on the right that opens a dropdown menu. Used by the Next, Open Editor, and Skip buttons. Replaces the upstream `DraggableButton` pattern. Added an iframe sandbox padding hack in the `useEffect` (`document.body.style.paddingBottom = '150px'`) whenever the menu toggles open to proactively expand the RemNote plugin boundary, gracefully preventing native clipping since it renders downward as a `position: absolute` popover.
+**What changed:** New component that renders a split button — main click area on the left, small chevron on the right that opens a dropdown menu. Used by the Next, Open Editor, and Skip buttons. Replaces the upstream `DraggableButton` pattern. Added an iframe sandbox padding hack in the `useEffect` (`document.body.style.paddingBottom = '150px'`) whenever the menu toggles open to proactively expand the RemNote plugin boundary, gracefully preventing native clipping since it renders downward as a `position: absolute` popover. Later updated so optional custom `style` props also apply to the chevron segment, enabling consistent full-button theming (used by green Open Editor).
 
 **Merge rule:** Freestanding new file. No conflict expected. If upstream introduces its own split-button or dropdown component, consider consolidating, but ensure any absolute-positioned dropdown injects dynamic body padding to survive iframe clipping.
 
@@ -417,3 +417,18 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 - `src/widgets/answer_buttons.tsx` — Open Editor flow now captures PDF page history first, applies review/cache updates directly, pre-resolves `incRemType`, then dispatches `removeCurrentCardFromQueue()` and editor-open concurrently via `Promise.allSettled` to avoid widget teardown races. Saturday/Monday Open Editor dropdown paths use the same pre-resolved type strategy.
 
 **Notes:** This addresses two race outcomes observed during testing: (1) review updated but card sometimes remained in queue, and (2) card advanced but editor sometimes failed to open. The fix mirrors the robust ordering used by the timer-based editor path while preserving `(OpenLink)` skip-doc behavior.
+
+---
+
+### 2026-04-24 — Edit (Open Editor visual refresh: green theme + next-date sublabel)
+
+**Upstream commit(s):** N/A (local edit)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`npm run build`)
+**Files touched:**
+- `src/widgets/answer_buttons.tsx` — Open Editor uses a custom green style and now shows next repetition timing (`<NextRepTime />`) as its sublabel, with amber `invalid rotation` fallback matching the Next button
+- `src/components/buttons/SplitButton.tsx` — applied custom `style` overrides to chevron segment as well, so split buttons preserve uniform theming across both halves
+- `public/manifest.json` — bumped version from `0.2.174` to `0.2.175`
+
+**Notes:** This is a UI-only refinement; Open Editor scheduling/open behavior and `(OpenLink)` routing policy are unchanged.
