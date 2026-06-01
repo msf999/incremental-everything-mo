@@ -13,11 +13,13 @@ import {
   alwaysUseLightModeOnMobileId,
   alwaysUseLightModeOnWebId,
   remnoteEnvironmentId,
-  showRemsAsIsolatedInQueueId,
+  isolatedQueueModeId,
   displayFsrsDsrId,
   fsrsWeightsId,
   displayQueueToolbarPriorityId,
   displayWeightedShieldId,
+  autoFocusQueueDashboardId,
+  enableHideInQueueIntegrationId,
 } from '../lib/consts';
 
 const hideCardPriorityTagId = 'hide-card-priority-tag';
@@ -92,7 +94,7 @@ export async function registerPluginSettings(plugin: ReactRNPlugin) {
     id: betaFirstReviewIntervalId,
     title: 'First Review Interval (Beta Scheduler)',
     description:
-      'Interval in days assigned after completing the first review. Not to be confused with "Initial Interval", which controls when a new IncRem first appears in the queue (before any review). Only used when the Beta Scheduler is enabled.',
+      'Interval in days assigned after completing the first review. Not to be confused with "Initial Interval", which controls when a new IncRem first appears in the queue (before any review). Only used when the Beta Scheduler is enabled. Default: 5 days.',
     defaultValue: 5,
   });
 
@@ -100,7 +102,7 @@ export async function registerPluginSettings(plugin: ReactRNPlugin) {
     id: betaMaxIntervalId,
     title: 'Max Interval (Beta Scheduler)',
     description:
-      'Upper bound in days the interval gradually approaches. The interval will never exceed this value. Only used when the Beta Scheduler is enabled.',
+      'Upper bound in days the interval gradually approaches. The interval will never exceed this value. Only used when the Beta Scheduler is enabled. Default: 30 days.',
     defaultValue: 30,
   });
 
@@ -148,7 +150,7 @@ export async function registerPluginSettings(plugin: ReactRNPlugin) {
 
   plugin.settings.registerNumberSetting({
     id: defaultPriorityId,
-    title: 'Default Priority',
+    title: 'Default IncRem Priority',
     description: 'Sets the default priority for new incremental rem (0-100, Lower = more important). Default: 10',
     defaultValue: 10,
     validators: [
@@ -193,8 +195,8 @@ export async function registerPluginSettings(plugin: ReactRNPlugin) {
 
   plugin.settings.registerDropdownSetting({
     id: 'priorityEditorDisplayMode',
-    title: 'Priority Editor in Editor',
-    description: 'Controls when to show the priority widget in the right-hand margin of the editor.',
+    title: 'Priority Widget in Editor',
+    description: 'Controls when to show the priority widget in the right-hand margin of each Rem in the editor.',
     defaultValue: 'all',
     options: [
       {
@@ -216,15 +218,6 @@ export async function registerPluginSettings(plugin: ReactRNPlugin) {
   });
 
   // Queue Display Settings
-
-  plugin.settings.registerBooleanSetting({
-    id: showRemsAsIsolatedInQueueId,
-    title: 'Show regular Rems in isolated view (Queue)',
-    description:
-      'When enabled, incremental Rems that are plain Rems will use the isolated card view in the queue instead of the full document context. Switch back to context with the button in the queue.',
-    defaultValue: false,
-  });
-
 
   plugin.settings.registerBooleanSetting({
     id: displayPriorityShieldId,
@@ -250,6 +243,47 @@ export async function registerPluginSettings(plugin: ReactRNPlugin) {
     description:
       'If enabled, exhibits the PriorityBadge of the current flashcard or IncRem at the top right of the queue.',
     defaultValue: true,
+  });
+
+  plugin.settings.registerDropdownSetting({
+    id: isolatedQueueModeId,
+    title: 'Use Isolated Card View in Queue for',
+    description:
+      'Choose which incremental items use the isolated card view as their default view in the queue. ' +
+      'Highlights that do NOT use the isolated card view will be shown inside the PDF/HTML reader instead, ' +
+      'and regular Rems that do NOT use it will be shown in the full document context. ' +
+      'You can always toggle between the two views with the button in the queue — this setting only determines the initial view.',
+    defaultValue: 'highlights',
+    options: [
+      {
+        key: 'highlights',
+        label: 'Highlights (PDF/HTML)',
+        value: 'highlights',
+      },
+      {
+        key: 'rems',
+        label: 'Regular Rems',
+        value: 'rems',
+      },
+      {
+        key: 'both',
+        label: 'Both',
+        value: 'both',
+      },
+      {
+        key: 'none',
+        label: 'None',
+        value: 'none',
+      },
+    ],
+  });
+
+  plugin.settings.registerBooleanSetting({
+    id: autoFocusQueueDashboardId,
+    title: 'Auto focus Queue Dashboard',
+    description:
+      'When enabled, opens the Practiced Queues dashboard in the Right Sidebar automatically on Queue Enter so you always have a live view of the current session. Note: PDF IncRems may temporarily steal focus to PDF-related tabs; the dashboard tab stays available for re-selection. (Does not apply to mobile)',
+    defaultValue: false,
   });
 
 
@@ -310,6 +344,21 @@ export async function registerPluginSettings(plugin: ReactRNPlugin) {
   }
 
 
+
+  // Hide-in-Queue integration (powerups + commands ported from the standalone
+  // "Hide in Queue" plugin). Excludes "Remove Parent" and "Remove Grandparent",
+  // which are always registered (the Cloze and Extract creators depend on them).
+
+  plugin.settings.registerBooleanSetting({
+    id: enableHideInQueueIntegrationId,
+    title: 'Enable Hide-in-Queue powerups and commands',
+    description:
+      'If enabled, registers the "Hide in Queue", "Remove from Queue", "No Hierarchy", "Hide Parent", and "Hide Grandparent" powerups and their commands directly inside Incremental Everything.\n\n' +
+      'WARNING: only enable this if you do NOT have the standalone "Hide in Queue" plugin installed — duplicate powerup registration throws a fatal error that breaks this plugin. If you currently have the standalone plugin, uninstall it first, then reload RemNote.\n\n' +
+      'The "Remove Parent" and "Remove Grandparent" powerups/commands (used internally by the Cloze and Extract creators) are always registered regardless of this setting.\n\n' +
+      'After changing this setting, reload RemNote.',
+    defaultValue: false,
+  });
 
   // Performance Mode
 
@@ -388,6 +437,54 @@ export async function registerPluginSettings(plugin: ReactRNPlugin) {
         value: 'www',
       },
     ],
+  });
+
+  // Practiced Queues Settings
+
+  plugin.settings.registerNumberSetting({
+    id: 'flashcard_response_time_limit',
+    title: 'Flashcard Response Time Limit (seconds)',
+    description:
+      "If you take longer to answer a flashcard than this (e.g. because you walked away), " +
+      "only this much time will be counted in Practiced Queues session statistics. " +
+      "Matches RemNote's native 'Flashcard Response Time Limit' setting. Default: 180s.",
+    defaultValue: 180,
+  });
+
+  // Mastery Drill Settings
+
+  plugin.settings.registerBooleanSetting({
+    id: 'skip_mastery_drill',
+    title: 'Skip Mastery Drill',
+    description:
+      'If enabled, all Mastery Drill features are turned off: the drill popup and sidebar ' +
+      'notification are hidden, the "Mastery Drill" command is not registered, and cards rated ' +
+      'Again or Hard are no longer tracked or added to the drill queue. Turn this on if you ' +
+      'do not want to use the Mastery Drill workflow at all.' +
+      'Requires reloading RemNote to take effect.',
+    defaultValue: false,
+  });
+
+  plugin.settings.registerNumberSetting({
+    id: 'old_item_threshold',
+    title: 'Old Items Threshold (Days) for Mastery Drill',
+    description: 'Items older than this number of days will trigger a warning in the Mastery Drill.',
+    defaultValue: 7,
+  });
+
+  plugin.settings.registerNumberSetting({
+    id: 'mastery_drill_min_delay_minutes',
+    title: 'Mastery Drill Minimum Delay (Minutes)',
+    description:
+      'A card rated Again or Hard will not appear in the Mastery Drill until at least this many minutes have passed since it was last reviewed. Prevents reviewing the same card again too soon. Default: 120 minutes.',
+    defaultValue: 120,
+  });
+
+  plugin.settings.registerBooleanSetting({
+    id: 'disable_final_drill_notification',
+    title: 'Disable Mastery Drill Notifications',
+    description: 'If enabled, the Mastery Drill sidebar notification will not appear.',
+    defaultValue: false,
   });
 
 }

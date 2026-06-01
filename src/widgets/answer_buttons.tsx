@@ -6,7 +6,7 @@ import {
   RNPlugin,
   PluginRem,
 } from '@remnote/plugin-sdk';
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState, useLayoutEffect } from 'react';
 import * as _ from 'remeda';
 import dayjs from 'dayjs';
 import { IncrementalRep } from '../lib/incremental_rem/types';
@@ -30,13 +30,14 @@ import { getIncrementalRemFromRem, handleNextRepetitionClick, handleNextRepetiti
 import { removeIncrementalRemCache, updateIncrementalRemCache } from '../lib/incremental_rem/cache';
 import { IncrementalRem } from '../lib/incremental_rem';
 import { percentileToHslColor, calculateRelativePercentile, calculateVolumeBasedPercentile, calculateWeightedShield, PERFORMANCE_MODE_LIGHT } from '../lib/utils';
-import { safeRemTextToString, findPDFinRem, addPageToHistory, getPageHistory, getCurrentPageKey, getDescendantsToDepth } from '../lib/pdfUtils';
+import { safeRemTextToString, getActivePdfForIncRem, findHTMLinRem, addPageToHistory, getPageHistory, getCurrentPageKey, getDescendantsToDepth, resolveSessionBookmarkCarry } from '../lib/pdfUtils';
 import { remTitleEndsWithOpenLinkTag, extractExternalHttpUrlsFromRem } from '../lib/open_editor_link_tag';
 import { QueueSessionCache, setCardPriority } from '../lib/card_priority';
 import { WeightedShieldTooltip } from '../components';
 import { shouldUseLightMode } from '../lib/mobileUtils';
 import { getHtmlSourceUrl, determineIncRemType } from '../lib/incRemHelpers';
 import { transferToDismissed } from '../lib/dismissed';
+import { addToIncrementalHistory } from '../lib/history_utils';
 import { handleReviewInEditorRem } from '../lib/review_actions';
 
 import { handleCardPriorityInheritance } from '../lib/card_priority/card_priority_inheritance';
@@ -217,16 +218,20 @@ export function AnswerButtons() {
     return remTitleEndsWithOpenLinkTag(rp, baseData.rem);
   }, [baseData?.rem]);
 
-  // Fetch the most recent PDF bookmark highlightId for this IncRem (only for pdf type)
+  // Fetch the most recent bookmark highlightId for this IncRem (pdf or html doc reps).
+  // Skipped for highlight reps — those auto-scroll to the highlight itself, no
+  // separate bookmark concept applies.
   const bookmarkHighlightId = useTrackerPlugin(async (rp) => {
     if (!baseData?.rem) return null;
     const type = await rp.storage.getSession<string | null>(currentIncrementalRemTypeKey);
-    if (type !== 'pdf') return null;
+    if (type !== 'pdf' && type !== 'html') return null;
 
-    const pdfRem = await findPDFinRem(rp, baseData.rem);
-    if (!pdfRem) return null;
+    const hostRem = type === 'pdf'
+      ? await getActivePdfForIncRem(rp, baseData.rem)
+      : await findHTMLinRem(rp, baseData.rem);
+    if (!hostRem) return null;
 
-    const history = await getPageHistory(rp, baseData.rem._id, pdfRem._id);
+    const history = await getPageHistory(rp, baseData.rem._id, hostRem._id);
     // Only use the highlight if the LAST entry carries a highlightId.
     // If a manual position was recorded after the highlight bookmark, the button
     // would scroll to a stale position, so we suppress it in that case.
@@ -266,6 +271,28 @@ export function AnswerButtons() {
     return { reps, totalMinutes };
   }, [coreData?.incRemInfo?.history]);
 
+  // Detect whether the stats separator `|` has flex-wrapped to a new line.
+  // CSS cannot observe line-breaks in a flex-wrap container, so we compare the
+  // vertical position of the separator span against the stats div with a layout effect.
+  // The `|` stays in the DOM (opacity: 0 when hidden) so it's always measurable.
+  const statsSepRef = useRef<HTMLSpanElement>(null);
+  const statsContainerRef = useRef<HTMLDivElement>(null);
+  const [statsSepVisible, setStatsSepVisible] = useState(true);
+
+  useLayoutEffect(() => {
+    const sep = statsSepRef.current;
+    const stats = statsContainerRef.current;
+    if (!sep || !stats) return;
+    // Compare vertical midpoints rather than top edges: in a centered flex row,
+    // elements of different heights have different tops even when on the same row.
+    const sepRect = sep.getBoundingClientRect();
+    const statsRect = stats.getBoundingClientRect();
+    const sepMid = sepRect.top + sepRect.height / 2;
+    const statsMid = statsRect.top + statsRect.height / 2;
+    const sameRow = Math.abs(sepMid - statsMid) < 4;
+    setStatsSepVisible(sameRow);
+  }); // No deps — runs after every render so it catches the first render where refs are populated
+
   // ✅ NOW we can do early returns AFTER all hooks are called
   if (!coreData) {
     return (
@@ -299,13 +326,22 @@ export function AnswerButtons() {
 
   const capturePdfPageHistoryIfNeeded = async () => {
     if (remType === 'pdf') {
-      const pdfRem = await findPDFinRem(plugin, rem);
+      const pdfRem = await getActivePdfForIncRem(plugin, rem);
       if (pdfRem) {
         const pageKey = getCurrentPageKey(rem._id, pdfRem._id);
         const currentPage = await plugin.storage.getSynced<number>(pageKey);
 
         if (currentPage) {
-          await addPageToHistory(plugin, rem._id, pdfRem._id, currentPage);
+          // Carry a session bookmark forward so this reading-time entry does
+          // not bury it and make the Scroll button appear stale.
+          const carryHighlightId = await resolveSessionBookmarkCarry(plugin, rem._id, pdfRem._id, currentPage);
+          // Compute review duration here (addPageToHistory no longer auto-
+          // computes — bookmark/UI callers must not record durations).
+          const startTime = await plugin.storage.getSession<number>(incremReviewStartTimeKey);
+          const reviewTimeSeconds = startTime
+            ? Math.round((Date.now() - startTime) / 1000)
+            : undefined;
+          await addPageToHistory(plugin, rem._id, pdfRem._id, currentPage, reviewTimeSeconds, carryHighlightId);
         }
       }
     }
@@ -429,6 +465,7 @@ export function AnswerButtons() {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
+    flexWrap: 'wrap',
     gap: '16px',
     padding: '8px 16px',
     backgroundColor: 'var(--rn-clr-background-secondary)',
@@ -585,6 +622,9 @@ export function AnswerButtons() {
             // Save updated history to dismissed powerup BEFORE removing incremental
             await transferToDismissed(plugin, rem, updatedHistory);
 
+            // Reflect the dismissal in the Incremental History widget
+            await addToIncrementalHistory(plugin, rem._id, { dismissed: true });
+
             // Remove from session cache
             await removeIncrementalRemCache(plugin, rem._id);
 
@@ -660,7 +700,7 @@ export function AnswerButtons() {
                 border: '2px solid var(--rn-clr-blue, #3b82f6)',
                 fontWeight: 600,
               }}
-              title="Scroll to Bookmark: Jump to your last saved reading position in the PDF"
+              title="Scroll to Bookmark: Jump to your last saved reading position in the document"
             >
               <div style={buttonStyles.label}>🔖 Scroll to Bookmark</div>
             </Button>
@@ -748,7 +788,7 @@ export function AnswerButtons() {
                         animation: isKbShieldActive ? 'shieldTextGlow 2s ease-in-out infinite' : 'none',
                         color: isKbShieldActive ? 'var(--rn-clr-blue)' : 'inherit'
                       }}>
-                        KB: <strong>{shieldStatusAsync.kb.absolute}</strong> ({shieldStatusAsync.kb.percentile?.toFixed(1)}%)
+                        KB: <strong style={{ color: percentileToHslColor(shieldStatusAsync.kb.percentile ?? shieldStatusAsync.kb.absolute) }}>{shieldStatusAsync.kb.absolute}</strong> ({shieldStatusAsync.kb.percentile?.toFixed(1)}%)
                       </span>
                     ) : (
                       <span>KB: 100%</span>
@@ -758,7 +798,7 @@ export function AnswerButtons() {
                         animation: isDocShieldActive ? 'shieldTextGlow 2s ease-in-out infinite' : 'none',
                         color: isDocShieldActive ? 'var(--rn-clr-blue)' : 'inherit'
                       }}>
-                        Doc: <strong>{shieldStatusAsync.doc.absolute}</strong> ({shieldStatusAsync.doc.percentile?.toFixed(1)}%)
+                        Doc: <strong style={{ color: percentileToHslColor(shieldStatusAsync.doc.percentile ?? shieldStatusAsync.doc.absolute) }}>{shieldStatusAsync.doc.absolute}</strong> ({shieldStatusAsync.doc.percentile?.toFixed(1)}%)
                       </span>
                     ) : (
                       sessionCache?.dueIncRemsInScope && <span>Doc: 100%</span>
@@ -777,12 +817,24 @@ export function AnswerButtons() {
                 `}</style>
               </>
             )}
+          </div>
 
+          {/* Separator before Weighted/Reps — hidden when it has wrapped to a new line */}
+          <span
+            ref={statsSepRef}
+            style={{
+              color: 'var(--rn-clr-content-tertiary)',
+              opacity: statsSepVisible ? 1 : 0,
+              pointerEvents: 'none',
+            }}
+          >|</span>
+
+          {/* Right side: Weighted Shield + Reps — wraps together as a unit */}
+          <div ref={statsContainerRef} style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             {/* Weighted Shield Display */}
             {!useLightMode && shouldDisplayWeightedShield && shieldStatusAsync &&
               shieldStatusAsync.weightedKB !== null && shieldStatusAsync.weightedKB !== undefined && (
                 <>
-                  <span style={{ color: 'var(--rn-clr-content-tertiary)' }}>|</span>
                   <WeightedShieldTooltip
                     kbValue={shieldStatusAsync.weightedKB}
                     docValue={shieldStatusAsync.weightedDoc}
@@ -791,12 +843,10 @@ export function AnswerButtons() {
                     docItems={shieldStatusAsync.docIncRems}
                     itemLabel="IncRem"
                   />
+                  <span style={{ color: 'var(--rn-clr-content-tertiary)' }}>|</span>
                 </>
               )
             }
-
-            {/* Separator before History */}
-            <span style={{ color: 'var(--rn-clr-content-tertiary)' }}>|</span>
 
             {/* Repetition History Stats and Icon */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

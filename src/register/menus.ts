@@ -12,7 +12,7 @@ import {
   pageRangeWidgetId,
   incRemDisabledDeviceKey,
 } from '../lib/consts';
-import { safeRemTextToString, findPDFinRem, findIncrementalRemForPDF, getPdfInfoFromHighlight, addPageToHistory, setIncrementalReadingPosition } from '../lib/pdfUtils';
+import { safeRemTextToString, getActivePdfForIncRem, getAllPDFsInRem, findIncrementalRemForPDF, getPdfInfoFromHighlight, addPageToHistory, setIncrementalReadingPosition } from '../lib/pdfUtils';
 import { initIncrementalRem } from './powerups';
 import { createRemFromHighlight } from '../lib/highlightActions';
 
@@ -77,6 +77,25 @@ export async function registerMenus(plugin: ReactRNPlugin) {
           remId: rem._id,
         });
       }
+    },
+  });
+
+  plugin.app.registerMenuItem({
+    id: 'set_priority_document_menuitem',
+    location: PluginCommandMenuLocation.DocumentMenu,
+    name: 'Set Priority',
+    action: async (args: { remId: string }) => {
+      const rem = await plugin.rem.findOne(args.remId);
+      if (!rem) {
+        await plugin.app.toast('Could not find a Rem to set priority for.');
+        return;
+      }
+
+      await plugin.storage.setSession('priorityPopupTargetRemId', undefined);
+
+      await plugin.widget.openPopup('priority', {
+        remId: rem._id,
+      });
     },
   });
 
@@ -194,33 +213,42 @@ export async function registerMenus(plugin: ReactRNPlugin) {
     location: PluginCommandMenuLocation.DocumentMenu,
     name: 'PDF Control Panel',
     action: async (args: { remId: string }) => {
+      console.log('[PDF Control Panel] Menu item clicked, resolving PDF rem...');
       const rem = await plugin.rem.findOne(args.remId);
       if (!rem) return;
 
-      const pdfRem = await findPDFinRem(plugin, rem);
-
+      const pdfRem = await getActivePdfForIncRem(plugin, rem);
       if (!pdfRem) {
         await plugin.app.toast('No PDF found in this rem or its sources');
         return;
       }
 
-      const incrementalRem = await findIncrementalRemForPDF(plugin, pdfRem, false);
+      // If the menu was triggered from an IncRem document (rather than from
+      // the PDF document itself), pass the IncRem id directly. Without this,
+      // the widget falls back to findIncrementalRemForPDFFast, which walks
+      // the known-rems index and returns the *first* match — silently
+      // landing on the wrong IncRem when many share the same PDF (e.g. a
+      // book's chapters all sourcing the same textbook PDF). Pre-populating
+      // allPdfRemIds lets the PDF selector render immediately too.
+      const isIncRem = await rem.hasPowerup(powerupCode);
+      const incrementalRemId = isIncRem ? rem._id : null;
+      const allPdfRemIds = isIncRem
+        ? (await getAllPDFsInRem(plugin, rem)).map((p) => p.rem._id)
+        : undefined;
 
-      if (!incrementalRem) {
-        await plugin.app.toast('No incremental rem found for this PDF');
-        return;
-      }
-
-      const context = {
-        incrementalRemId: incrementalRem._id,
+      console.log('[PDF Control Panel] Opening popup with', {
         pdfRemId: pdfRem._id,
+        incrementalRemId,
+        allPdfCount: allPdfRemIds?.length ?? 'unknown',
+      });
+      await plugin.storage.setSession('pageRangeContext', {
+        pdfRemId: pdfRem._id,
+        incrementalRemId,   // null only when triggered from a non-IncRem doc
         totalPages: 0,
-        currentPage: 1
-      };
-
-      await plugin.storage.setSession('pageRangeContext', context);
+        currentPage: 1,
+        allPdfRemIds,
+      });
       await plugin.storage.setSession('pageRangePopupOpen', true);
-
       await plugin.widget.openPopup(pageRangeWidgetId);
     },
   });

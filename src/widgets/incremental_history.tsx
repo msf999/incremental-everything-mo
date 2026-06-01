@@ -10,6 +10,10 @@ import {
 import { timeSince } from "../lib/utils";
 import { IncrementalHistoryData } from "../lib/history_utils";
 import { safeRemTextToString } from "../lib/pdfUtils";
+import { PriorityBadge } from "../components";
+import { InlinePriorityEditor } from "../components/InlineEditors";
+import { getIncrementalRemFromRem, IncrementalRem } from "../lib/incremental_rem";
+import { allIncrementalRemKey, pendingPrioritySaveKey } from "../lib/consts";
 
 const NUM_TO_LOAD_IN_BATCH = 30;
 
@@ -25,6 +29,27 @@ function IncrementalHistory() {
 
     // Search State
     const [searchText, setSearchText] = useState("");
+
+    // Event-type filter (radio buttons under the search box)
+    const [filterEvent, setFilterEvent] = useState<'ALL' | 'reviewed' | 'created' | 'dismissed'>('ALL');
+
+    // KB-wide priority percentile map for IncRem priority badges
+    const [percentileMap, setPercentileMap] = useState<Record<string, number>>({});
+
+    useEffect(() => {
+        let cancelled = false;
+        async function buildPercentiles() {
+            const allIncRems = (await plugin.storage.getSession<IncrementalRem[]>(allIncrementalRemKey)) || [];
+            const sorted = [...allIncRems].sort((a, b) => a.priority - b.priority);
+            const map: Record<string, number> = {};
+            sorted.forEach((item, index) => {
+                map[item.remId] = Math.round(((index + 1) / sorted.length) * 100);
+            });
+            if (!cancelled) setPercentileMap(map);
+        }
+        buildPercentiles();
+        return () => { cancelled = true; };
+    }, [plugin, historyDataRaw]);
 
     // Backfill Effect: Fetch text for items that don't have it
     useEffect(() => {
@@ -93,7 +118,18 @@ function IncrementalHistory() {
                 return item.kbId === currentKbId;
             });
 
-            // 2. Search Filter
+            // 2. Event-type filter. "dismissed" includes both standalone dismissals
+            //    and reviewed-and-then-dismissed entries (which display both badges).
+            if (filterEvent !== 'ALL') {
+                filtered = filtered.filter((item) => {
+                    if (filterEvent === 'dismissed') {
+                        return item.eventType === 'dismissed' || !!item.wasDismissed;
+                    }
+                    return item.eventType === filterEvent;
+                });
+            }
+
+            // 3. Search Filter
             if (searchText.trim().length > 0) {
                 const lowerSearch = searchText.toLowerCase();
                 const tokens = lowerSearch.split(/\s+/).filter(t => t.length > 0);
@@ -125,7 +161,7 @@ function IncrementalHistory() {
             setFilteredData(filtered);
         }
         filterData();
-    }, [historyDataRaw, plugin, searchText]);
+    }, [historyDataRaw, plugin, searchText, filterEvent]);
 
     const closeIndex = (itemKey: number) => {
         // Find index in original list
@@ -170,6 +206,20 @@ function IncrementalHistory() {
                     value={searchText}
                     onChange={(e) => setSearchText(e.target.value)}
                 />
+                <div className="flex flex-wrap gap-4 mt-2 text-sm rn-clr-content-primary">
+                    <label className="flex items-center gap-1 cursor-pointer">
+                        <input type="radio" checked={filterEvent === 'ALL'} onChange={() => setFilterEvent('ALL')} /> All
+                    </label>
+                    <label className="flex items-center gap-1 cursor-pointer">
+                        <input type="radio" checked={filterEvent === 'reviewed'} onChange={() => setFilterEvent('reviewed')} /> Reviewed
+                    </label>
+                    <label className="flex items-center gap-1 cursor-pointer">
+                        <input type="radio" checked={filterEvent === 'created'} onChange={() => setFilterEvent('created')} /> Created
+                    </label>
+                    <label className="flex items-center gap-1 cursor-pointer">
+                        <input type="radio" checked={filterEvent === 'dismissed'} onChange={() => setFilterEvent('dismissed')} /> Dismissed
+                    </label>
+                </div>
             </div>
             {filteredData.length === 0 && (
                 <div className="p-2 rn-clr-content-primary">
@@ -183,6 +233,7 @@ function IncrementalHistory() {
                     key={data.key || Math.random()}
                     setData={(c) => setData(data.key, c)}
                     closeIndex={() => closeIndex(data.key)}
+                    percentile={percentileMap[data.remId]}
                 />
             ))}
             {numUnloaded > 0 && (
@@ -198,8 +249,13 @@ function IncrementalHistory() {
 }
 
 /** Small pill badge to differentiate event types */
-function EventBadge({ eventType }: { eventType?: 'reviewed' | 'created' }) {
-    const isCreated = eventType === 'created';
+function EventBadge({ eventType }: { eventType?: 'reviewed' | 'created' | 'dismissed' }) {
+    const palette =
+        eventType === 'created'
+            ? { bg: 'rgba(16,185,129,0.15)', fg: '#10b981', label: 'Created' }
+            : eventType === 'dismissed'
+                ? { bg: 'rgba(239,68,68,0.15)', fg: '#ef4444', label: 'Dismissed' }
+                : { bg: 'rgba(99,102,241,0.12)', fg: '#818cf8', label: 'Reviewed' };
     return (
         <span
             style={{
@@ -210,13 +266,13 @@ function EventBadge({ eventType }: { eventType?: 'reviewed' | 'created' }) {
                 textTransform: 'uppercase',
                 padding: '1px 5px',
                 borderRadius: 3,
-                backgroundColor: isCreated ? 'rgba(16,185,129,0.15)' : 'rgba(99,102,241,0.12)',
-                color: isCreated ? '#10b981' : '#818cf8',
+                backgroundColor: palette.bg,
+                color: palette.fg,
                 flexShrink: 0,
                 alignSelf: 'center',
             }}
         >
-            {isCreated ? 'Created' : 'Reviewed'}
+            {palette.label}
         </span>
     );
 }
@@ -226,13 +282,52 @@ function HistoryItem({
     remId,
     setData,
     closeIndex,
+    percentile,
 }: {
     data: IncrementalHistoryData;
     remId: string;
     setData: (changes: Partial<IncrementalHistoryData>) => void;
     closeIndex: () => void;
+    percentile?: number;
 }) {
     const plugin = usePlugin();
+
+    const [incPriority, setIncPriority] = useState<number | null>(null);
+    const [editingPriority, setEditingPriority] = useState<number | null>(null);
+
+    // Load the Incremental Rem priority for the badge
+    useEffect(() => {
+        let cancelled = false;
+        async function loadPriority() {
+            const rem = await plugin.rem.findOne(remId);
+            if (!rem || cancelled) return;
+            const incRem = await getIncrementalRemFromRem(plugin, rem);
+            if (!cancelled) setIncPriority(incRem ? incRem.priority : null);
+        }
+        loadPriority();
+        return () => { cancelled = true; };
+    }, [plugin, remId]);
+
+    // Delegate the DB write to the persistent background tracker (index.tsx) via
+    // pendingPrioritySaveKey, mirroring priority.tsx. The widget never writes to the
+    // DB directly — this survives sidebar/popup teardown and avoids racing the queue.
+    const savePriority = async () => {
+        if (editingPriority === null) return;
+        const newPriority = editingPriority;
+        setEditingPriority(null);
+
+        plugin.storage.setSession(pendingPrioritySaveKey, {
+            remId,
+            incPriority: newPriority,
+            cardPriority: null,
+            cardSource: 'manual',
+            needsAddPowerup: false,
+            triggerCascade: true,
+        }).catch(console.error);
+
+        // Optimistically reflect the change in the badge.
+        setIncPriority(newPriority);
+    };
 
     const openRem = async (remId: RemId) => {
         const rem = await plugin.rem.findOne(remId);
@@ -242,9 +337,12 @@ function HistoryItem({
     };
 
     const isCreated = data.eventType === 'created';
+    const isDismissedOnly = data.eventType === 'dismissed';
     const timeLabel = isCreated
         ? `Created ${timeSince(new Date(data.time))}`
-        : `Seen ${timeSince(new Date(data.time))}`;
+        : isDismissedOnly
+            ? `Dismissed ${timeSince(new Date(data.time))}`
+            : `Seen ${timeSince(new Date(data.time))}`;
 
     return (
         <div className="px-1 py-4 border-b border-gray-100" key={data.key}>
@@ -263,17 +361,40 @@ function HistoryItem({
                         }}
                     />
                 </div>
-                <div className="flex-grow min-w-0" onClick={() => openRem(remId)}>
+                <div className="flex-grow min-w-0">
                     <div className="flex items-center gap-1.5 mb-0.5">
                         <EventBadge eventType={data.eventType} />
+                        {data.eventType === 'reviewed' && data.wasDismissed && (
+                            <EventBadge eventType="dismissed" />
+                        )}
+                        {incPriority !== null && (
+                            <span
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setEditingPriority((prev) => (prev === null ? incPriority : null));
+                                }}
+                                className="ml-auto"
+                                style={{ cursor: 'pointer' }}
+                                title="Click to change priority"
+                            >
+                                <PriorityBadge
+                                    priority={incPriority}
+                                    percentile={percentile}
+                                    compact
+                                    useAbsoluteColoring={percentile == null}
+                                />
+                            </span>
+                        )}
                     </div>
-                    <RemViewer
-                        remId={remId}
-                        width="100%"
-                        className="font-light cursor-pointer line-clamp-2"
-                    />
-                    <div className="text-xs rn-clr-content-tertiary">
-                        {timeLabel}
+                    <div onClick={() => openRem(remId)}>
+                        <RemViewer
+                            remId={remId}
+                            width="100%"
+                            className="font-light cursor-pointer line-clamp-2"
+                        />
+                        <div className="text-xs rn-clr-content-tertiary">
+                            {timeLabel}
+                        </div>
                     </div>
                 </div>
                 <div
@@ -292,6 +413,16 @@ function HistoryItem({
                     />
                 </div>
             </div>
+            {editingPriority !== null && (
+                <div className="px-1 pb-1" onClick={(e) => e.stopPropagation()}>
+                    <InlinePriorityEditor
+                        value={editingPriority}
+                        onChange={setEditingPriority}
+                        onSave={savePriority}
+                        onCancel={() => setEditingPriority(null)}
+                    />
+                </div>
+            )}
             {data.open && (
                 <div className="m-2">
                     <RemHierarchyEditorTree height="auto" width="100%" remId={remId} />

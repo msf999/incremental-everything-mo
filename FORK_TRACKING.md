@@ -34,7 +34,7 @@ When working on this repository, follow these rules in order:
 |---|---|
 | **Upstream repo** | `https://github.com/bjsi/incremental-everything` (via `hugomarins` fork) |
 | **Our fork** | `https://github.com/msf999/incremental-everything-mo` |
-| **Last synced upstream commit** | `7e0bc0d` — _Merge pull request #271 from hugomarins/main_ |
+| **Last synced upstream commit** | `2955e9a` — _Merge pull request #286 from hugomarins/main_ |
 | **Our first custom commit** | `88839e1` — _feat: add Rotation and First Added properties, make Open Editor advance queue_ |
 | **Branch** | `main` |
 
@@ -48,10 +48,13 @@ All custom changes are **additive** unless noted otherwise. No upstream logic wa
 
 | Field | Upstream Value | Our Value | Reason |
 |---|---|---|---|
+| `id` | `incremental-everything` | `incremental-everything-mo` | **Critical** — plugin identifier; must differ or our fork collides with the official plugin |
+| `name` | `Incremental Everything` | `Mo's Incremental Everything` | Fork branding |
 | `repoUrl` | `https://github.com/bjsi/incremental-everything` | `https://github.com/msf999/incremental-everything-mo` | Points to our fork |
 | `unlisted` | `false` | `true` | Prevents public listing of our private fork |
+| `author` | `Jamesb and Hugomarins (cont. Jonathangimeno)` | `Jamesb, Hugomarins and Jonathangimeno` | Minor attribution wording (cosmetic) |
 
-**Merge rule:** Always keep our values for these two fields. Accept all other manifest changes from upstream.
+**Merge rule:** Always keep our values for the four fields above (`id`, `name`, `repoUrl`, `unlisted`; `author` is cosmetic). Accept all other manifest changes from upstream — including the upstream `version` bump and the `supportUrl` / `projectUrl` / `changeLogUrl` fields (these point to the upstream repo/wiki, which is fine for a fork that tracks upstream features).
 
 ### 2. `src/lib/consts.ts`
 
@@ -432,3 +435,20 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 - `public/manifest.json` — bumped version from `0.2.174` to `0.2.175`
 
 **Notes:** This is a UI-only refinement; Open Editor scheduling/open behavior and `(OpenLink)` routing policy are unchanged.
+
+---
+
+### 2026-06-01 — Merge (upstream sync to `2955e9a`)
+
+**Upstream commit(s):** `7e0bc0d` to `2955e9a` (PR #272 through PR #286; ~245 commits)
+**Conflicts resolved:** `public/manifest.json`, `src/register/commands.ts`, `src/widgets/answer_buttons.tsx`
+**Custom code preserved:** Yes — adapted (one forced helper migration, see below)
+**Compilation verified:** Yes (production `webpack` build + zip; manifest `validate` passed; `tsc` errors 17, all pre-existing, none in the 3 resolved files)
+**Files touched:**
+- `public/manifest.json` — kept fork `id`/`name`/`repoUrl`/`unlisted`; accepted upstream `version` (patch 175 → 259) and the new `supportUrl`/`projectUrl`/`changeLogUrl` fields. Documented `id`/`name` as overrides (this doc previously listed only `repoUrl`/`unlisted` — drift corrected in Deviation 1).
+- `src/register/commands.ts` — import conflict was additive on both sides (kept our `open_editor_link_tag` + `incRemHelpers` imports alongside upstream `text_case_converter_utils` / `outline_restructure` / `editor_selection` / `extract`). **Adaptation:** our `open-incremental-editor` (`Ctrl+G`) PDF page-capture migrated `findPDFinRem(plugin, rem)` → `getActivePdfForIncRem(plugin, rem)` — upstream replaced `findPDFinRem`; the new fn matches the 2-arg call and mirrors the answer-buttons Open Editor flow.
+- `src/widgets/answer_buttons.tsx` — took upstream React import superset (`useRef`, `useLayoutEffect`); migrated pdfUtils import to upstream set (`getActivePdfForIncRem`, `findHTMLinRem`, `resolveSessionBookmarkCarry`; dropped unused `findPDFinRem`) while keeping our `open_editor_link_tag` import; preserved our `externalUrls` + `remTitleEndsWithOpenLinkTagState` trackers and took upstream's improved bookmark comment (now covers pdf + html doc reps).
+- Auto-merged cleanly (our additions sat in separate regions): `src/lib/consts.ts`, `src/lib/incremental_rem/index.ts`, `src/register/powerups.tsx`. Untouched upstream (no conflict): `src/lib/incremental_rem/types.ts`, `src/components/NextRepTime.tsx`, `package.json`/lock, and both fork-only new files (`open_editor_link_tag.ts`, `SplitButton.tsx`).
+- Plus ~100 upstream-only files: Study Dashboard, Outline Restructure (preview/undo), Mastery Drill, Rem History widget + global open-Rem listener, wide Weighted Shield popup, Text Case converter, cloze auto-priority, queue-display powerups/commands, `quickCodes` across commands, `createExtract` + `getActivePdfForIncRem` refactors; removed 3 legacy toolbar widgets (`create_inc_rem_toolbar`, `pdf_bookmark_toolbar`, `toggle_incremental_toolbar`).
+
+**Notes:** Large delta (~6 weeks). Only 3 files conflicted; resolutions were additive except the single `findPDFinRem` → `getActivePdfForIncRem` migration forced by an upstream API replacement. Merge performed on branch `merge/upstream-2955e9a`; backup branch `backup/pre-merge-2955e9a` retained at `86028a9` until verified in-app. The forward-looking runbook is in `UPSTREAM_MERGE_PLAN.md` (kept as the reusable procedure for future syncs).

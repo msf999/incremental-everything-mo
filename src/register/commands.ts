@@ -6,6 +6,8 @@ import {
   BuiltInPowerupCodes,
   RICH_TEXT_FORMATTING,
   RichTextInterface,
+  RemType,
+  QueueInteractionScore,
 } from '@remnote/plugin-sdk';
 import {
   powerupCode,
@@ -20,13 +22,23 @@ import {
   nextInQueueCommandId,
   currentIncrementalRemTypeKey,
   incremReviewStartTimeKey,
+  allCardPriorityInfoKey,
+  allIncrementalRemKey,
+  seenCardInSessionKey,
+  seenRemInSessionKey,
+  priorityCalcScopeRemIdsKey,
 } from '../lib/consts';
+import { computeWeightedShieldBreakdown } from '../lib/utils';
+import { CardPriorityInfo } from '../lib/card_priority/types';
+import { IncrementalRem as IncrementalRemType } from '../lib/incremental_rem/types';
+import { buildDocumentScope } from '../lib/scope_helpers';
 import { initIncrementalRem } from './powerups';
 import { getIncrementalRemFromRem, handleNextRepetitionClick, getCurrentIncrementalRem } from '../lib/incremental_rem';
 import { removeIncrementalRemCache } from '../lib/incremental_rem/cache';
 import { IncrementalRep } from '../lib/incremental_rem/types';
-import { findPDFinRem, safeRemTextToString, getCurrentPageKey, addPageToHistory, registerRemsAsPdfKnown, findPreferredPDFInRem } from '../lib/pdfUtils';
+import { safeRemTextToString, getCurrentPageKey, addPageToHistory, registerRemsAsPdfKnown, getActivePdfForIncRem, getAllPDFsInRem, getDescendantsToDepth, getRemCardContent } from '../lib/pdfUtils';
 import { transferToDismissed } from '../lib/dismissed';
+import { addToIncrementalHistory, addDismissalToIncrementalHistory } from '../lib/history_utils';
 import { handleCardPriorityInheritance } from '../lib/card_priority/card_priority_inheritance';
 import { CARD_PRIORITY_CODE } from '../lib/card_priority/types';
 import dayjs from 'dayjs';
@@ -44,210 +56,43 @@ import {
 import { handleQuickPriorityChange } from '../lib/quick_priority';
 import {
   removeAllCardPriorityTags,
+  sanitizeAllRogueCardPriorityTags,
   updateAllCardPriorities,
+  setCardPriority,
 } from '../lib/card_priority';
-import { loadCardPriorityCache } from '../lib/card_priority/cache';
+import { loadCardPriorityCache, updateCardPriorityCache } from '../lib/card_priority/cache';
+import { computeClozeAutoPriority, ClozeAutoPriorityInfo } from '../lib/cloze_priority';
+import {
+  REMOVE_PARENT_POWERUP_CODE,
+  REMOVE_FROM_QUEUE_POWERUP_CODE,
+} from './queue_display_powerups';
 import { getPerformanceMode } from '../lib/utils';
 import { handleReviewInEditorRem } from '../lib/review_actions';
 import { remTitleEndsWithOpenLinkTag, extractExternalHttpUrlsFromRem } from '../lib/open_editor_link_tag';
 import { determineIncRemType } from '../lib/incRemHelpers';
+import {
+  detectCase,
+  nextCase,
+  transformCase,
+  transformTitleCase,
+} from '../lib/text_case_converter_utils';
+import {
+  OUTLINE_SNAPSHOT_KEY,
+  OutlineSnapshot,
+  revertSnapshot,
+  isMetaRem,
+} from '../lib/outline_restructure';
+import {
+  registerSelectionTracker,
+  getEffectiveSelection,
+} from '../lib/editor_selection';
+import { createExtract } from '../lib/extract';
 
 
 export async function registerCommands(plugin: ReactRNPlugin) {
-  const createExtract = async (): Promise<PluginRem | PluginRem[] | undefined> => {
-    let selection = await plugin.editor.getSelection();
-    const url = await plugin.window.getURL();
-
-    if (url.includes('/flashcards')) {
-      const currentQueueItem = await plugin.queue.getCurrentCard();
-      let isTargetingQueueContext = false;
-
-      if (!selection || !selection.type) {
-        isTargetingQueueContext = true;
-      } else if (currentQueueItem) {
-        if (selection.type === SelectionType.Rem && selection.remIds.includes(currentQueueItem.remId)) {
-          isTargetingQueueContext = true;
-        } else if (selection.type === SelectionType.Text && selection.remId === currentQueueItem.remId && selection.range.start === selection.range.end) {
-          isTargetingQueueContext = true;
-        }
-      } else {
-        const currentIncRemId = await plugin.storage.getSession<string>(currentIncRemKey);
-        if (currentIncRemId) {
-          if (selection.type === SelectionType.Rem && selection.remIds.includes(currentIncRemId)) {
-            isTargetingQueueContext = true;
-          } else if (selection.type === SelectionType.Text && selection.remId === currentIncRemId && selection.range.start === selection.range.end) {
-            isTargetingQueueContext = true;
-          }
-        }
-      }
-
-      if (isTargetingQueueContext) {
-        let targetRemId = currentQueueItem?.remId;
-        if (!targetRemId) {
-          targetRemId = await plugin.storage.getSession<string>(currentIncRemKey) || undefined;
-        }
-
-        if (targetRemId) {
-          selection = {
-            type: SelectionType.Rem,
-            remIds: [targetRemId]
-          } as any;
-        }
-      }
-    }
-
-    if (!selection) {
-      // plugin.editor.getSelection() returns undefined when focus is inside the PDF
-      // iframe. plugin.reader.addHighlight() also returns null in that context —
-      // it requires a RemNote-internal pending highlight available only through the
-      // PDFHighlightToolbar widget flow. Keyboard shortcuts cannot create PDF highlights.
-      return;
-    }
-
-    if (selection.type === SelectionType.Text && selection.range.start === selection.range.end) {
-      // Fallback empty text selections to Rem selection behavior
-      (selection as any).type = SelectionType.Rem;
-      (selection as any).remIds = [selection.remId];
-    }
-
-    // TODO: extract within extract support
-    if (selection.type === SelectionType.Text) {
-      // 1. Fetch the Rem
-      const rem = await plugin.rem.findOne(selection.remId);
-      if (!rem) return;
-
-      // 2. Extract selected text
-      const extractRem = await plugin.rem.createRem();
-      if (!extractRem) return;
-
-      await extractRem.setText([
-        ...selection.richText,
-        { i: 'q', _id: rem._id, pin: true },
-      ]);
-      await extractRem.setParent(rem);
-
-      // 3. Add "remove-from-queue" tag to the parent
-      let removeFromQueueTag = await plugin.rem.findByName(['remove-from-queue'], null);
-      if (!removeFromQueueTag) {
-        removeFromQueueTag = await plugin.rem.createRem();
-        if (removeFromQueueTag) {
-          await removeFromQueueTag.setText(['remove-from-queue']);
-        }
-      }
-      if (removeFromQueueTag) {
-        await rem.addTag(removeFromQueueTag._id);
-      }
-
-      // Make Incremental
-      await initIncrementalRem(plugin, extractRem);
-
-      // 4. Locate and Modify
-      const r_start = Math.min(selection.range.start, selection.range.end);
-      const r_end = Math.max(selection.range.start, selection.range.end);
-
-      const processRichText = (richText: RichTextInterface): RichTextInterface => {
-        const newArray: any[] = [];
-        let currIdx = 0;
-        for (const item of richText) {
-          const isString = typeof item === 'string';
-          const textNode = isString ? { i: 'm' as const, text: item } : (item as any);
-          const nodeLen = textNode.i === 'm' ? (textNode.text?.length || 0) : 1;
-          const nodeStart = currIdx;
-          const nodeEnd = currIdx + nodeLen;
-
-          if (nodeEnd <= r_start || nodeStart >= r_end) {
-            newArray.push(item);
-          } else {
-            if (textNode.i === 'm') {
-              const textStr = textNode.text || '';
-              const relStart = Math.max(0, r_start - nodeStart);
-              const relEnd = Math.min(nodeLen, r_end - nodeStart);
-
-              if (relStart > 0) {
-                newArray.push({ ...textNode, text: textStr.substring(0, relStart) });
-              }
-              newArray.push({
-                ...textNode,
-                text: textStr.substring(relStart, relEnd),
-                [RICH_TEXT_FORMATTING.HIGHLIGHT]: 6, // RemColor.Blue = 6
-              });
-
-              if (r_start < r_end && nodeStart < r_end && nodeEnd >= r_end) {
-                newArray.push({ i: 'q', _id: extractRem._id, pin: true });
-              }
-
-              if (relEnd < nodeLen) {
-                newArray.push({ ...textNode, text: textStr.substring(relEnd) });
-              }
-            } else {
-              newArray.push({
-                ...textNode,
-                [RICH_TEXT_FORMATTING.HIGHLIGHT]: 6,
-              });
-
-              if (r_start < r_end && nodeStart < r_end && nodeEnd >= r_end) {
-                newArray.push({ i: 'q', _id: extractRem._id, pin: true });
-              }
-            }
-          }
-
-          currIdx += nodeLen;
-        }
-        if (r_end > currIdx && r_start < currIdx) {
-          newArray.push({ i: 'q', _id: extractRem._id, pin: true });
-        }
-        return newArray;
-      };
-
-      // Detect if selection is in front or back
-      let isBack = false;
-      const remText = rem.text || [];
-      const frontMiddle = await plugin.richText.substring(remText, r_start, r_end);
-      if (!(await plugin.richText.equals(selection.richText, frontMiddle))) {
-        const backMiddle = await plugin.richText.substring(rem.backText || [], r_start, r_end);
-        if (await plugin.richText.equals(selection.richText, backMiddle)) {
-          isBack = true;
-        }
-      }
-
-      // 6. Save the Changes
-      if (isBack) {
-        await rem.setBackText(processRichText(rem.backText || []));
-      } else {
-        await rem.setText(processRichText(rem.text || []));
-      }
-
-      return extractRem;
-    } else if (selection.type === SelectionType.Rem) {
-      const rems = (await plugin.rem.findMany(selection.remIds)) || [];
-      // Single outer flag bracket for the entire batch — each initIncrementalRem
-      // skips its own flag management so the flag stays UP for the whole loop.
-      await plugin.storage.setSession('plugin_operation_active', true);
-      try {
-        for (const rem of rems) {
-          await initIncrementalRem(plugin, rem, { skipFlagManagement: true });
-        }
-      } finally {
-        // Don't clear the flag — each initIncrementalRem fires pendingInheritanceCascade,
-        // and the cascade tracker will clear the flag when the cascade completes.
-        // Only clear defensively if no rems were processed (e.g., empty selection).
-        if (rems.length === 0) {
-          await plugin.storage.setSession('plugin_operation_active', false);
-        }
-      }
-      return rems;
-    } else {
-      // WebReader or other reader selection — fall back to addHighlight + initIncrementalRem.
-      // Note: PDF iframe selections are unreachable here because getSelection() returns
-      // undefined for them and we already returned early above.
-      const highlight = await plugin.reader.addHighlight();
-      if (!highlight) {
-        return;
-      }
-      await initIncrementalRem(plugin, highlight);
-      return highlight;
-    }
-  };
+  // Subscribe to EditorSelectionChanged so getEffectiveSelection() can recover
+  // multi-rem selections after Cmd+/ Omnibar steals focus. See lib/editor_selection.ts.
+  registerSelectionTracker(plugin);
 
 
 
@@ -256,8 +101,9 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     id: 'extract-with-priority',
     name: 'Extract with Priority',
     keyboardShortcut: 'opt+shift+x',
+    quickCode: 'ep',
     action: async () => {
-      const result = await createExtract();
+      const result = await createExtract(plugin);
       if (!result) {
         return;
       }
@@ -283,84 +129,398 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     },
   });
 
-  plugin.app.registerCommand({
-    id: 'create-cloze-deletion',
-    name: 'Create Cloze Deletion',
-    keyboardShortcut: 'opt+z',
-    action: async () => {
+  const createClozeDeletion = async (): Promise<{
+    clozeRem: PluginRem;
+    parentRem: PluginRem;
+    autoPriority: ClozeAutoPriorityInfo;
+  } | undefined> => {
       const selection = await plugin.editor.getSelection();
-      if (!selection || selection.type !== SelectionType.Text) {
-        return;
-      }
+      if (!selection || selection.type !== SelectionType.Text) return;
       if (selection.range.start === selection.range.end) {
         await plugin.app.toast('Please select some text to create a cloze deletion.');
         return;
       }
-      
+
       const rem = await plugin.rem.findOne(selection.remId);
       if (!rem) return;
 
+      // Compute auto-priority BEFORE creating the new cloze rem, so the count of existing
+      // cloze-extract children reflects only prior clozes (not the one we're about to create).
+      const autoPriority = await computeClozeAutoPriority(plugin, rem);
+
       const r_start = Math.min(selection.range.start, selection.range.end);
-      const r_end = Math.max(selection.range.start, selection.range.end);
+
+      const frontText = rem.text || [];
+      const backText = rem.backText || [];
+      const hasBackText = backText.length > 0;
+
+      // Plain string from rich text (text nodes only, non-text nodes → '').
+      // Used for text-only position matching — immune to RemNote's i:'q' cursor-width (2 chars).
+      const rtPlainStr = (rt: RichTextInterface): string =>
+        rt.map((item: any) => typeof item === 'string' ? item : (item.i === 'm' ? (item.text || '') : '')).join('');
+
+      const selStr   = rtPlainStr(selection.richText as RichTextInterface);
+      const selLen   = selStr.length;
+      const frontStr = rtPlainStr(frontText);
+      const backStr  = rtPlainStr(backText);
+
+      // Find all offsets at which `needle` occurs in `haystack`.
+      const findAllOccurrences = (haystack: string, needle: string): number[] => {
+        const offsets: number[] = [];
+        if (!needle) return offsets;
+        let idx = 0;
+        while (true) {
+          const found = haystack.indexOf(needle, idx);
+          if (found === -1) break;
+          offsets.push(found);
+          idx = found + 1;
+        }
+        return offsets;
+      };
+
+      // Correct r_start from RemNote's cursor model into plain-string space.
+      //
+      // RemNote's editor counts each non-text node (i:'q' reference/pin) as 2 chars,
+      // while rtPlainStr gives them 0 chars. Each such node before the cursor therefore
+      // inflates r_start by 2 relative to our plain-string offset (net: -1 per node,
+      // because it contributes 2 to the editor cursor but 0 to plain-string length,
+      // and the node itself occupied 1 slot in the old nodeLen=1 model but 0 in ours).
+      //
+      // Correction: walk the combined rich text (front + back), accumulate editor-model
+      // position alongside plain-string position, stop when editor-model pos reaches r_start,
+      // and read the plain-string pos at that point.
+      const toCorrectedPlainStart = (richText: RichTextInterface, editorOffset: number): number => {
+        let editorPos = 0;
+        let plainPos  = 0;
+        for (const item of richText) {
+          if (editorPos >= editorOffset) break;
+          const node = typeof item === 'string' ? { i: 'm' as const, text: item as string } : (item as any);
+          if (node.i === 'm') {
+            const len = node.text?.length || 0;
+            const step = Math.min(len, editorOffset - editorPos);
+            editorPos += step;
+            plainPos  += step;
+          } else {
+            // Non-text nodes: count as 2 in editor model, 0 in plain-string model.
+            editorPos += 2;
+            // plainPos unchanged — these nodes contribute nothing to the plain string.
+          }
+        }
+        return plainPos;
+      };
+
+      // Build the combined (front + back) rich text as RemNote sees it in its cursor model
+      // so we can convert r_start → plain-string offset correctly.
+      const combinedRichText = [...frontText, ...backText];
+      const plainStart = toCorrectedPlainStart(combinedRichText, r_start);
+
+      // Among all occurrences of the selected text, pick the one whose plain-string
+      // start position is closest to the corrected plain-string offset.
+      // This correctly handles duplicate phrases — indexOf always returned the first one,
+      // and raw r_start was unreliable due to pin node cursor-width inflation.
+      const pickBestOccurrence = (offsets: number[], baseOffset: number = 0): number => {
+        if (offsets.length === 0) return -1;
+        return offsets.reduce((best, off) =>
+          Math.abs((off + baseOffset) - plainStart) < Math.abs((best + baseOffset) - plainStart) ? off : best
+        , offsets[0]);
+      };
+
+      const allFrontOffsets = findAllOccurrences(frontStr, selStr);
+      const allBackOffsets  = hasBackText ? findAllOccurrences(backStr, selStr) : [];
+
+      let isBack = false;
+      let sect_r_start = 0;
+
+      // Pick the best occurrence in each section. For back text, plain positions are
+      // offset by frontStr.length in the combined plain-string space.
+      const bestFront = pickBestOccurrence(allFrontOffsets, 0);
+      const bestBack  = pickBestOccurrence(allBackOffsets, frontStr.length);
+
+      if (bestFront >= 0 && bestBack < 0) {
+        isBack = false;
+        sect_r_start = bestFront;
+      } else if (bestBack >= 0 && bestFront < 0) {
+        isBack = true;
+        sect_r_start = bestBack;
+      } else if (bestFront >= 0 && bestBack >= 0) {
+        // Both sections have a candidate — pick whichever is closest to the corrected plain offset.
+        const frontDist = Math.abs(bestFront - plainStart);
+        const backDist  = Math.abs((bestBack + frontStr.length) - plainStart);
+        if (frontDist <= backDist) {
+          isBack = false;
+          sect_r_start = bestFront;
+        } else {
+          isBack = true;
+          sect_r_start = bestBack;
+        }
+      } else {
+        // Fallback: use corrected plainStart directly
+        isBack = false;
+        sect_r_start = plainStart;
+      }
+
+      const sect_r_end = sect_r_start + selLen;
 
       const clozeId = Math.random().toString(36).substring(2, 10);
 
-      const processRichText = (richText: RichTextInterface): RichTextInterface => {
-        const newArray: any[] = [];
+      // Determine arrow character from the rem's practice direction.
+      const practiceDir = hasBackText ? await rem.getPracticeDirection() : 'none';
+      const arrowChar = practiceDir === 'forward' ? '⇒'
+                      : practiceDir === 'backward' ? '⇐'
+                      : practiceDir === 'both' ? '⇔'
+                      : '⇔'; // fallback
+      const remType = rem.type;
+
+      // Inherited cloze/card hint properties from the original rem must be stripped from
+      // the new cloze rem. Otherwise RemNote treats orphaned hints as belonging to the
+      // newly-created cloze and renders them in the wrong position.
+      const stripInheritedHintProps = (n: any) => {
+        delete n[RICH_TEXT_FORMATTING.CLOZE_HINT];
+        delete n[RICH_TEXT_FORMATTING.CARD_HINT_FRONT];
+        delete n[RICH_TEXT_FORMATTING.CARD_HINT_BACK];
+        delete n[RICH_TEXT_FORMATTING.MULTILINE_CARD_HINT];
+        delete n[RICH_TEXT_FORMATTING.HIDDEN_CLOZE];
+        delete n[RICH_TEXT_FORMATTING.REVEALED_CLOZE];
+      };
+
+      // Process one rich text section. localStart/localEnd are section-relative character positions.
+      // - Delimiter nodes (i:'s') → replaced by arrowChar.
+      // - Existing cloze marks outside the selection → stripped, yellow highlight + red font applied.
+      // - Text inside [localStart, localEnd) → new clozeId applied.
+      const processSection = (
+        richText: RichTextInterface,
+        applySelection: boolean,
+        localStart: number,
+        localEnd: number
+      ): any[] => {
+        const arr: any[] = [];
         let currIdx = 0;
         for (const item of richText) {
-          const isString = typeof item === 'string';
-          const textNode = isString ? { i: 'm' as const, text: item } : (item as any);
-          const nodeLen = textNode.i === 'm' ? (textNode.text?.length || 0) : 1;
+          const isStr  = typeof item === 'string';
+          const node   = isStr ? { i: 'm' as const, text: item as string } : (item as any);
+          // Text-only positions: non-'m' nodes have length 0 (immune to RemNote's i:'q' cursor-width).
+          const nodeLen = node.i === 'm' ? (node.text?.length || 0) : 0;
           const nodeStart = currIdx;
-          const nodeEnd = currIdx + nodeLen;
-          
-          if (nodeEnd <= r_start || nodeStart >= r_end) {
-            newArray.push(item);
-          } else {
-            if (textNode.i === 'm') {
-              const textStr = textNode.text || '';
-              const relStart = Math.max(0, r_start - nodeStart);
-              const relEnd = Math.min(nodeLen, r_end - nodeStart);
-              
-              if (relStart > 0) {
-                newArray.push({ ...textNode, text: textStr.substring(0, relStart) });
-              }
-              newArray.push({
-                ...textNode,
-                text: textStr.substring(relStart, relEnd),
-                [RICH_TEXT_FORMATTING.CLOZE]: clozeId,
-              });
-              if (relEnd < nodeLen) {
-                newArray.push({ ...textNode, text: textStr.substring(relEnd) });
+          const nodeEnd   = currIdx + nodeLen;
+          // For zero-length nodes use a point check; for text nodes use the range overlap check.
+          const inSel = applySelection && (
+            nodeLen > 0
+              ? (nodeStart < localEnd && nodeEnd > localStart)
+              : (currIdx > localStart && currIdx < localEnd)
+          );
+
+          if (node.i === 's') {
+            arr.push(inSel
+              ? { i: 'm' as const, text: arrowChar, [RICH_TEXT_FORMATTING.CLOZE]: clozeId }
+              : { i: 'm' as const, text: arrowChar }
+            );
+          } else if (node.i === 'm') {
+            const textStr  = node.text || '';
+            const baseNode: any = { ...node };
+            const hadCloze = RICH_TEXT_FORMATTING.CLOZE in baseNode;
+            delete baseNode[RICH_TEXT_FORMATTING.CLOZE];
+            stripInheritedHintProps(baseNode);
+
+            if (!inSel) {
+              if (hadCloze) {
+                arr.push(isStr
+                  ? { i: 'm' as const, text: textStr, [RICH_TEXT_FORMATTING.HIGHLIGHT]: 3, [RICH_TEXT_FORMATTING.TEXT_COLOR]: 1 }
+                  : { ...baseNode, [RICH_TEXT_FORMATTING.HIGHLIGHT]: 3, [RICH_TEXT_FORMATTING.TEXT_COLOR]: 1 });
+              } else {
+                arr.push(isStr ? textStr : baseNode);
               }
             } else {
-              newArray.push({
-                ...textNode,
-                [RICH_TEXT_FORMATTING.CLOZE]: clozeId,
-              });
+              const relStart = Math.max(0, localStart - nodeStart);
+              const relEnd   = Math.min(nodeLen, localEnd - nodeStart);
+              if (relStart > 0) {
+                const pre = textStr.substring(0, relStart);
+                arr.push(hadCloze
+                  ? { ...baseNode, text: pre, [RICH_TEXT_FORMATTING.HIGHLIGHT]: 3, [RICH_TEXT_FORMATTING.TEXT_COLOR]: 1 }
+                  : (isStr ? pre : { ...baseNode, text: pre }));
+              }
+              arr.push({ ...baseNode, text: textStr.substring(relStart, relEnd), [RICH_TEXT_FORMATTING.CLOZE]: clozeId });
+              if (relEnd < nodeLen) {
+                const post = textStr.substring(relEnd);
+                arr.push(hadCloze
+                  ? { ...baseNode, text: post, [RICH_TEXT_FORMATTING.HIGHLIGHT]: 3, [RICH_TEXT_FORMATTING.TEXT_COLOR]: 1 }
+                  : (isStr ? post : { ...baseNode, text: post }));
+              }
+            }
+          } else {
+            const baseNode: any = { ...node };
+            const hadCloze = RICH_TEXT_FORMATTING.CLOZE in baseNode;
+            delete baseNode[RICH_TEXT_FORMATTING.CLOZE];
+            stripInheritedHintProps(baseNode);
+            if (inSel) {
+              arr.push({ ...baseNode, [RICH_TEXT_FORMATTING.CLOZE]: clozeId });
+            } else if (hadCloze) {
+              arr.push({ ...baseNode, [RICH_TEXT_FORMATTING.HIGHLIGHT]: 3, [RICH_TEXT_FORMATTING.TEXT_COLOR]: 1 });
+            } else {
+              arr.push(baseNode);
             }
           }
           currIdx += nodeLen;
         }
-        return newArray;
+        return arr;
       };
 
-      let isBack = false;
-      const remText = rem.text || [];
-      const frontMiddle = await plugin.richText.substring(remText, r_start, r_end);
-      if (!(await plugin.richText.equals(selection.richText, frontMiddle))) {
-        const backMiddle = await plugin.richText.substring(rem.backText || [], r_start, r_end);
-        if (await plugin.richText.equals(selection.richText, backMiddle)) {
-          isBack = true;
-        }
-      }
+      // Apply bold (concept) or italic (descriptor) to all text nodes in a node array,
+      // matching how RemNote renders the front of concept/descriptor rems.
+      const applyTypeFormatting = (nodes: any[]): any[] => {
+        if (remType !== RemType.CONCEPT && remType !== RemType.DESCRIPTOR) return nodes;
+        const prop = remType === RemType.CONCEPT ? RICH_TEXT_FORMATTING.BOLD : RICH_TEXT_FORMATTING.ITALIC;
+        return nodes.map((node: any) => {
+          if (typeof node === 'string') return { i: 'm' as const, text: node, [prop]: true };
+          if (node.i === 'm') return { ...node, [prop]: true };
+          return node;
+        });
+      };
 
-      if (isBack) {
-        await rem.setBackText(processRichText(rem.backText || []));
-      } else {
-        await rem.setText(processRichText(rem.text || []));
+      // Build child text: processed front + (arrow separator if needed) + processed back + parent pin.
+      const buildChildText = (): RichTextInterface => {
+        const rawFrontPart = processSection(frontText, !isBack, sect_r_start, sect_r_end);
+        const frontPart = applyTypeFormatting(rawFrontPart);
+        const result: any[] = [...frontPart];
+        if (hasBackText) {
+          const hasExplicitDelim = frontText.some((item: any) => typeof item !== 'string' && item?.i === 's');
+          if (!hasExplicitDelim) {
+            result.push({ i: 'm' as const, text: ' ' + arrowChar + ' ' });
+          }
+          const backPart = processSection(backText, isBack, sect_r_start, sect_r_end);
+          result.push(...backPart);
+        }
+        result.push({ i: 'q', _id: rem._id, pin: true });
+        return result;
+      };
+
+      // Suppress GlobalRemChanged during the batch of writes below.
+      // Without this, each write (createRem, setText, setParent, addTag, addPowerup,
+      // parent setText, setCardPriority × 3 properties) fires a GlobalRemChanged event.
+      // After the 1s debounce, each runs the expensive property drift path
+      // (autoAssignCardPriority → ancestor walk → cache flush), causing a ~60s UI freeze.
+      await plugin.storage.setSession('plugin_operation_active', true);
+
+      try {
+        // 1. Create child rem
+        const clozeRem = await plugin.rem.createRem();
+        if (!clozeRem) return;
+
+        await clozeRem.setText(buildChildText());
+        await clozeRem.setParent(rem);
+
+        let clozeExtractTag = await plugin.rem.findByName(['cloze-extract'], null);
+        if (!clozeExtractTag) {
+          clozeExtractTag = await plugin.rem.createRem();
+          if (clozeExtractTag) await clozeExtractTag.setText(['cloze-extract']);
+        }
+        if (clozeExtractTag) await clozeRem.addTag(clozeExtractTag._id);
+
+        // 2. Apply the Remove Parent powerup to the cloze rem so its parent is hidden
+        // from queue display only when this specific cloze is the current card.
+        // Tagging the parent with Remove from Queue (the previous behavior) would
+        // also hide it for sibling/descendant flashcards (e.g. descriptor children),
+        // breaking their context. Scoping the effect to the cloze itself avoids that.
+        await clozeRem.addPowerup(REMOVE_PARENT_POWERUP_CODE);
+
+        // 3. Mark selected text in parent with yellow highlight + red font.
+        // Uses the same section-relative positions (sect_r_start/sect_r_end).
+        const processParentSection = (richText: RichTextInterface, localStart: number, localEnd: number): RichTextInterface => {
+          const arr: any[] = [];
+          let currIdx = 0;
+          for (const item of richText) {
+            const isStr  = typeof item === 'string';
+            const node   = isStr ? { i: 'm' as const, text: item as string } : (item as any);
+            // Text-only positions: non-'m' nodes pass through unchanged.
+            const nodeLen = node.i === 'm' ? (node.text?.length || 0) : 0;
+
+            if (nodeLen === 0) {
+              arr.push(item);
+            } else {
+              const nodeStart = currIdx;
+              const nodeEnd   = currIdx + nodeLen;
+              if (nodeEnd <= localStart || nodeStart >= localEnd) {
+                arr.push(item);
+              } else {
+                const textStr  = node.text || '';
+                const relStart = Math.max(0, localStart - nodeStart);
+                const relEnd   = Math.min(nodeLen, localEnd - nodeStart);
+                if (relStart > 0) {
+                  arr.push(isStr ? textStr.substring(0, relStart) : { ...node, text: textStr.substring(0, relStart) });
+                }
+                arr.push({ ...node, text: textStr.substring(relStart, relEnd), [RICH_TEXT_FORMATTING.HIGHLIGHT]: 3, [RICH_TEXT_FORMATTING.TEXT_COLOR]: 1 });
+                if (relEnd < nodeLen) {
+                  arr.push(isStr ? textStr.substring(relEnd) : { ...node, text: textStr.substring(relEnd) });
+                }
+              }
+              currIdx += nodeLen;
+            }
+          }
+          return arr;
+        };
+
+        if (isBack) {
+          await rem.setBackText(processParentSection(backText, sect_r_start, sect_r_end));
+        } else {
+          await rem.setText(processParentSection(frontText, sect_r_start, sect_r_end));
+        }
+
+        // Apply the auto-priority computed at the top (before the new cloze existed,
+        // so the existing-cloze count was correct).
+        await setCardPriority(plugin, clozeRem, autoPriority.priority, 'manual');
+        await updateCardPriorityCache(plugin, clozeRem._id, true, {
+          remId: clozeRem._id,
+          priority: autoPriority.priority,
+          source: 'manual',
+          cardCount: 1,
+          dueCards: 1,
+        } as any);
+
+        return { clozeRem, parentRem: rem, autoPriority };
+      } finally {
+        // Clear the suppression flag after a delay longer than the GlobalRemChanged
+        // debounce (1000ms) so any pending events are also suppressed.
+        setTimeout(async () => {
+          await plugin.storage.setSession('plugin_operation_active', false);
+        }, 2000);
       }
+  };
+
+  plugin.app.registerCommand({
+    id: 'create-cloze-deletion',
+    name: 'Create Cloze Deletion',
+    keyboardShortcut: 'opt+z',
+    action: async () => { await createClozeDeletion(); },
+  });
+
+  plugin.app.registerCommand({
+    id: 'create-cloze-deletion-with-priority',
+    name: 'Create Cloze Deletion with Priority',
+    keyboardShortcut: 'opt+shift+z',
+    action: async () => {
+      const result = await createClozeDeletion();
+      if (!result) return;
+      const { clozeRem, parentRem, autoPriority } = result;
+
+      const parentContent = await getRemCardContent(plugin, parentRem);
+      const parentText = parentContent.front
+        + (parentContent.back ? ` → ${parentContent.back}` : '');
+
+      await plugin.storage.setSession('priorityPopupTargetRemId', undefined);
+      await plugin.widget.openPopup('priority_light', {
+        remId: clozeRem._id,
+        parentExtractContext: {
+          parentRemId: parentRem._id,
+          parentText,
+          parentPriority: autoPriority.parentPriority,
+          parentPrioritySource: autoPriority.parentPrioritySource,
+          clozeChildCount: autoPriority.clozeChildCount,
+          parentOwnCardCount: autoPriority.parentOwnCardCount,
+          totalExistingCount: autoPriority.totalExistingCount,
+          decrementsApplied: autoPriority.decrementsApplied,
+          stepSize: autoPriority.stepSize,
+          suggestedPriority: autoPriority.priority,
+        },
+      });
     },
   });
 
@@ -368,6 +528,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     id: 'set-priority',
     name: 'Set Priority',
     keyboardShortcut: 'opt+p',
+    quickCode: 'pri',
     action: async () => {
       console.log('--- Set Priority Command Triggered ---');
       let remId: string | undefined;
@@ -449,6 +610,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     name: 'Quick Set Priority',
     description: 'Instant popup to set Incremental and Card priorities',
     keyboardShortcut: 'ctrl+opt+p', // Shortcuts: Ctrl + Option + P
+    quickCode: 'qpri',
     action: async () => {
       const tCmd = performance.now();
       console.log('[set-priority-light] Command triggered');
@@ -522,6 +684,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     id: 'reschedule-incremental',
     name: 'Reschedule Incremental Rem',
     keyboardShortcut: 'ctrl+j', // Will be Ctrl+J on Mac also!
+    quickCode: 'res',
     action: async () => {
       console.log('--- Reschedule Incremental Rem Command Triggered ---');
       let remId: string | undefined;
@@ -686,22 +849,28 @@ export async function registerCommands(plugin: ReactRNPlugin) {
   plugin.app.registerCommand({
     id: 'pdf-control-panel',
     name: 'PDF Control Panel',
+    quickCode: 'pdf',
     action: async () => {
       const rem = await plugin.focus.getFocusedRem();
       if (!rem) {
         return;
       }
 
-      // 1. Find the associated PDF Rem, honouring #preferthispdf when multiple sources exist
-      const pdfRem = await findPreferredPDFInRem(plugin, rem);
+      // 1. Resolve the active PDF for this rem.
+      //    Strict mode surfaces the multi-#preferthispdf conflict so the user
+      //    is alerted; an explicit active-PDF pin (when present) bypasses the
+      //    conflict by definition.
+      const pdfRem = await getActivePdfForIncRem(plugin, rem, { strict: true });
 
-      // 2. If no PDF is found (or multiple #preferthispdf tags conflict), inform the user and stop.
+      // 2. If nothing resolved, distinguish "no PDFs at all" from "ambiguous preference".
       if (!pdfRem) {
-        // findPreferredPDFInRem already showed a toast for the multi-tag conflict case;
-        // only show the generic message when truly no PDF was found.
-        const hasSomePdf = await findPDFinRem(plugin, rem);
-        if (!hasSomePdf) {
+        const pdfs = await getAllPDFsInRem(plugin, rem);
+        if (pdfs.length === 0) {
           await plugin.app.toast('No PDF found in the focused Rem or its sources.');
+        } else {
+          await plugin.app.toast(
+            'Multiple PDFs have the #preferthispdf tag — cannot determine which to open. Add the tag to exactly one PDF source.'
+          );
         }
         return;
       }
@@ -713,11 +882,15 @@ export async function registerCommands(plugin: ReactRNPlugin) {
 
       // 4. Prepare the context for the popup widget, similar to how the Reader does it.
       //    This context tells the popup which incremental Rem and which PDF to work with.
+      //    We also include the full list of PDFs on this IncRem so the panel can
+      //    render its PDF selector immediately (no re-derivation flash).
+      const allPdfs = await getAllPDFsInRem(plugin, rem);
       const context = {
         incrementalRemId: rem._id,
         pdfRemId: pdfRem._id,
         totalPages: undefined, // Not available in the editor context
         currentPage: undefined, // Not available in the editor context
+        allPdfRemIds: allPdfs.map((p) => p.rem._id),
       };
 
       // 5. Store the context in session storage so the popup can access it.
@@ -733,9 +906,10 @@ export async function registerCommands(plugin: ReactRNPlugin) {
   plugin.app.registerCommand({
     id: 'incremental-everything',
     keyboardShortcut: 'opt+x',
-    name: 'Incremental Everything',
+    name: 'Make Incremental (Extract)',
+    quickCode: 'ext',
     action: async () => {
-      createExtract();
+      createExtract(plugin);
     },
   });
 
@@ -778,6 +952,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     id: 'create-priority-review',
     name: 'Create Priority Review Document',
     keyboardShortcut: 'opt+shift+r',
+    quickCode: 'prd',
     action: async () => {
       const focused = await plugin.focus.getFocusedRem();
 
@@ -812,6 +987,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     id: 'review-increm-in-editor',
     name: 'Review in Editor (Execute Repetition)',
     keyboardShortcut: 'ctrl+shift+j',
+    quickCode: 'er',
     action: async () => {
       console.log('--- Review Incremental Rem in Editor Command Triggered ---');
 
@@ -889,6 +1065,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     id: 'update-card-priorities',
     name: 'Update all inherited Card Priorities',
     description: 'Update all inherited Card Priorities (and pre-compute and tag all card not yet prioritized)',
+    quickCode: 'ucp',
     action: async () => {
       await updateAllCardPriorities(plugin);
     },
@@ -902,6 +1079,17 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       'Completely remove all CardPriority powerup tags and data from your knowledge base',
     action: async () => {
       await removeAllCardPriorityTags(plugin);
+    },
+  });
+
+  // Sanitize rogue tags command
+  await plugin.app.registerCommand({
+    id: 'sanitize-rogue-card-priority-tags',
+    name: 'Sanitize Rogue CardPriority Tags',
+    description:
+      'Detects and removes the CardPriority powerup from properties and non-flashcards across your KB',
+    action: async () => {
+      await sanitizeAllRogueCardPriorityTags(plugin);
     },
   });
 
@@ -957,8 +1145,45 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     id: 'open-inc-rem-main-view',
     name: 'Open Incremental Rems Main View',
     keyboardShortcut: 'opt+shift+i',
+    quickCode: 'inc',
     action: async () => {
       await plugin.widget.openPopup('inc_rem_main_view');
+    },
+  });
+
+  plugin.app.registerCommand({
+    id: 'toggle-ignore-tag',
+    name: 'Toggle Ignore Tag',
+    description: 'Tag/untag the focused Rem with #ignore — marks already-read snippets that were left for archive/consultation only.',
+    keyboardShortcut: 'ctrl+shift+i',
+    quickCode: 'ign',
+    action: async () => {
+      const rem = await plugin.focus.getFocusedRem();
+      if (!rem) {
+        await plugin.app.toast('No focused Rem.');
+        return;
+      }
+
+      let ignoreTagRem = await plugin.rem.findByName(['ignore'], null);
+      if (!ignoreTagRem) {
+        ignoreTagRem = await plugin.rem.createRem();
+        if (!ignoreTagRem) {
+          await plugin.app.toast('Could not create #ignore tag.');
+          return;
+        }
+        await ignoreTagRem.setText(['ignore']);
+      }
+
+      const tags = await rem.getTagRems();
+      const alreadyTagged = tags.some((t) => t._id === ignoreTagRem!._id);
+
+      if (alreadyTagged) {
+        await rem.removeTag(ignoreTagRem._id);
+        await plugin.app.toast('Removed #ignore.');
+      } else {
+        await rem.addTag(ignoreTagRem._id);
+        await plugin.app.toast('Tagged with #ignore.');
+      }
     },
   });
 
@@ -1094,6 +1319,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     id: 'open-repetition-history',
     name: 'Open Repetition History',
     keyboardShortcut: 'ctrl+shift+h',
+    quickCode: 'his',
     action: async () => {
       let remId: string | undefined;
       let cardId: string | undefined;
@@ -1207,11 +1433,39 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     },
   });
 
+  // Open Study Dashboard Command
+  plugin.app.registerCommand({
+    id: 'open-study-dashboard',
+    name: 'Open Study Dashboard',
+    description:
+      'Open the Study Dashboard: filterable summary of Incremental/Dismissed/Flashcard activity, with hierarchy.',
+    quickCode: 'sdb',
+    action: async () => {
+      // Resolve a context rem (focused rem in editor, current card in queue).
+      let remId: string | undefined;
+      const url = await plugin.window.getURL();
+      const isQueue = url.includes('/flashcards');
+      if (isQueue) {
+        const card = await plugin.queue.getCurrentCard();
+        if (card?.remId) remId = card.remId;
+        if (!remId) {
+          const cur = await plugin.storage.getSession<string>(currentIncRemKey);
+          if (cur) remId = cur;
+        }
+      } else {
+        const focused = await plugin.focus.getFocusedRem();
+        if (focused?._id) remId = focused._id;
+      }
+      await plugin.widget.openPopup('study_dashboard', remId ? { remId } : undefined);
+    },
+  });
+
   // Open Sorting Criteria Widget Command
   plugin.app.registerCommand({
     id: 'open-sorting-criteria',
     name: 'Open Sorting Criteria',
     description: 'Open the Sorting Criteria widget to adjust randomness and cards per rem.',
+    quickCode: 'sort',
     action: async () => {
       await plugin.widget.openPopup('sorting_criteria');
     },
@@ -1222,6 +1476,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     id: 'open-priority-shield',
     name: 'Open Priority Shield Graph',
     description: 'Open the Priority Shield Graph history.',
+    quickCode: 'shi',
     action: async () => {
       let subQueueId: string | null = null;
       const url = await plugin.window.getURL();
@@ -1241,6 +1496,89 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     },
   });
 
+  // Open Weighted Shield Popup Command
+  plugin.app.registerCommand({
+    id: 'open-weighted-shield',
+    name: 'Open Weighted Shield Popup',
+    description: 'Open the Weighted Shield breakdown popup.',
+    quickCode: 'wsh',
+    action: async () => {
+      let subQueueId: string | null = null;
+      const url = await plugin.window.getURL();
+      const inQueue = url.includes('/flashcards');
+
+      // Check if we are in the queue to get context
+      if (inQueue) {
+        subQueueId = (await plugin.storage.getSession<string | null>(currentSubQueueIdKey)) ?? null;
+      } else {
+        // In editor, use focused rem
+        const focusedRem = await plugin.focus.getFocusedRem();
+        subQueueId = focusedRem?._id || null;
+      }
+
+      // Pull the prioritized universes from the session cache and compute breakdowns
+      // for both Incremental Rems and Cards. Respect the queue's seen-in-session lists
+      // when present so this matches what the in-queue tooltip shows.
+      const [allIncRems, allCardInfos, seenRemIds, seenCardIds, cachedScopeIds] = await Promise.all([
+        plugin.storage.getSession<IncrementalRemType[]>(allIncrementalRemKey).then((v) => v ?? []),
+        plugin.storage.getSession<CardPriorityInfo[]>(allCardPriorityInfoKey).then((v) => v ?? []),
+        plugin.storage.getSession<string[]>(seenRemInSessionKey).then((v) => v ?? []),
+        plugin.storage.getSession<string[]>(seenCardInSessionKey).then((v) => v ?? []),
+        plugin.storage.getSession<string[] | null>(priorityCalcScopeRemIdsKey),
+      ]);
+
+      const seenRemSet = new Set(seenRemIds);
+      const seenCardSet = new Set(seenCardIds);
+      const cardDuePredicate = (info: CardPriorityInfo) =>
+        info.dueCards > 0 && !seenCardSet.has(info.remId);
+      const incRemDuePredicate = (r: IncrementalRemType) =>
+        Date.now() >= r.nextRepDate && !seenRemSet.has(r.remId);
+
+      // Prefer the queue's precomputed scope (built once at QueueEnter) over a fresh
+      // buildDocumentScope traversal — the latter is the slow part. Fall back to a
+      // live build only when invoked outside the queue (focused-rem case).
+      let docScope: Set<string> | null = null;
+      if (subQueueId) {
+        if (inQueue && cachedScopeIds && cachedScopeIds.length > 0) {
+          docScope = new Set(cachedScopeIds);
+        } else {
+          docScope = await buildDocumentScope(plugin as any, subQueueId);
+        }
+      }
+
+      const groups: { title: string; itemLabel: string; kb: any; doc: any }[] = [];
+
+      const scope = docScope;
+      if (allIncRems.length > 0) {
+        const docItems = scope ? allIncRems.filter((r) => scope.has(r.remId)) : [];
+        groups.push({
+          title: 'Incremental Rems',
+          itemLabel: 'IncRem',
+          kb: computeWeightedShieldBreakdown(allIncRems, incRemDuePredicate),
+          doc: docItems.length > 0 ? computeWeightedShieldBreakdown(docItems, incRemDuePredicate) : null,
+        });
+      }
+
+      if (allCardInfos.length > 0) {
+        const docItems = scope ? allCardInfos.filter((c) => scope.has(c.remId)) : [];
+        groups.push({
+          title: 'Cards',
+          itemLabel: 'Cards',
+          kb: computeWeightedShieldBreakdown(allCardInfos, cardDuePredicate),
+          doc: docItems.length > 0 ? computeWeightedShieldBreakdown(docItems, cardDuePredicate) : null,
+        });
+      }
+
+      // Use the wide variant only when there's something to put side-by-side
+      // (both Incremental Rems and Cards). Otherwise the standard narrow popup
+      // is enough and avoids a half-empty wide canvas.
+      const popupId = groups.length >= 2 ? 'weighted_shield_popup_wide' : 'weighted_shield_popup';
+      await plugin.widget.openPopup(popupId, {
+        groups,
+      });
+    },
+  });
+
   // Dismiss Incremental Rem command (Ctrl+D)
   // In Queue: replicates the Dismiss button (card priority inheritance, review time, transfer to dismissed, remove powerup)
   // In Editor: dismisses the focused Incremental Rem (transfer history to dismissed, remove powerup)
@@ -1248,6 +1586,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     id: dismissIncRemCommandId,
     name: 'Dismiss Incremental Rem',
     keyboardShortcut: 'ctrl+d',
+    quickCode: 'dis',
     action: async () => {
       const url = await plugin.window.getURL();
       const isQueue = url && url.includes('/flashcards');
@@ -1343,6 +1682,9 @@ export async function registerCommands(plugin: ReactRNPlugin) {
         // 4. Transfer history to dismissed powerup
         await transferToDismissed(plugin, rem, updatedHistory);
 
+        // 4b. Record the dismissal in the Incremental History widget
+        await addToIncrementalHistory(plugin, rem._id, { dismissed: true });
+
         // 5. Remove from session cache
         await removeIncrementalRemCache(plugin, rem._id);
 
@@ -1360,8 +1702,9 @@ export async function registerCommands(plugin: ReactRNPlugin) {
 
       } else {
         // Editor context: dismiss focused Incremental Rem(s)
-        // Supports both single-focus and multi-select
-        const selection = await plugin.editor.getSelection();
+        // Supports both single-focus and multi-select (the latter via the
+        // Omnibar-resilient selection helper).
+        const selection = await getEffectiveSelection(plugin);
         const remsToDissmiss: PluginRem[] = [];
 
         if (selection?.type === SelectionType.Rem) {
@@ -1398,6 +1741,8 @@ export async function registerCommands(plugin: ReactRNPlugin) {
             // Transfer existing history to dismissed (no new rep entry needed)
             await transferToDismissed(plugin, r, incRemInfo.history || []);
           }
+          // Log a standalone dismissal in the Incremental History widget
+          await addDismissalToIncrementalHistory(plugin, r._id);
           // Remove from session cache
           await removeIncrementalRemCache(plugin, r._id);
           // Remove incremental powerup
@@ -1421,6 +1766,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     id: nextInQueueCommandId,
     name: 'Next Item in Queue',
     keyboardShortcut: 'cmd+right',
+    quickCode: 'next',
     action: async () => {
       const url = await plugin.window.getURL();
 
@@ -1463,7 +1809,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       // Handle PDF page history (same as handleNextClick in answer_buttons.tsx)
       const remType = await plugin.storage.getSession<string | null>(currentIncrementalRemTypeKey);
       if (remType === 'pdf') {
-        const pdfRem = await findPDFinRem(plugin, rem);
+        const pdfRem = await getActivePdfForIncRem(plugin, rem);
         if (pdfRem) {
           const pageKey = getCurrentPageKey(rem._id, pdfRem._id);
           const currentPage = await plugin.storage.getSynced<number>(pageKey);
@@ -1534,7 +1880,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       const skipRemDocument = titleEndsWithOpenLinkTag && uniqueUrls.length > 0;
       const remType = await plugin.storage.getSession<string | null>(currentIncrementalRemTypeKey);
       if (remType === 'pdf') {
-        const pdfRem = await findPDFinRem(plugin, rem);
+        const pdfRem = await getActivePdfForIncRem(plugin, rem);
         if (pdfRem) {
           const pageKey = getCurrentPageKey(rem._id, pdfRem._id);
           const currentPage = await plugin.storage.getSynced<number>(pageKey);
@@ -1574,6 +1920,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     name: 'Copy Rem Sources',
     description: 'Copies the sources of the focused Rem to the clipboard (session storage) for pasting onto other Rems.',
     keyboardShortcut: 'ctrl+shift+F1',
+    quickCode: 'copy',
     action: async () => {
       const rem = await plugin.focus.getFocusedRem();
       if (!rem) {
@@ -1612,6 +1959,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     name: 'Paste Rem Sources',
     description: 'Adds the previously copied sources to all selected Rems (or the focused Rem). Skips sources already present.',
     keyboardShortcut: 'opt+shift+v',
+    quickCode: 'paste',
     action: async () => {
       const copiedIds = await plugin.storage.getSession<string[]>(COPIED_SOURCES_KEY);
       if (!copiedIds || copiedIds.length === 0) {
@@ -1626,8 +1974,9 @@ export async function registerCommands(plugin: ReactRNPlugin) {
         return;
       }
 
-      // Determine target rems: multi-select → all selected; otherwise → focused rem
-      const selection = await plugin.editor.getSelection();
+      // Determine target rems: multi-select → all selected; otherwise → focused rem.
+      // Uses the Omnibar-resilient selection helper so Cmd+/ invocations work too.
+      const selection = await getEffectiveSelection(plugin);
       let targetRems: PluginRem[] = [];
 
       if (selection?.type === SelectionType.Rem && selection.remIds.length > 0) {
@@ -1680,4 +2029,482 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       }
     },
   });
+
+  plugin.app.registerCommand({
+    id: 'text-case-converter',
+    name: 'Text Case Converter',
+    keyboardShortcut: 'shift+F3',
+    quickCode: 'case',
+    action: async () => {
+      const richTextToPlain = (rt: any[] | undefined): string =>
+        (rt || [])
+          .map((e: any) => (typeof e === 'string' ? e : e?.text ?? ''))
+          .join('');
+
+      const applyNextCase = (richText: any[], fullText: string, next: 'lower' | 'title' | 'upper') =>
+        next === 'title'
+          ? transformTitleCase(richText, fullText)
+          : transformCase(
+              richText,
+              next === 'upper' ? (s) => s.toUpperCase() : (s) => s.toLowerCase()
+            );
+
+      const selection = await getEffectiveSelection(plugin);
+
+      // Multi-rem path: when one or more whole rems are selected in the outline,
+      // transform each rem's text (and back text, for concept/descriptor rems).
+      if (selection?.type === SelectionType.Rem && selection.remIds?.length) {
+        const rems = (await plugin.rem.findMany(selection.remIds)) || [];
+        if (rems.length === 0) {
+          await plugin.app.toast('No rems found in selection.');
+          return;
+        }
+
+        // Detect the current case from all text concatenated, so the cycle
+        // (lower → title → upper → lower) advances consistently for the batch.
+        const combined = rems
+          .map((r) => `${richTextToPlain(r.text as any[])}\n${richTextToPlain(r.backText as any[])}`)
+          .join('\n');
+        const next = nextCase(detectCase(combined));
+
+        for (const rem of rems) {
+          const frontRT = (rem.text || []) as any[];
+          if (frontRT.length > 0) {
+            const frontFull = richTextToPlain(frontRT);
+            await rem.setText(applyNextCase(frontRT, frontFull, next));
+          }
+          const backRT = (rem.backText || []) as any[];
+          if (backRT.length > 0) {
+            const backFull = richTextToPlain(backRT);
+            await rem.setBackText(applyNextCase(backRT, backFull, next));
+          }
+        }
+        return;
+      }
+
+      // Single-rem path: transform just the selected text range.
+      const textSelection = await plugin.editor.getSelectedText();
+      if (!textSelection?.richText?.length) {
+        await plugin.app.toast('No text selected.');
+        return;
+      }
+
+      const fullText = richTextToPlain(textSelection.richText);
+      const next = nextCase(detectCase(fullText));
+      const transformed = applyNextCase(textSelection.richText, fullText, next);
+
+      await plugin.editor.delete();
+      await plugin.editor.insertRichText(transformed);
+      await plugin.editor.selectText({
+        start: textSelection.range.start,
+        end: textSelection.range.start + fullText.length,
+      });
+    },
+  });
+
+  // ─── Restructure Outline by Headings ──────────────────────────────────────
+  //
+  // Re-nests a flat or mis-pasted document so that paragraphs and lower-level
+  // headings sit under their preceding higher-level heading.
+  //   - Selection contains multiple rems → walk those rems + descendants.
+  //   - Selection is a single rem (or just a focused rem with no range)
+  //     → walk that rem's descendants; the rem itself stays as container root.
+  // Opens a side-by-side preview popup before applying anything; the actual
+  // reparenting + undo snapshot live in lib/outline_restructure.ts.
+  plugin.app.registerCommand({
+    id: 'restructure_outline_by_headings',
+    name: 'Restructure Outline by Headings',
+    quickCode: 'roh',
+    action: async () => {
+      // Resolves live editor selection if present, else the cached selection
+      // from the EditorSelectionChanged tracker (lib/editor_selection.ts) —
+      // necessary for Cmd+/ Omnibar invocations which blur the editor.
+      const selection = await getEffectiveSelection(plugin);
+      const focusedRem = selection ? undefined : await plugin.focus.getFocusedRem();
+
+      let remIds: string[] | undefined;
+      let textRemId: string | undefined;
+      const resolvedFocusedRemId: string | undefined = focusedRem?._id;
+
+      if (
+        selection?.type === SelectionType.Rem &&
+        selection.remIds?.length
+      ) {
+        remIds = selection.remIds;
+      } else if (
+        selection?.type === SelectionType.Text &&
+        selection.remId
+      ) {
+        textRemId = selection.remId;
+      }
+
+      let scopeRootId: string | undefined;
+      let inputRemIds: string[] = [];
+
+      if (remIds && remIds.length > 0) {
+        if (remIds.length === 1) {
+          // Single rem selected in the outline → that rem is the container,
+          // its children are the entry points for the walk.
+          const root = await plugin.rem.findOne(remIds[0]);
+          if (!root) {
+            await plugin.app.toast('Selected rem not found.');
+            return;
+          }
+          scopeRootId = root._id;
+          const children = (await root.getChildrenRem()) || [];
+          // Drop powerup-property bookkeeping rems (e.g. the auto "Size" child
+          // on Header headings); they aren't content and must not be moved.
+          const filtered: typeof children = [];
+          for (const c of children) {
+            if (!(await isMetaRem(c))) filtered.push(c);
+          }
+          inputRemIds = filtered.map((c) => c._id);
+        } else {
+          // Multi-rem selection → scope root is the common parent (we use the
+          // first selected rem's parent as a proxy; users typically select
+          // siblings). The selected rems themselves are the entry points.
+          const first = await plugin.rem.findOne(remIds[0]);
+          if (!first) {
+            await plugin.app.toast('Selection invalid.');
+            return;
+          }
+          scopeRootId = (first as any).parent as string;
+          inputRemIds = remIds;
+        }
+      } else {
+        // Text selection or no selection → fall back to focused rem as the
+        // container root, walk its children.
+        const rootId = textRemId ?? resolvedFocusedRemId;
+        if (!rootId) {
+          await plugin.app.toast('No rem selected or focused.');
+          return;
+        }
+        const root = await plugin.rem.findOne(rootId);
+        if (!root) {
+          await plugin.app.toast('Rem not found.');
+          return;
+        }
+        scopeRootId = root._id;
+        const children = (await root.getChildrenRem()) || [];
+        const filtered: typeof children = [];
+        for (const c of children) {
+          if (!(await isMetaRem(c))) filtered.push(c);
+        }
+        inputRemIds = filtered.map((c) => c._id);
+      }
+
+      if (!scopeRootId || inputRemIds.length === 0) {
+        await plugin.app.toast(
+          'Nothing to restructure (no descendants in scope).'
+        );
+        return;
+      }
+
+      await plugin.widget.openPopup('outline_restructure_preview', {
+        scopeRootId,
+        inputRemIds,
+      });
+    },
+  });
+
+  // Reverts the most recent Restructure Outline by Headings operation in this
+  // session. Same action as the Undo button on the sidebar widget.
+  plugin.app.registerCommand({
+    id: 'revert_last_outline_restructure',
+    name: 'Revert Last Outline Restructure',
+    quickCode: 'rolr',
+    action: async () => {
+      const snapshot = await plugin.storage.getSession<OutlineSnapshot>(
+        OUTLINE_SNAPSHOT_KEY
+      );
+      if (!snapshot) {
+        await plugin.app.toast('No recent outline restructure to revert.');
+        return;
+      }
+      try {
+        await revertSnapshot(plugin, snapshot);
+        await plugin.storage.setSession(OUTLINE_SNAPSHOT_KEY, undefined);
+        await plugin.app.toast('Outline restructure reverted.');
+      } catch (e) {
+        console.error('[outline-restructure] revert failed:', e);
+        await plugin.app.toast(`Revert failed: ${(e as any)?.message ?? e}`);
+      }
+    },
+  });
+
+  // TEMP PROBE — remove after H4-H6 detection is figured out.
+  // Run this command with the cursor inside an H1/H2/H3/H4/H5/H6 rem to see
+  // exactly what the SDK exposes for each heading level (typed getFontSize,
+  // the Header powerup's Size slot, raw object fields, and DOM classes).
+  plugin.app.registerCommand({
+    id: 'debug_probe_heading_level',
+    name: 'Debug: Probe Heading Level of Focused Rem',
+    quickCode: 'phl',
+    action: async () => {
+      const focused = await plugin.focus.getFocusedRem();
+      if (!focused) {
+        await plugin.app.toast('No focused rem.');
+        console.log('[heading-probe] no focused rem');
+        return;
+      }
+
+      // 1. Typed SDK call (documented as H1|H2|H3|undefined).
+      let fontSizeViaApi: any = undefined;
+      try { fontSizeViaApi = await (focused as any).getFontSize?.(); }
+      catch (e) { fontSizeViaApi = `THREW: ${(e as any)?.message}`; }
+
+      // 2. Header powerup membership + its `Size` slot (the likely storage
+      //    location for H4/H5/H6 since the SDK type for getFontSize lags).
+      let hasHeaderPowerup: any = undefined;
+      let headerSizeAsString: any = undefined;
+      let headerSizeAsRichText: any = undefined;
+      let headerSizeAsRem: any = undefined;
+      try {
+        hasHeaderPowerup = await focused.hasPowerup(BuiltInPowerupCodes.Header);
+      } catch (e) { hasHeaderPowerup = `THREW: ${(e as any)?.message}`; }
+      try {
+        headerSizeAsString = await (focused as any).getPowerupProperty?.(
+          BuiltInPowerupCodes.Header, 'Size'
+        );
+      } catch (e) { headerSizeAsString = `THREW: ${(e as any)?.message}`; }
+      try {
+        headerSizeAsRichText = await (focused as any).getPowerupPropertyAsRichText?.(
+          BuiltInPowerupCodes.Header, 'Size'
+        );
+      } catch (e) { headerSizeAsRichText = `THREW: ${(e as any)?.message}`; }
+      try {
+        headerSizeAsRem = await (focused as any).getPowerupPropertyAsRem?.(
+          BuiltInPowerupCodes.Header, 'Size'
+        );
+      } catch (e) { headerSizeAsRem = `THREW: ${(e as any)?.message}`; }
+
+      // 3. Dump every enumerable, non-function property of the rem object —
+      //    catches any hidden field RemNote sets that the typed SDK omits.
+      const rawKeys = Object.keys(focused as any);
+      const rawSnapshot: Record<string, any> = {};
+      for (const k of rawKeys) {
+        try {
+          const v = (focused as any)[k];
+          if (typeof v !== 'function') rawSnapshot[k] = v;
+        } catch { /* skip */ }
+      }
+
+      // 4. DOM classes — last-resort signal (h4/h5/h6 styling lives here even
+      //    if no API exposes the level).
+      const domClassesByRemId: string[] = [];
+      try {
+        const els = document.querySelectorAll(`[data-rem-id="${focused._id}"]`);
+        els.forEach((el) => domClassesByRemId.push(el.className));
+      } catch { /* not in main document */ }
+
+      console.log('[heading-probe] focused rem _id:', focused._id);
+      console.log('[heading-probe] getFontSize() →', fontSizeViaApi);
+      console.log('[heading-probe] hasPowerup(Header):', hasHeaderPowerup);
+      console.log('[heading-probe] Header.Size (string):', headerSizeAsString);
+      console.log('[heading-probe] Header.Size (rich text):', headerSizeAsRichText);
+      console.log('[heading-probe] Header.Size (as rem):', headerSizeAsRem);
+      console.log('[heading-probe] rem keys:', rawKeys);
+      console.log('[heading-probe] rem snapshot:', rawSnapshot);
+      console.log('[heading-probe] DOM classes for this remId:', domClassesByRemId);
+      console.log('[heading-probe] full rem object (inspectable):', focused);
+
+      await plugin.app.toast(
+        `Heading probe logged. getFontSize=${JSON.stringify(fontSizeViaApi)} | Header.Size=${JSON.stringify(headerSizeAsString)}`
+      );
+    },
+  });
+
+  const skipMasteryDrill = Boolean(
+    await plugin.settings.getSetting('skip_mastery_drill')
+  );
+  if (!skipMasteryDrill) {
+    plugin.app.registerCommand({
+      id: 'open_mastery_drill',
+      name: 'Mastery Drill: deliberately practice poorly rated cards',
+      quickCode: 'dri',
+      action: async () => {
+        await plugin.widget.openPopup('mastery_drill');
+      },
+    });
+
+    plugin.app.registerCommand({
+      id: 'debug_audit_mastery_drill',
+      name: 'Debug: Audit Mastery Drill Inconsistencies',
+      action: async () => {
+        type DrillItem = string | { cardId: string; kbId?: string; addedAt?: number };
+        const allDrillIds = ((await plugin.storage.getSynced('finalDrillIds')) as DrillItem[]) || [];
+
+        const currentKb = await plugin.kb.getCurrentKnowledgeBaseData();
+        const isPrimary = await plugin.kb.isPrimaryKnowledgeBase();
+        const currentKbId = currentKb?._id;
+
+        const finalDrillIds = allDrillIds.filter(item =>
+          typeof item === 'string' ? isPrimary : item.kbId === currentKbId
+        );
+        const skippedOtherKb = allDrillIds.length - finalDrillIds.length;
+
+        if (finalDrillIds.length === 0) {
+          await plugin.app.toast(
+            skippedOtherKb > 0
+              ? `No drill items for this KB (${skippedOtherKb} belong to other KBs).`
+              : 'Mastery Drill queue is empty.'
+          );
+          return;
+        }
+
+        const scoreName = (score: number): string => {
+          const map: Record<number, string> = {
+            0: 'AGAIN',
+            0.01: 'TOO_EARLY',
+            0.5: 'HARD',
+            1: 'GOOD',
+            1.5: 'EASY',
+            2: 'VIEWED_AS_LEECH',
+            3: 'RESET',
+            4: 'MANUAL_DATE',
+            5: 'MANUAL_EASE',
+          };
+          return map[score] ?? `UNKNOWN(${score})`;
+        };
+
+        const inconsistencies: string[] = [];
+        let inconsistencyCount = 0;
+
+        for (const item of finalDrillIds) {
+          const cardId = typeof item === 'string' ? item : item.cardId;
+          const addedAt = typeof item === 'object' && item.addedAt
+            ? new Date(item.addedAt).toISOString()
+            : 'unknown';
+
+          const card = await plugin.card.findOne(cardId);
+          if (!card) {
+            inconsistencies.push(`[MISSING_CARD] cardId=${cardId} addedAt=${addedAt}`);
+            inconsistencyCount++;
+            continue;
+          }
+
+          const history = card.repetitionHistory ?? [];
+          const meaningful = history.filter(r => r.score !== QueueInteractionScore.TOO_EARLY);
+
+          if (meaningful.length === 0) {
+            inconsistencies.push(
+              `[NO_HISTORY] cardId=${cardId} remId=${card.remId} — ${history.length === 0 ? 'no reps at all' : 'only TOO_EARLY reps'} (addedAt=${addedAt})`
+            );
+            inconsistencyCount++;
+            continue;
+          }
+
+          const last = meaningful[meaningful.length - 1];
+          const isExpected =
+            last.score === QueueInteractionScore.AGAIN ||
+            last.score === QueueInteractionScore.HARD;
+
+          if (!isExpected) {
+            const cramFlag = last.isCram ? ' [CRAM]' : '';
+            const everHard = meaningful.some(r => r.score === QueueInteractionScore.HARD);
+            const everAgain = meaningful.some(r => r.score === QueueInteractionScore.AGAIN);
+            const poorRatings = [everAgain ? 'AGAIN' : null, everHard ? 'HARD' : null].filter(Boolean).join('/');
+            const everPoorFlag = poorRatings ? ` everPoor=${poorRatings}` : ' everPoor=NEVER';
+            inconsistencies.push(
+              `[UNEXPECTED_SCORE] cardId=${cardId} remId=${card.remId} — last=${scoreName(last.score)}${cramFlag} ratedAt=${new Date(last.date).toISOString()} addedAt=${addedAt}${everPoorFlag}`
+            );
+            inconsistencyCount++;
+            history.forEach((rep, i) => {
+              const cram = rep.isCram ? ' [CRAM]' : '';
+              const scheduled = rep.scheduled ? ` scheduled=${new Date(rep.scheduled).toISOString()}` : '';
+              inconsistencies.push(
+                `      [${i + 1}/${history.length}] ${new Date(rep.date).toISOString()} ${scoreName(rep.score)}${cram}${scheduled}`
+              );
+            });
+          }
+        }
+
+        const scopeLabel = `KB=${isPrimary ? 'primary' : currentKbId} (${skippedOtherKb} items skipped from other KBs)`;
+        if (inconsistencyCount === 0) {
+          console.log(`[MasteryDrillAudit] ${scopeLabel} — all ${finalDrillIds.length} cards OK (last rating is AGAIN or HARD).`);
+          await plugin.app.toast(`All ${finalDrillIds.length} drill cards OK.`);
+        } else {
+          console.log(`[MasteryDrillAudit] ${scopeLabel} — ${inconsistencyCount} inconsistencies out of ${finalDrillIds.length} cards:`);
+          for (const msg of inconsistencies) {
+            console.log('  ' + msg);
+          }
+          await plugin.app.toast(`Found ${inconsistencyCount} inconsistent drill cards — check console.`);
+        }
+      },
+    });
+
+    plugin.app.registerCommand({
+      id: 'cleanup_mastery_drill',
+      name: 'Mastery Drill: Remove cards whose last rating was Good or Easy',
+      action: async () => {
+        type DrillItem = string | { cardId: string; kbId?: string; addedAt?: number };
+        const allDrillIds = ((await plugin.storage.getSynced('finalDrillIds')) as DrillItem[]) || [];
+
+        const currentKb = await plugin.kb.getCurrentKnowledgeBaseData();
+        const isPrimary = await plugin.kb.isPrimaryKnowledgeBase();
+        const currentKbId = currentKb?._id;
+        const getCardId = (item: DrillItem) => typeof item === 'string' ? item : item.cardId;
+        const isInCurrentKb = (item: DrillItem) =>
+          typeof item === 'string' ? isPrimary : item.kbId === currentKbId;
+
+        const toRemoveIds = new Set<string>();
+        let missingCount = 0;
+        let noHistoryCount = 0;
+
+        for (const item of allDrillIds) {
+          if (!isInCurrentKb(item)) continue;
+          const cardId = getCardId(item);
+          const card = await plugin.card.findOne(cardId);
+          if (!card) {
+            toRemoveIds.add(cardId);
+            missingCount++;
+            continue;
+          }
+          const history = card.repetitionHistory ?? [];
+          const meaningful = history.filter(r => r.score !== QueueInteractionScore.TOO_EARLY);
+          if (meaningful.length === 0) {
+            toRemoveIds.add(cardId);
+            noHistoryCount++;
+            continue;
+          }
+          const last = meaningful[meaningful.length - 1];
+          const isExpected =
+            last.score === QueueInteractionScore.AGAIN ||
+            last.score === QueueInteractionScore.HARD;
+          if (!isExpected) {
+            toRemoveIds.add(cardId);
+          }
+        }
+
+        if (toRemoveIds.size === 0) {
+          await plugin.app.toast('No cards to remove — the drill is already clean for this KB.');
+          return;
+        }
+
+        const kept = allDrillIds.filter(item => {
+          if (!isInCurrentKb(item)) return true;
+          return !toRemoveIds.has(getCardId(item));
+        });
+        await plugin.storage.setSynced('finalDrillIds', kept);
+
+        const unexpectedCount = toRemoveIds.size - missingCount - noHistoryCount;
+        console.log(
+          `[MasteryDrillCleanup] Removed ${toRemoveIds.size} cards from current KB ` +
+          `(missing=${missingCount}, noHistory=${noHistoryCount}, lastRatingWasGoodOrEasy=${unexpectedCount}). ` +
+          `${kept.length} items remain in finalDrillIds (across all KBs).`
+        );
+        await plugin.app.toast(`Removed ${toRemoveIds.size} cards from drill.`);
+      },
+    });
+  }
+
+  plugin.app.registerCommand({
+    id: 'debug_clear_flashcard_history',
+    name: 'Debug: Clear Flashcard History (Fix Sync Error)',
+    action: async () => {
+      await plugin.storage.setSynced('flashcardHistoryData', []);
+      await plugin.app.toast('Flashcard History cleared!');
+    },
+  });
+
 }

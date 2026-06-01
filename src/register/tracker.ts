@@ -39,7 +39,7 @@ export function registerIncrementalRemTracker(plugin: ReactRNPlugin) {
   });
 
   // Track queue state and current rem to detect when powerup is removed
-  let intervalId: NodeJS.Timeout | null = null;
+  let intervalId: ReturnType<typeof setInterval> | null = null;
   let lastCheckedRemId: string | null = null;
   let pollCount = 0;
   const MAX_POLLS_PER_REM = 60; // 60 polls * 500ms = 30 seconds max per item
@@ -111,15 +111,15 @@ export function registerIncrementalRemTracker(plugin: ReactRNPlugin) {
     }
   });
 
-  // Background inheritance cascade watcher — with 5s debounce.
+  // Background inheritance cascade watcher.
   // All cascade triggers write to 'pendingInheritanceCascade'. This watcher:
   //   1. Clears the key immediately (prevents re-triggering on the next track() tick).
-  //   2. Adds the remId to a Set (all rems accumulate — deduplication is free via Set).
-  //   3. Resets a 5s debounce timer. After 5s of quiet, cascades run for ALL collected rems.
-  //   4. If a cascade is already running, the remId is queued for a follow-up pass.
-  const CASCADE_DEBOUNCE_MS = 5000;
+  //   2. Runs the cascade immediately for the remId.
+  //   3. If a cascade is already running, the remId is queued for a follow-up pass.
+  // Note: No debounce is needed here. Rapid Opt+Ctrl+Up/Down keypresses are handled
+  // upstream by the delta-queue watcher (atomic append + mutex + summed deltas), so
+  // by the time a remId arrives here it already represents a deduplicated, net write.
   let cascadeRunning = false;
-  let cascadeDebounceTimer: NodeJS.Timeout | null = null;
   let pendingCascadeRemIds = new Set<string>();
 
   const runCascade = async (remId: string) => {
@@ -156,47 +156,31 @@ export function registerIncrementalRemTracker(plugin: ReactRNPlugin) {
   };
 
   plugin.track(async (rp) => {
-    const pendingRemId = await rp.storage.getSession<string>('pendingInheritanceCascade');
-    if (!pendingRemId) return;
+    const pending = await rp.storage.getSession<string | string[]>('pendingInheritanceCascade');
+    if (!pending || (Array.isArray(pending) && pending.length === 0)) return;
 
     // Clear immediately to prevent re-trigger on the next track() tick
     await plugin.storage.setSession('pendingInheritanceCascade', null);
 
+    const remIds = Array.isArray(pending) ? pending : [pending];
+
     if (cascadeRunning) {
-      // Cascade already in progress — add to the queue for a follow-up pass
-      pendingCascadeRemIds.add(pendingRemId);
-      console.log('[Tracker] Cascade queued (cascade running) for remId:', pendingRemId);
+      // Cascade already in progress — add all to the queue for a follow-up pass
+      for (const id of remIds) pendingCascadeRemIds.add(id);
+      console.log('[Tracker] Cascade queued (cascade running) for', remIds.length, 'remId(s)');
       return;
     }
 
-    // Debounce: accumulate remIds, reset the 5s timer.
-    // Arm suppression flags immediately so GlobalRemChanged is suppressed for the
-    // entire debounce window, not just while runCascade is executing.
-    pendingCascadeRemIds.add(pendingRemId);
-    const wasAlreadyArmed = cascadeDebounceTimer !== null;
-    if (cascadeDebounceTimer) clearTimeout(cascadeDebounceTimer);
-    if (!wasAlreadyArmed) {
-      incRemBatchActive = true;
-      await plugin.storage.setSession('plugin_operation_active', true);
-      console.log('[Tracker] Cascade suppression flags armed (debounce window started)');
-    }
-    cascadeDebounceTimer = setTimeout(async () => {
-      cascadeDebounceTimer = null;
-      const remIds = [...pendingCascadeRemIds];
-      pendingCascadeRemIds.clear();
-      console.log(`[Tracker] Cascade debounce fired — running ${remIds.length} cascade(s)`);
-      if (remIds.length === 0) {
-        // Nothing to run — clear flags defensively.
-        incRemBatchActive = false;
-        await plugin.storage.setSession('plugin_operation_active', false);
-        return;
-      }
-      for (const remId of remIds) {
-        await runCascade(remId);
-      }
-      // runCascade's finally block clears flags after the last cascade completes.
-    }, CASCADE_DEBOUNCE_MS);
-    console.log(`[Tracker] Cascade debounce reset (${CASCADE_DEBOUNCE_MS}ms), pending: ${pendingCascadeRemIds.size} rem(s)`);
+    // Run the cascade for the first remId; queue the rest so the runCascade
+    // finally-block drains them in sequence.
+    const [first, ...rest] = remIds;
+    for (const id of rest) pendingCascadeRemIds.add(id);
+    console.log(
+      '[Tracker] Cascade triggered for remId:',
+      first,
+      rest.length > 0 ? `(+ ${rest.length} queued)` : ''
+    );
+    await runCascade(first);
   });
 
   // Pending priority save watcher

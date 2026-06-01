@@ -1,0 +1,143 @@
+import { ReactRNPlugin } from '@remnote/plugin-sdk';
+import { createRemFromHighlight } from './highlightActions';
+import {
+  powerupCode,
+  incrementalQueueActiveKey,
+  currentIncRemKey,
+  editorReviewTimerRemIdKey,
+} from './consts';
+import {
+  getPdfInfoFromHighlight,
+  findPDFinRem,
+  addPageToHistory,
+  setIncrementalReadingPosition,
+} from './pdfUtils';
+import { initIncrementalRem } from '../register/powerups';
+
+async function resolveContextRemId(
+  plugin: ReactRNPlugin,
+  docId: string | null,
+  opts: { checkEditorTimer: boolean }
+): Promise<string | null> {
+  let contextRemId: string | null = null;
+
+  const isQueueActive = await plugin.storage.getSession<boolean>(incrementalQueueActiveKey);
+  if (isQueueActive && docId) {
+    const currentQueueRemId = await plugin.storage.getSession<string>(currentIncRemKey);
+    if (currentQueueRemId) {
+      const currentQueueRem = await plugin.rem.findOne(currentQueueRemId);
+      const foundPdf = currentQueueRem
+        ? await findPDFinRem(plugin as any, currentQueueRem, docId)
+        : null;
+      if (foundPdf && foundPdf._id === docId) {
+        contextRemId = currentQueueRemId;
+      }
+    }
+  }
+
+  // Editor Review Timer context: when reviewing an IncRem in the editor, the
+  // URLChange listener has cleared currentIncRemKey + incrementalQueueActiveKey,
+  // so the queue check above misses it. Confirm the timer's IncRem owns this PDF.
+  if (opts.checkEditorTimer && !contextRemId && docId) {
+    const editorTimerRemId = await plugin.storage.getSession<string>(editorReviewTimerRemIdKey);
+    if (editorTimerRemId) {
+      const editorTimerRem = await plugin.rem.findOne(editorTimerRemId);
+      const foundPdf = editorTimerRem
+        ? await findPDFinRem(plugin as any, editorTimerRem, docId)
+        : null;
+      if (foundPdf && foundPdf._id === docId) {
+        contextRemId = editorTimerRemId;
+      }
+    }
+  }
+
+  if (!contextRemId) {
+    const pageRangeContext = await plugin.storage.getSession<{
+      incrementalRemId: string | null;
+      pdfRemId: string | null;
+    }>('pageRangeContext');
+
+    const currentIncRemId = await plugin.storage.getSession<string>(currentIncRemKey);
+
+    if (
+      pageRangeContext?.incrementalRemId &&
+      pageRangeContext?.pdfRemId &&
+      pageRangeContext.incrementalRemId !== pageRangeContext.pdfRemId
+    ) {
+      contextRemId = pageRangeContext.incrementalRemId;
+    } else if (currentIncRemId) {
+      const incRem = await plugin.rem.findOne(currentIncRemId);
+      if (incRem && (await incRem.hasPowerup(powerupCode))) {
+        contextRemId = currentIncRemId;
+      }
+    }
+  }
+
+  return contextRemId;
+}
+
+export async function handleCreateExtract(plugin: ReactRNPlugin, remId: string) {
+  const highlight = await plugin.rem.findOne(remId);
+  if (!highlight) return;
+
+  const { pdfRemId: docId } = await getPdfInfoFromHighlight(plugin as any, highlight);
+  let contextRemId = await resolveContextRemId(plugin, docId, { checkEditorTimer: true });
+
+  // If the resolved context is the highlight itself (happens when the highlight
+  // is the queue's current item), it's not a useful parent suggestion — drop it
+  // so the parent selector falls through to page-range matching instead.
+  if (contextRemId === remId) contextRemId = null;
+
+  // createRemFromHighlight opens the parent-selector popup and returns immediately.
+  // Bookmark + toast are handled inside createRemUnderParent once the user confirms
+  // a parent — doing them here would fire even when the user cancels.
+  await createRemFromHighlight(plugin as any, highlight, {
+    makeIncremental: true,
+    contextRemId,
+    showPriorityPopupIfNew: true,
+  });
+}
+
+export async function handleToggleIncremental(
+  plugin: ReactRNPlugin,
+  remId: string
+): Promise<boolean> {
+  const rem = await plugin.rem.findOne(remId);
+  if (!rem) return false;
+
+  const currentlyIncremental = await rem.hasPowerup(powerupCode);
+
+  if (currentlyIncremental) {
+    await rem.removePowerup(powerupCode);
+    await plugin.app.toast('❌ Removed Incremental tag');
+    return false;
+  }
+
+  const { pdfRemId: docId, pageIndex } = await getPdfInfoFromHighlight(plugin as any, rem);
+  const contextRemId = await resolveContextRemId(plugin, docId, { checkEditorTimer: true });
+
+  await initIncrementalRem(plugin as any, rem, { explicitParentId: contextRemId ?? undefined });
+
+  if (contextRemId && docId) {
+    try {
+      await addPageToHistory(plugin as any, contextRemId, docId, pageIndex, undefined, rem._id);
+      if (pageIndex !== null) {
+        await setIncrementalReadingPosition(plugin as any, contextRemId, docId, pageIndex);
+      }
+      await plugin.app.toast('✅ Tagged & bookmark updated');
+    } catch (e) {
+      console.error('Error creating bookmark for toggle_incremental_toolbar', e);
+      await plugin.app.toast('✅ Tagged as Incremental Rem');
+    }
+  } else {
+    await plugin.app.toast('✅ Tagged as Incremental Rem');
+  }
+
+  await plugin.storage.setSession('priorityPopupTargetRemId', undefined);
+  await plugin.widget.openPopup('priority_interval', { remId: rem._id });
+  return true;
+}
+
+export async function handleOpenBookmarkPopup(plugin: ReactRNPlugin, remId: string) {
+  await plugin.widget.openPopup('pdf_bookmark_popup', { remId });
+}

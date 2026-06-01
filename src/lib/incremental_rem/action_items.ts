@@ -5,7 +5,7 @@ import {
   RichTextElementRemInterface,
 } from '@remnote/plugin-sdk';
 import { RemAndType } from './types';
-import { safeRemTextToString } from '../pdfUtils';
+import { safeRemTextToString, getActivePdfForIncRem } from '../pdfUtils';
 import {
   videoExtractPowerupCode,
   videoExtractUrlSlotCode,
@@ -116,35 +116,50 @@ export const remToActionItemType = async (
         rem,
       };
     }
-  } else {
+   } else {
     const sources = await rem.getSources();
     let selectedSource: PluginRem | null = null;
+
+    console.log('[action_items] Source resolution for rem', rem._id, '- found', sources.length, 'sources');
 
     if (sources.length === 1) {
       selectedSource = sources[0];
     } else if (sources.length > 1) {
-      const preferredSources: PluginRem[] = [];
-      for (const source of sources) {
-        try {
-          const tags = await source.getTagRems();
-          for (const tagRem of tags) {
-            if (!tagRem.text) continue;
-            const tagText = await safeRemTextToString(plugin, tagRem.text);
-            const tagLower = tagText.toLowerCase().replace(/\s+/g, '');
-            if (tagLower === 'preferthispdf') {
-              preferredSources.push(source);
-              break;
+      // Multi-source resolution for PDFs: pin → #preferthispdf → first PDF.
+      // Whenever the IncRem has any PDF source we open it in the Reader
+      // (the Reader's PDF switcher lets the user pick a different one).
+      // The legacy ExtractViewer fallback is reserved for the
+      // #extractviewer-tagged case handled at the top of this function.
+      const resolvedPdf = await getActivePdfForIncRem(plugin, rem);
+      if (resolvedPdf) {
+        selectedSource = resolvedPdf;
+      } else {
+        // No PDFs on this rem — fall back to the legacy #preferthispdf scan,
+        // which can also disambiguate among non-PDF sources (HTML, video, etc.)
+        // when the user has explicitly tagged one.
+        const preferredSources: PluginRem[] = [];
+        for (const source of sources) {
+          try {
+            const tags = await source.getTagRems();
+            for (const tagRem of tags) {
+              if (!tagRem.text) continue;
+              const tagText = await safeRemTextToString(plugin, tagRem.text);
+              const tagLower = tagText.toLowerCase().replace(/\s+/g, '');
+              if (tagLower === 'preferthispdf') {
+                preferredSources.push(source);
+                break;
+              }
             }
+          } catch (e) {
+            // Ignore errors reading tags
           }
-        } catch (e) {
-          // Ignore errors reading tags
         }
-      }
 
-      if (preferredSources.length === 1) {
-        selectedSource = preferredSources[0];
-      } else if (preferredSources.length > 1) {
-        await plugin.app.toast('Multiple PDFs have the #preferthispdf tag. Opening in standard Rem view instead of Reader.');
+        if (preferredSources.length === 1) {
+          selectedSource = preferredSources[0];
+        } else if (preferredSources.length > 1) {
+          await plugin.app.toast('Multiple sources have the #preferthispdf tag. Opening in standard Rem view.');
+        }
       }
     }
 
@@ -160,6 +175,13 @@ export const remToActionItemType = async (
         }
       } catch (e) {}
 
+      console.log('[action_items] Source resolution:', {
+        sourceRemId: selectedSource._id,
+        isLink,
+        url: url?.substring(0, 60),
+        originalRemId: rem._id,
+      });
+
       if (isLink && url && url.includes('youtube')) {
         const data = await remToActionItemType(plugin, selectedSource);
         if (data) {
@@ -170,6 +192,12 @@ export const remToActionItemType = async (
         }
       } else {
         const data = await remToActionItemType(plugin, selectedSource);
+        console.log('[action_items] ⚠️ Non-YouTube source resolved to:', {
+          type: data?.type,
+          returnedRemId: data?.rem?._id,
+          originalRemId: rem._id,
+          NOTE: 'If type is html, rem._id here is the SOURCE, not the incremental rem!',
+        });
         if (data) {
           return data;
         }

@@ -25,6 +25,15 @@ Manage information overload with a robust dual-priority system:
 - **FSRS Analytics**: Real-time Difficulty (D), Stability (S), and Retrievability (R) statistics computed for flashcards.
 - **Priority Review Documents**: Generate focused study sessions for your top items when overwhelmed.
 
+### 📊 History, Dashboard & Mastery Drill *(new in v0.2.182)*
+A full suite of history and practice tools now built into the right sidebar:
+- **Visited Rem History**: jump back to any document you navigated to recently.
+- **Flashcard History**: find and open any flashcard you've reviewed, searchable by front and back text.
+- **Practiced Queues Dashboard**: real-time session metrics (speed, retention, card age) and a full history of every practice session, with Export/Import backup.
+- **Mastery Drill**: a focused re-practice queue for cards you rated *Forgot* or *Hard* — inspired by SuperMemo's Final Drill. Open with the `Mastery Drill` command or via the Left Sidebar notification.
+
+👉 [Full documentation on the wiki](https://github.com/bjsi/incremental-everything/wiki/History-Queue-Dashboard-and-Mastery-Drill)
+
 ### 📱 Performance Modes
 - **Light Mode (Default for Mobile/Web)**: Fast, stable, and essential features only. Prevents crashes on phones and tablets.
 - **Full Mode (Desktop Power User)**: Complete feature set with heavy statistical calculations for detailed analytics.
@@ -57,7 +66,7 @@ This README covers the basics. For the comprehensive guides, please visit the **
 ## Usage
 
 ### Getting Started
-1. **Make Incremental**: Make any Rem, PDF, or Website `Incremental` using the `/Incremental Everything` command (Shortcut: `Alt+X`).
+1. **Make Incremental**: Make any Rem, PDF, or Website `Incremental` using the `/Make Incremental (Extract)` command (Shortcut: `Alt+X`).
    * **Extract Selection**: If you have text selected, `Alt+X` will extract that specific piece into a new child Rem and link it back.
 
 ![Make Incremental using the command](https://raw.githubusercontent.com/bjsi/incremental-everything/main/img/tag-inc-rem.gif)
@@ -89,12 +98,14 @@ The plugin now features **Automatic Light Mode**.
 ### Incremental Reading
 
 - You can tag PDFs, websites and highlights with the `Incremental` tag to do classic SuperMemo-style incremental reading.
-- It will work if you tag the PDF or website itself, a Rem with a single PDF or website as a source, or a Rem with multiple sources where exactly one PDF has the `#preferthispdf` tag.
+- It works whether you tag the PDF/website itself, a Rem with a single source, or a Rem with **multiple PDF sources** — the plugin lets you switch between them on the fly and pin one as the *active* PDF for that Inc Rem.
 - The plugin will render the PDF or website reader view inside the queue.
 - If you want to turn a highlight into an incremental Rem, click on the highlight and click the puzzle piece icon.
 - 📄 **PDFs & Web**
   - **Visual Status**: Highlights turn **Green** when toggled as Incremental, and **Blue** when extracted.
+  - **Tag Badges**: To keep the editor uncluttered, the `Incremental` and `pdfextract` tag labels are replaced by compact emoji badges — **🔍** for `Incremental` and **✂️** for `pdfextract` — so you can still identify item types at a glance without losing horizontal space.
   - **PDF Control Panel**: Manage chapters, set page ranges, and view reading history for long documents.
+  - **Multi-PDF Switcher** *(new)*: When an Inc Rem has multiple PDF sources, a dropdown appears in the Reader (next to the 📝 Document Notes icon), in the Editor Review Timer, in the Execute Repetition popup, in the PDF Control Panel, and in the Editor Toolbar — letting you switch the PDF in view and pin a chosen one as active for that Inc Rem. Resolution order is **explicit pin → `#preferthispdf` → first PDF**, applied uniformly across every surface.
   - **Position Tracking**: The plugin automatically saves your last read page when using the PDF Chapter workflow or creating extracts.
   - **Create Incremental Rem**: Select text in a PDF -> Highlight it -> Click the Funnel Icon -> **"Create Incremental Rem"**. This extracts the text to a new Rem under a parent of your choice (using the smart parent selector).
 
@@ -112,7 +123,7 @@ The plugin now features **Automatic Light Mode**.
 - You can tag YouTube videos with the `Incremental` tag to watch them incrementally.
 - It will work if you tag the link Rem itself, or a Rem with the YouTube link as a source.
 - **Video Extracts**: Create precise sub-clips with specific start/end timestamps, each with its own schedule and priority.
-- **Auto-Transcription**: Automatically fetch YouTube transcripts for extract ranges to make content searchable and ready for clozing.
+- **Auto-Transcription**: Automatically fetch YouTube transcripts for extract ranges to make content searchable and ready for clozing. [P.S.: Currently down after YouTube recent anti-bot measures]
 - The plugin will automatically save your progress and playback rate.
 - You can open the resizable notes section on the left to take notes while you watch.
 

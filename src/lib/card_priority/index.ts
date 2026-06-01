@@ -1,10 +1,10 @@
-import { PluginRem, RNPlugin, RemId } from '@remnote/plugin-sdk';
+import { Card, PluginRem, RNPlugin, RemId } from '@remnote/plugin-sdk';
 import { getIncrementalRemFromRem } from '../incremental_rem';
+import { buildComprehensiveScope } from '../scope_helpers';
 import { findClosestAncestorWithAnyPriority } from '../priority_inheritance';
+import dayjs from 'dayjs';
 import {
   allCardPriorityInfoKey,
-  powerupCode,
-  nextRepDateSlotCode,
 } from '../consts';
 import {
   CardPriorityInfo,
@@ -40,21 +40,40 @@ async function findClosestAncestorWithPriority(
 /**
  * Get card priority info for a rem.
  * If no priority is set, it checks for inherited priority before returning a default state.
+ *
+ * Performance: when called from the cache builder for many rems, the caller can
+ * pre-fetch all cards once via plugin.card.getAll() and pass the per-rem subset
+ * via options.preloadedCards. This skips the per-rem rem.getCards() round-trip
+ * (the most expensive call inside this function for large KBs).
+ *
+ * The slot reads are parallelized in a single Promise.all batch; reading
+ * source/lastUpdated even when priorityValue ends up null is essentially free
+ * (parallel cost is governed by the slowest call) and simplifies the flow.
  */
 export async function getCardPriority(
   plugin: RNPlugin,
-  rem: PluginRem
+  rem: PluginRem,
+  options?: { preloadedCards?: Card[] }
 ): Promise<CardPriorityInfo | null> {
-  const cards = await rem.getCards();
-  const now = Date.now();
-  const dueCards = cards.filter((card) => (card.nextRepetitionTime ?? Infinity) <= now).length;
+  const [cards, priorityValue, source, lastUpdated] = await Promise.all([
+    options?.preloadedCards !== undefined
+      ? Promise.resolve(options.preloadedCards)
+      : rem.getCards(),
+    rem.getPowerupProperty(CARD_PRIORITY_CODE, PRIORITY_SLOT),
+    rem.getPowerupProperty(CARD_PRIORITY_CODE, SOURCE_SLOT),
+    rem.getPowerupProperty(CARD_PRIORITY_CODE, LAST_UPDATED_SLOT),
+  ]);
 
-  const priorityValue = await rem.getPowerupProperty(CARD_PRIORITY_CODE, PRIORITY_SLOT);
+  const now = Date.now();
+  const startOfToday = dayjs().startOf('day').valueOf();
+  // `?? Infinity`: disabled cards have nextRepetitionTime === null, which maps to
+  // Infinity and therefore never satisfies the <= now check. This implicitly excludes
+  // disabled cards from due counts and, consequently, from Priority Review Documents
+  // and the due-card-priority cache — without any explicit disabled-card filter.
+  const dueCards = cards.filter((card) => (card.nextRepetitionTime ?? Infinity) <= now).length;
+  const dueCardsOverdue = cards.filter((card) => (card.nextRepetitionTime ?? Infinity) <= startOfToday).length;
 
   if (priorityValue) {
-    const source = await rem.getPowerupProperty(CARD_PRIORITY_CODE, SOURCE_SLOT);
-    const lastUpdated = await rem.getPowerupProperty(CARD_PRIORITY_CODE, LAST_UPDATED_SLOT);
-
     const parsedPriority = parseInt(priorityValue);
     const finalPriority = !isNaN(parsedPriority) ? parsedPriority : 50;
 
@@ -65,6 +84,7 @@ export async function getCardPriority(
       lastUpdated: parseInt(lastUpdated) || now,
       cardCount: cards.length,
       dueCards,
+      dueCardsOverdue,
     };
   } else {
     const ancestorPriority = await findClosestAncestorWithPriority(plugin, rem);
@@ -77,6 +97,7 @@ export async function getCardPriority(
         lastUpdated: 0,
         cardCount: cards.length,
         dueCards,
+        dueCardsOverdue,
       };
     }
 
@@ -88,6 +109,7 @@ export async function getCardPriority(
       lastUpdated: 0,
       cardCount: cards.length,
       dueCards,
+      dueCardsOverdue,
     };
   }
 }
@@ -169,7 +191,12 @@ export async function autoAssignCardPriority(plugin: RNPlugin, rem: PluginRem): 
   const ancestorPriority = await findClosestAncestorWithPriority(plugin, rem);
 
   if (ancestorPriority) {
-    // Skip write if already up-to-date (prevents infinite GlobalRemChanged loop)
+    // Skip write if already up-to-date (prevents infinite GlobalRemChanged loop).
+    // Untagged rems with matching inherited priority intentionally stay untagged: the
+    // widget already falls back to getCardPriority() (which returns the inherited value
+    // with lastUpdated: 0) when there's no cache entry, and the deferred batch still
+    // pushes them into the cache by remId regardless of tag status. Force-tagging on
+    // every ambient edit causes a write storm in the GlobalRemChanged listener.
     if (existingPriority && existingPriority.source === 'inherited' && existingPriority.priority === ancestorPriority.priority) {
       return ancestorPriority.priority;
     }
@@ -182,7 +209,10 @@ export async function autoAssignCardPriority(plugin: RNPlugin, rem: PluginRem): 
   }
 
   const defaultPriority = (await plugin.settings.getSetting<number>('defaultCardPriority')) || 50;
-  // Skip write if already up-to-date (prevents infinite GlobalRemChanged loop)
+  // Skip write if already up-to-date (prevents infinite GlobalRemChanged loop).
+  // Untagged rems with matching default priority intentionally stay untagged: the widget
+  // falls back to getCardPriority() and the deferred batch still pushes them into the
+  // cache by remId regardless of tag status.
   if (existingPriority && existingPriority.source === 'default' && existingPriority.priority === defaultPriority) {
     return defaultPriority;
   }
@@ -272,43 +302,7 @@ export async function getDueCardsWithPriorities(
 
   if (scopeRem) {
     console.log(`[getDueCardsWithPriorities] Gathering comprehensive scope...`);
-
-    const descendants = await scopeRem.getDescendants();
-    console.log(`[getDueCardsWithPriorities] ✓ Found ${descendants.length} descendants`);
-
-    const allRemsInContext = await scopeRem.allRemInDocumentOrPortal();
-    console.log(
-      `[getDueCardsWithPriorities] ✓ Found ${allRemsInContext.length} rems in document/portal context`
-    );
-
-    const folderQueueRems = await scopeRem.allRemInFolderQueue();
-    console.log(`[getDueCardsWithPriorities] ✓ Found ${folderQueueRems.length} rems via allRemInFolderQueue`);
-
-    const sources = await scopeRem.getSources();
-    console.log(`[getDueCardsWithPriorities] ✓ Found ${sources.length} sources`);
-
-    const nextRepDateSlotRem = await plugin.powerup.getPowerupSlotByCode(powerupCode, nextRepDateSlotCode);
-
-    const referencingRems = ((await scopeRem.remsReferencingThis()) || [])
-      .map((rem) => {
-        if (nextRepDateSlotRem && (rem.text?.[0] as any)?._id === nextRepDateSlotRem._id) {
-          return rem.parent;
-        } else {
-          return rem._id;
-        }
-      })
-      .filter((id) => id !== null && id !== undefined) as RemId[];
-
-    console.log(`[getDueCardsWithPriorities] ✓ Found ${referencingRems.length} referencing rems`);
-
-    scopeRemIds = new Set<RemId>();
-    scopeRemIds.add(scopeRem._id);
-    descendants.forEach((rem) => scopeRemIds.add(rem._id));
-    allRemsInContext.forEach((rem) => scopeRemIds.add(rem._id));
-    folderQueueRems.forEach((rem) => scopeRemIds.add(rem._id));
-    sources.forEach((rem) => scopeRemIds.add(rem._id));
-    referencingRems.forEach((id) => scopeRemIds.add(id));
-
+    scopeRemIds = await buildComprehensiveScope(plugin, scopeRem._id);
     console.log(`[getDueCardsWithPriorities] Comprehensive scope contains ${scopeRemIds.size} unique rems`);
   } else {
     scopeRemIds = new Set(allCardInfos.map((info) => info.remId));
@@ -394,7 +388,8 @@ async function getDueCardsWithPrioritiesSlow(
   const allCards = await plugin.card.getAll();
   const now = Date.now();
 
-  // Build a map of remId -> due card count
+  // Build a map of remId -> due card count.
+  // Disabled cards (nextRepetitionTime === null → Infinity) are excluded implicitly.
   const remDueCardCount = new Map<RemId, number>();
   for (const card of allCards) {
     if ((card.nextRepetitionTime ?? Infinity) <= now) {
@@ -408,44 +403,7 @@ async function getDueCardsWithPrioritiesSlow(
 
   if (scopeRem) {
     console.log(`[getDueCardsWithPrioritiesSlow] Starting comprehensive scope gathering...`);
-
-    const descendants = await scopeRem.getDescendants();
-    console.log(`[getDueCardsWithPrioritiesSlow] ✓ Found ${descendants.length} descendants`);
-
-    const allRemsInContext = await scopeRem.allRemInDocumentOrPortal();
-    console.log(
-      `[getDueCardsWithPrioritiesSlow] ✓ Found ${allRemsInContext.length} rems in document/portal context`
-    );
-
-    const folderQueueRems = await scopeRem.allRemInFolderQueue();
-    console.log(`[getDueCardsWithPrioritiesSlow] ✓ Found ${folderQueueRems.length} rems via allRemInFolderQueue`);
-
-    const sources = await scopeRem.getSources();
-    console.log(`[getDueCardsWithPrioritiesSlow] ✓ Found ${sources.length} sources`);
-
-    const nextRepDateSlotRem = await plugin.powerup.getPowerupSlotByCode(powerupCode, nextRepDateSlotCode);
-
-    const referencingRems = ((await scopeRem.remsReferencingThis()) || [])
-      .map((rem) => {
-        if (nextRepDateSlotRem && (rem.text?.[0] as any)?._id === nextRepDateSlotRem._id) {
-          return rem.parent;
-        } else {
-          return rem._id;
-        }
-      })
-      .filter((id) => id !== null && id !== undefined) as RemId[];
-
-    console.log(`[getDueCardsWithPrioritiesSlow] ✓ Found ${referencingRems.length} referencing rems`);
-
-    remsToCheckIds = new Set<RemId>([
-      scopeRem._id,
-      ...descendants.map(d => d._id),
-      ...allRemsInContext.map(r => r._id),
-      ...folderQueueRems.map(r => r._id),
-      ...sources.map(r => r._id),
-      ...referencingRems
-    ]);
-
+    remsToCheckIds = await buildComprehensiveScope(plugin, scopeRem._id);
     console.log(`[getDueCardsWithPrioritiesSlow] Comprehensive scope: ${remsToCheckIds.size} unique rems`);
   } else {
     // Full KB scope - use all rems that have due cards

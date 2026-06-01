@@ -1,7 +1,10 @@
 import { QueueItemType, ReactRNPlugin, WidgetLocation } from '@remnote/plugin-sdk';
-import { pageRangeWidgetId, parentSelectorWidgetId, powerupCode, priorityGraphPowerupCode } from '../lib/consts';
+import { pageRangeWidgetId, parentSelectorWidgetId, powerupCode, priorityGraphPowerupCode, incremNotesSidebarWidgetId } from '../lib/consts';
 
-export function registerWidgets(plugin: ReactRNPlugin) {
+export async function registerWidgets(plugin: ReactRNPlugin) {
+  const skipMasteryDrill = Boolean(
+    await plugin.settings.getSetting('skip_mastery_drill')
+  );
 
   // NEW: Light Priority Widget
   plugin.app.registerWidget('priority_light', WidgetLocation.Popup, {
@@ -63,7 +66,7 @@ export function registerWidgets(plugin: ReactRNPlugin) {
 
   plugin.app.registerWidget('debug', WidgetLocation.Popup, {
     dimensions: {
-      width: 400,
+      width: 450,
       height: 800,
     },
   });
@@ -181,6 +184,15 @@ export function registerWidgets(plugin: ReactRNPlugin) {
 
 
 
+  plugin.app.registerWidget('practiced_queues', WidgetLocation.RightSidebar, {
+    dimensions: {
+      width: '100%',
+      height: 'auto',
+    },
+    widgetTabIcon: "https://cdn-icons-png.flaticon.com/512/6688/6688557.png",
+    widgetTabTitle: "Practiced Queues",
+  });
+
   plugin.app.registerWidget('incremental_history', WidgetLocation.RightSidebar, {
     dimensions: {
       width: '100%',
@@ -188,6 +200,35 @@ export function registerWidgets(plugin: ReactRNPlugin) {
     },
     widgetTabIcon: "https://cdn-icons-png.flaticon.com/512/3626/3626838.png",
     widgetTabTitle: "Incremental History",
+  });
+
+  plugin.app.registerWidget('flashcard_history', WidgetLocation.RightSidebar, {
+    dimensions: {
+      width: '100%',
+      height: 'auto',
+    },
+    widgetTabIcon: "https://cdn-icons-png.flaticon.com/512/9145/9145670.png",
+    widgetTabTitle: "Flashcard History",
+  });
+
+  plugin.app.registerWidget('rem_history', WidgetLocation.RightSidebar, {
+    dimensions: {
+      width: '100%',
+      height: 'auto',
+    },
+    widgetTabIcon: "https://i.imgur.com/MLaBDJw.png",
+    widgetTabTitle: "Visited Rem History",
+  });
+
+  // IncRem Notes Sidebar: shows the DocumentViewer for the IncRem being reviewed
+  // Opened programmatically by the Reader 📝 button via openWidgetInRightSidebar.
+  plugin.app.registerWidget(incremNotesSidebarWidgetId, WidgetLocation.RightSidebar, {
+    dimensions: {
+      width: '100%',
+      height: 'auto',
+    },
+    widgetTabIcon: "https://cdn-icons-png.flaticon.com/512/1828/1828911.png",
+    widgetTabTitle: "Document Notes",
   });
 
   // Repetition history popup for Answer Buttons
@@ -200,8 +241,15 @@ export function registerWidgets(plugin: ReactRNPlugin) {
 
   plugin.app.registerWidget('aggregated_repetition_history', WidgetLocation.Popup, {
     dimensions: {
-      width: '450px',
+      width: '550px',
       height: 'auto',
+    },
+  });
+
+  plugin.app.registerWidget('study_dashboard', WidgetLocation.Popup, {
+    dimensions: {
+      width: '900px',
+      height: 850,
     },
   });
 
@@ -215,28 +263,23 @@ export function registerWidgets(plugin: ReactRNPlugin) {
   plugin.app.registerWidget('weighted_shield_popup', WidgetLocation.Popup, {
     dimensions: {
       width: '560px',
-      height: 700,
+      height: 900,
     },
   });
 
-  // PDF Bookmark Flow
-  plugin.app.registerWidget('pdf_bookmark_toolbar', WidgetLocation.PDFHighlightToolbarLocation, {
+  // Wide variant: same component, registered at ~2× width so the `wsh` command
+  // can show Incremental Rems and Cards side-by-side when both groups are present.
+  plugin.app.registerWidget('weighted_shield_popup_wide', WidgetLocation.Popup, {
     dimensions: {
-      width: 'auto',
-      height: 'auto',
+      width: '1150px',
+      height: 900,
     },
   });
 
-  // Create Incremental Rem Toolbar Button
-  plugin.app.registerWidget('create_inc_rem_toolbar', WidgetLocation.PDFHighlightToolbarLocation, {
-    dimensions: {
-      width: 'auto',
-      height: 'auto',
-    },
-  });
-
-  // Toggle Incremental Rem Toolbar Button
-  plugin.app.registerWidget('toggle_incremental_toolbar', WidgetLocation.PDFHighlightToolbarLocation, {
+  // Consolidated PDF highlight toolbar: bookmark, create extract, and toggle
+  // incremental — one widget hosts all three icons, so RemNote only spins up a
+  // single plugin iframe per toolbar render instead of three.
+  plugin.app.registerWidget('highlight_toolbar', WidgetLocation.PDFHighlightToolbarLocation, {
     dimensions: {
       width: 'auto',
       height: 'auto',
@@ -250,4 +293,44 @@ export function registerWidgets(plugin: ReactRNPlugin) {
       height: 'auto',
     },
   });
+
+  // Outline Restructure preview popup (Before | After + per-rem preserve toggles).
+  plugin.app.registerWidget('outline_restructure_preview', WidgetLocation.Popup, {
+    dimensions: {
+      width: 1100,
+      height: 800,
+    },
+  });
+
+  // Outline Restructure undo banner — appears in the sidebar after an apply,
+  // stays until the user clicks Undo or dismisses it.
+  plugin.app.registerWidget(
+    'outline_restructure_undo',
+    WidgetLocation.SidebarEnd,
+    {
+      dimensions: {
+        width: '100%',
+        height: 'auto',
+      },
+    }
+  );
+
+  // Mastery Drill widgets are gated behind the 'skip_mastery_drill' setting.
+  if (!skipMasteryDrill) {
+    // Mastery Drill popup
+    plugin.app.registerWidget('mastery_drill', WidgetLocation.Popup, {
+      dimensions: {
+        width: 1100,
+        height: 900,
+      },
+    });
+
+    // Mastery Drill notification banner
+    plugin.app.registerWidget('mastery_drill_notification', WidgetLocation.SidebarEnd, {
+      dimensions: {
+        width: '100%',
+        height: 'auto',
+      },
+    });
+  }
 }

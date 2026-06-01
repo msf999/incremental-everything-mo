@@ -21,8 +21,10 @@ export const betaMaxIntervalId = 'beta-max-interval';
 export const collapseQueueTopBar = 'collapse-queue-top-bar';
 export const defaultPriorityId = 'default-priority';
 export const defaultCardPriorityId = 'defaultCardPriority';
-export const showRemsAsIsolatedInQueueId = 'show-rems-as-isolated-in-queue';
+export const isolatedQueueModeId = 'isolated-queue-view-mode';
+export type IsolatedQueueMode = 'highlights' | 'rems' | 'both' | 'none';
 export const priorityStepSizeId = 'priority-step-size';
+export const enableHideInQueueIntegrationId = 'enable-hide-in-queue-integration';
 
 // FSRS DSR settings
 export const displayFsrsDsrId = 'display-fsrs-dsr';
@@ -70,6 +72,7 @@ export const seenRemInSessionKey = 'seen-rem-in-session-key';
 export const seenCardInSessionKey = 'seen-card-in-session-key';
 export const displayPriorityShieldId = 'display-priority-shield';
 export const displayQueueToolbarPriorityId = 'display-queue-toolbar-priority';
+export const autoFocusQueueDashboardId = 'auto-focus-queue-dashboard';
 export const priorityShieldHistoryKey = 'priority-shield-history-key';
 export const priorityShieldHistoryMenuItemId = 'priority-shield-history-menu-item-id';
 export const documentPriorityShieldHistoryKey = 'document-priority-shield-history-key';
@@ -133,9 +136,17 @@ export const pdfHighlightColorId = 'pdf-highlight-color'; // Incremental PDF hig
 export const currentDocumentIdKey = 'current-document-id';
 export const popupDocumentIdKey = 'popup-document-id';
 
+// Pending scroll-to-highlight request, picked up by the main-process listener
+// in callbacks.ts after a widget triggers `openRemInNewPane`. The widget's
+// iframe dies during the layout reorg, so the scroll must run in main-process.
+export const pendingScrollRequestKey = 'pending-scroll-request';
+
 // Priority Review Graph
 export const priorityGraphPowerupCode = 'priority_review_graph';
 export const GRAPH_DATA_KEY_PREFIX = 'priority_review_graph_data_';
+// Synced index of every graph Rem ID we've written graph data for. Used to find
+// orphaned `GRAPH_DATA_KEY_PREFIX + remId` entries on startup so they can be cleared.
+export const REVIEW_GRAPH_INDEX_KEY = 'priority_review_graph_index';
 
 // Priority Graph (document-scope, inline in inc_rem_counter)
 export const PRIORITY_GRAPH_DATA_KEY_PREFIX = 'priority_graph_data_';
@@ -145,3 +156,12 @@ export const videoExtractPowerupCode = 'videoExtract';
 export const videoExtractUrlSlotCode = 'videoUrl';
 export const videoExtractStartSlotCode = 'startTime';
 export const videoExtractEndSlotCode = 'endTime';
+
+// IncRem Notes Sidebar (right sidebar widget)
+// Opened programmatically by the Reader 📝 button; reads currentIncRemKey directly.
+export const incremNotesSidebarWidgetId = 'increm_notes_sidebar';
+// Host document ID for highlight IncRems (PDF/HTML source Rem).
+// Set by queue.tsx so the sidebar can discover related IncRems without
+// re-resolving the action item type.
+export const currentHostDocumentIdKey = 'current-host-document-id';
+

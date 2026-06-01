@@ -1,7 +1,7 @@
 import { renderWidget, usePlugin, WidgetLocation, ReactRNPlugin } from '@remnote/plugin-sdk';
 import React, { useState, useEffect } from 'react';
-import { getPdfInfoFromHighlight, findAllRemsForPDF, addPageToHistory, getPageHistory, PageHistoryEntry, PageRangeContext, setIncrementalReadingPosition, findPDFinRem, getIncrementalPageRange } from '../lib/pdfUtils';
-import { incrementalQueueActiveKey } from '../lib/consts';
+import { getPdfInfoFromHighlight, findAllRemsForPDF, findAllRemsForHTML, findPDFinRem, findHTMLinRem, isHtmlSource, addPageToHistory, getPageHistory, PageHistoryEntry, PageRangeContext, setIncrementalReadingPosition, getIncrementalPageRange, safeRemTextToString } from '../lib/pdfUtils';
+import { incrementalQueueActiveKey, currentIncRemKey, editorReviewTimerRemIdKey } from '../lib/consts';
 
 export function PdfBookmarkPopup() {
   const plugin = usePlugin() as ReactRNPlugin;
@@ -11,10 +11,30 @@ export function PdfBookmarkPopup() {
 
   const [activeQueueContext, setActiveQueueContext] = useState<PageRangeContext | null>(null);
   const [activeQueueRemName, setActiveQueueRemName] = useState<string>('');
+  // Whether the active context came from the queue or the editor-review timer.
+  // The fast-path UI is identical; only the labels change.
+  const [activeContextSource, setActiveContextSource] = useState<'queue' | 'editor-timer'>('queue');
   const [associatedRems, setAssociatedRems] = useState<any[]>([]);
   const [historicalBookmarks, setHistoricalBookmarks] = useState<{ remId: string, name: string, history: PageHistoryEntry[] }[]>([]);
 
   const [loading, setLoading] = useState(true);
+  const [highlightTexts, setHighlightTexts] = useState<Record<string, string>>({});
+
+  // Helper to batch-resolve highlight rem texts into a lookup map
+  const resolveHighlightTexts = async (entries: PageHistoryEntry[]): Promise<Record<string, string>> => {
+    const map: Record<string, string> = {};
+    await Promise.all(entries.map(async (entry) => {
+      if (!entry.highlightId) return;
+      try {
+        const hRem = await plugin.rem.findOne(entry.highlightId);
+        if (hRem?.text) {
+          const text = await safeRemTextToString(plugin as any, hRem.text);
+          if (text && text !== 'Untitled') map[entry.highlightId] = text;
+        }
+      } catch { /* ignore */ }
+    }));
+    return map;
+  };
 
   useEffect(() => {
     const init = async () => {
@@ -40,89 +60,142 @@ export function PdfBookmarkPopup() {
         setPageIndex(pIndex);
 
         if (docId) {
-          // Strict Queue Context Check: Ensure we truly are in the Active Queue
+          // Host kind: PDF (UploadedFile) or HTML (Link, non-YouTube). Used to
+          // dispatch between findPDFinRem / findHTMLinRem and findAllRemsForPDF
+          // / findAllRemsForHTML so that HTML IncRems are discoverable too.
+          const hostRem = await plugin.rem.findOne(docId);
+          const isHtmlHost = hostRem ? await isHtmlSource(hostRem) : false;
+
+          // Queue detection: read current-inc-rem directly as the primary signal.
+          // incrementalQueueActiveKey can get stuck false due to useEffect lifecycle
+          // timing, but current-inc-rem is reliably set by setCurrentIncrementalRem
+          // on every queue turn.
           const isQueueActive = await plugin.storage.getSession<boolean>(incrementalQueueActiveKey);
+          const currentIncRem = await plugin.storage.getSession<string>(currentIncRemKey);
+          let activeRemId: string | undefined = (isQueueActive || currentIncRem) ? currentIncRem : undefined;
+          let activeSource: 'queue' | 'editor-timer' = 'queue';
 
-          if (isQueueActive) {
-            const currentQueueRemId = await plugin.storage.getSession<string>('current-inc-rem');
-            if (currentQueueRemId) {
-              const currentQueueRem = await plugin.rem.findOne(currentQueueRemId);
-              const foundPdf = currentQueueRem ? await findPDFinRem(plugin, currentQueueRem, docId) : null;
-
-              if (foundPdf && foundPdf._id === docId) {
-                if (currentQueueRem?.text) {
-                  const textStr = await plugin.richText.toString(currentQueueRem.text);
-                  setActiveQueueRemName(textStr);
-                }
-                setActiveQueueContext({
-                  incrementalRemId: currentQueueRemId as any,
-                  pdfRemId: docId as any,
-                  totalPages: 0,
-                  currentPage: 1
-                });
+          // Editor-Review-Timer fallback: when reviewing in the editor, the
+          // URLChange listener clears currentIncRemKey/incrementalQueueActiveKey,
+          // so the queue check above misses it. Confirm the timer's rem owns
+          // this PDF before trusting it (same safety check as create_inc_rem_toolbar).
+          if (!activeRemId) {
+            const editorTimerRemId = await plugin.storage.getSession<string>(editorReviewTimerRemIdKey);
+            if (editorTimerRemId) {
+              const editorTimerRem = await plugin.rem.findOne(editorTimerRemId);
+              const foundHost = editorTimerRem
+                ? (isHtmlHost
+                    ? await findHTMLinRem(plugin, editorTimerRem, docId)
+                    : await findPDFinRem(plugin, editorTimerRem, docId))
+                : null;
+              if (foundHost && foundHost._id === docId) {
+                activeRemId = editorTimerRemId;
+                activeSource = 'editor-timer';
               }
             }
           }
 
 
-          // Fetch all associated incremental reading rems globally, filter to active IncRems only
-          const associated = (await findAllRemsForPDF(plugin, docId)).filter(a => a.isIncremental);
+          if (activeRemId) {
+            // ⚡ FAST PATH: We know the IncRem from the active session (queue
+            // or editor-review timer). Skip findAllRemsForPDF entirely.
+            const activeRem = await plugin.rem.findOne(activeRemId);
+            let remName = '';
+            if (activeRem?.text) {
+              remName = await safeRemTextToString(plugin, activeRem.text);
+              setActiveQueueRemName(remName);
+            }
+            setActiveContextSource(activeSource);
+            setActiveQueueContext({
+              incrementalRemId: activeRemId as any,
+              pdfRemId: docId as any,
+              totalPages: 0,
+              currentPage: 1
+            });
 
-          // Fetch their page ranges to build hierarchy
-          const associatedWithRanges = await Promise.all(
-            associated.map(async (assoc) => {
-              const range = await getIncrementalPageRange(plugin, assoc.remId, docId);
-              return { ...assoc, range };
-            })
-          );
+            // Only fetch reading history for this specific rem (1 call, not N)
+            const history = await getPageHistory(plugin, activeRemId, docId);
+            // Most recent first
+            const withHighlights = history
+              .filter(h => h.highlightId)
+              .sort((a, b) => b.timestamp - a.timestamp);
+            if (withHighlights.length > 0) {
+              setHistoricalBookmarks([{ remId: activeRemId, name: remName, history: withHighlights }]);
+              // Resolve highlight rem texts for display
+              resolveHighlightTexts(withHighlights).then(setHighlightTexts);
+            }
+            // associatedRems stays [] — not rendered in fast-path mode anyway
 
-          // Build tree for hierarchical identation based on bounding page ranges
-          const sorted = [...associatedWithRanges].sort((a, b) => {
-            if (a.range && b.range) return a.range.start - b.range.start;
-            if (a.range && !b.range) return -1;
-            if (!a.range && b.range) return 1;
-            return a.name.localeCompare(b.name);
-          });
+          } else {
+            // 🐌 FULL PATH (non-queue): find all IncRems that read this host doc.
+            // For PDFs we get page-range hierarchy; for HTML the range concept
+            // doesn't apply and the list ends up flat (range stays null).
+            const associated = (await (isHtmlHost
+              ? findAllRemsForHTML(plugin, docId)
+              : findAllRemsForPDF(plugin, docId))).filter(a => a.isIncremental);
 
-          const contains = (outer: any, inner: any) =>
-            inner.start >= outer.start &&
-            (outer.end === null || inner.end === null || inner.end <= outer.end) &&
-            (inner.start > outer.start || (inner.end !== null && (outer.end === null || inner.end < outer.end)));
+            // Fetch their page ranges to build hierarchy
+            const associatedWithRanges = await Promise.all(
+              associated.map(async (assoc) => {
+                const range = await getIncrementalPageRange(plugin, assoc.remId, docId);
+                return { ...assoc, range };
+              })
+            );
 
-          const treeItems = sorted.map(item => ({ ...item, depth: 0, parentId: null as string | null }));
+            // Build tree for hierarchical indentation based on bounding page ranges
+            const sorted = [...associatedWithRanges].sort((a, b) => {
+              if (a.range && b.range) return a.range.start - b.range.start;
+              if (a.range && !b.range) return -1;
+              if (!a.range && b.range) return 1;
+              return a.name.localeCompare(b.name);
+            });
 
-          for (let i = 0; i < treeItems.length; i++) {
-            if (!treeItems[i].range) continue;
-            let bestParentIdx = -1;
-            let bestParentSize = Infinity;
-            for (let j = 0; j < i; j++) {
-              if (!treeItems[j].range) continue;
-              if (contains(treeItems[j].range, treeItems[i].range)) {
-                const parentSize = (treeItems[j].range!.end ?? Infinity) - treeItems[j].range!.start;
-                if (parentSize < bestParentSize) {
-                  bestParentSize = parentSize;
-                  bestParentIdx = j;
+            const contains = (outer: any, inner: any) =>
+              inner.start >= outer.start &&
+              (outer.end === null || inner.end === null || inner.end <= outer.end) &&
+              (inner.start > outer.start || (inner.end !== null && (outer.end === null || inner.end < outer.end)));
+
+            const treeItems = sorted.map(item => ({ ...item, depth: 0, parentId: null as string | null }));
+
+            for (let i = 0; i < treeItems.length; i++) {
+              if (!treeItems[i].range) continue;
+              let bestParentIdx = -1;
+              let bestParentSize = Infinity;
+              for (let j = 0; j < i; j++) {
+                if (!treeItems[j].range) continue;
+                if (contains(treeItems[j].range, treeItems[i].range)) {
+                  const parentSize = (treeItems[j].range!.end ?? Infinity) - treeItems[j].range!.start;
+                  if (parentSize < bestParentSize) {
+                    bestParentSize = parentSize;
+                    bestParentIdx = j;
+                  }
                 }
               }
+              if (bestParentIdx >= 0) {
+                treeItems[i].parentId = treeItems[bestParentIdx].remId;
+                treeItems[i].depth = treeItems[bestParentIdx].depth + 1;
+              }
             }
-            if (bestParentIdx >= 0) {
-              treeItems[i].parentId = treeItems[bestParentIdx].remId;
-              treeItems[i].depth = treeItems[bestParentIdx].depth + 1;
-            }
+
+            setAssociatedRems(treeItems);
+
+            // Fetch history for each to find scroll bookmarks
+            const histories = await Promise.all(
+              associated.map(async (assoc) => {
+                const history = await getPageHistory(plugin, assoc.remId, docId);
+                // Filter to those with highlightId, most recent first
+                const withHighlights = history
+                  .filter(h => h.highlightId)
+                  .sort((a, b) => b.timestamp - a.timestamp);
+                return { remId: assoc.remId, name: assoc.name, history: withHighlights };
+              })
+            );
+            const populated = histories.filter(h => h.history.length > 0);
+            setHistoricalBookmarks(populated);
+            // Resolve highlight rem texts for all entries
+            const allEntries = populated.flatMap(h => h.history);
+            resolveHighlightTexts(allEntries).then(setHighlightTexts);
           }
-
-          setAssociatedRems(treeItems);
-
-          // Fetch history for each to find scroll bookmarks
-          const histories = await Promise.all(
-            associated.map(async (assoc) => {
-              const history = await getPageHistory(plugin, assoc.remId, docId);
-              // Filter to only those with highlightId (actual bookmark scroll positions)
-              const withHighlights = history.filter(h => h.highlightId);
-              return { remId: assoc.remId, name: assoc.name, history: withHighlights };
-            })
-          );
-          setHistoricalBookmarks(histories.filter(h => h.history.length > 0));
         }
       } catch (err) {
         console.error("Error init bookmark popup", err);
@@ -134,10 +207,14 @@ export function PdfBookmarkPopup() {
   }, [plugin]);
 
   const saveBookmark = async (incrementalRemId: string) => {
-    if (!pdfRemId || pageIndex === null || !highlightRemId) return;
+    // Host doc and highlight are required; page is optional (null for HTML/Text Reader).
+    if (!pdfRemId || !highlightRemId) return;
     try {
       await addPageToHistory(plugin, incrementalRemId, pdfRemId, pageIndex, undefined, highlightRemId);
-      await setIncrementalReadingPosition(plugin, incrementalRemId, pdfRemId, pageIndex);
+      // Reading-position pointer only makes sense for paginated sources.
+      if (pageIndex !== null) {
+        await setIncrementalReadingPosition(plugin, incrementalRemId, pdfRemId, pageIndex);
+      }
       await plugin.app.toast('✅ Bookmark saved successfully');
     } catch (e) {
       await plugin.app.toast('❌ Failed to save bookmark');
@@ -157,8 +234,8 @@ export function PdfBookmarkPopup() {
     return <div style={{ padding: '8px', fontSize: '13px' }}>Loading...</div>;
   }
 
-  if (!pdfRemId || pageIndex === null) {
-    return <div style={{ padding: '8px', fontSize: '13px', color: 'var(--rn-clr-content-secondary)' }}>No page context found.</div>;
+  if (!pdfRemId) {
+    return <div style={{ padding: '8px', fontSize: '13px', color: 'var(--rn-clr-content-secondary)' }}>No reader context found.</div>;
   }
 
   return (
@@ -171,7 +248,9 @@ export function PdfBookmarkPopup() {
     }}>
       <div style={{ marginBottom: '12px', paddingBottom: '8px', borderBottom: '1px solid var(--rn-clr-border-primary)', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span>🔖 Bookmark Position</span>
-        <span style={{ fontSize: '12px', color: 'var(--rn-clr-content-secondary)' }}>Page {pageIndex}</span>
+        {pageIndex !== null && (
+          <span style={{ fontSize: '12px', color: 'var(--rn-clr-content-secondary)' }}>Page {pageIndex}</span>
+        )}
       </div>
 
       {activeQueueContext && (
@@ -182,9 +261,11 @@ export function PdfBookmarkPopup() {
               backgroundColor: 'var(--rn-clr-blue, #3b82f6)', color: 'white', cursor: 'pointer',
               fontWeight: 500, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px'
             }}
-            onClick={() => saveBookmark(activeQueueContext.incrementalRemId)}
+            onClick={async () => { await saveBookmark(activeQueueContext.incrementalRemId); plugin.widget.closePopup(); }}
           >
-            Update Current Queue Reading
+            {activeContextSource === 'editor-timer'
+              ? 'Update Current Editor Review Reading'
+              : 'Update Current Queue Reading'}
           </button>
           {activeQueueRemName && (
              <div style={{ textAlign: 'center', fontSize: '11px', color: 'var(--rn-clr-content-tertiary)', marginTop: '6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -260,7 +341,9 @@ export function PdfBookmarkPopup() {
                 {activeHistoryItems.length > 0 && (
                   <div style={{ marginBottom: otherHistoryItems.length > 0 ? '16px' : '0' }}>
                     <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--rn-clr-content-primary)', marginBottom: '8px' }}>
-                      {activeId ? "Queue Reading Bookmarks:" : "Your Saved Bookmarks:"}
+                      {activeId
+                        ? (activeContextSource === 'editor-timer' ? 'Editor Review Bookmarks:' : 'Queue Reading Bookmarks:')
+                        : 'Your Saved Bookmarks:'}
                     </div>
                     {activeHistoryItems.map(h => (
                       <div key={h.remId} style={{ marginBottom: '8px' }}>
@@ -272,15 +355,30 @@ export function PdfBookmarkPopup() {
                               style={{
                                 textAlign: 'left', padding: '6px 10px', borderRadius: '6px',
                                 border: '1px solid var(--rn-clr-border-primary)', backgroundColor: 'var(--rn-clr-background-secondary)',
-                                color: 'var(--rn-clr-blue, #3b82f6)', cursor: 'pointer', fontSize: '12px', display: 'flex', justifyContent: 'space-between',
-                                fontWeight: 500, transition: 'background-color 0.15s ease'
+                                color: 'var(--rn-clr-blue, #3b82f6)', cursor: 'pointer', fontSize: '12px',
+                                display: 'flex', flexDirection: 'column', gap: '2px',
+                                fontWeight: 500, transition: 'background-color 0.15s ease', width: '100%'
                               }}
                               onClick={() => jumpToBookmark(entry.highlightId!)}
                               onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--rn-clr-background-modifier-hover)'}
                               onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'var(--rn-clr-background-secondary)'}
                             >
-                              <span>📄 Page {entry.page}</span>
-                              <span style={{ color: 'var(--rn-clr-content-tertiary)', fontSize: '10px', fontWeight: 400 }}>{new Date(entry.timestamp).toLocaleDateString()}</span>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span>{typeof entry.page === 'number' ? `📄 Page ${entry.page}` : '🔖 Bookmark'}</span>
+                                <span style={{ color: 'var(--rn-clr-content-tertiary)', fontSize: '10px', fontWeight: 400 }}>{new Date(entry.timestamp).toLocaleDateString()}</span>
+                              </div>
+                              {entry.highlightId && highlightTexts[entry.highlightId] && (
+                                <div style={{
+                                  fontSize: '10px', fontWeight: 400,
+                                  color: 'var(--rn-clr-content-secondary)',
+                                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                  maxWidth: '100%', fontStyle: 'italic'
+                                }}>
+                                  {highlightTexts[entry.highlightId].length > 90
+                                    ? highlightTexts[entry.highlightId].substring(0, 90) + '…'
+                                    : highlightTexts[entry.highlightId]}
+                                </div>
+                              )}
                             </button>
                           ))}
                         </div>
@@ -311,7 +409,7 @@ export function PdfBookmarkPopup() {
                               onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--rn-clr-background-modifier-hover)'}
                               onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                             >
-                              <span>Page {entry.page}</span>
+                              <span>{typeof entry.page === 'number' ? `Page ${entry.page}` : 'Bookmark'}</span>
                               <span style={{ fontSize: '9px', color: 'var(--rn-clr-content-tertiary)' }}>{new Date(entry.timestamp).toLocaleDateString()}</span>
                             </button>
                           ))}

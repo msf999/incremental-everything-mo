@@ -4,17 +4,20 @@ import {
   useRunAsync,
   useTrackerPlugin,
 } from '@remnote/plugin-sdk';
-import { useMemo, useState, useCallback, useRef } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { getIncrementalRemFromRem } from '../lib/incremental_rem';
 import { updateIncrementalRemCache } from '../lib/incremental_rem/cache';
 import { getCardPriority, setCardPriority, CardPriorityInfo } from '../lib/card_priority';
-import { allIncrementalRemKey, powerupCode, prioritySlotCode, allCardPriorityInfoKey, cardPriorityCacheRefreshKey, pageRangeWidgetId } from '../lib/consts';
+import { allIncrementalRemKey, powerupCode, prioritySlotCode, allCardPriorityInfoKey, pageRangeWidgetId } from '../lib/consts';
 import { IncrementalRem } from '../lib/incremental_rem';
 import { calculateRelativePercentile, formatDuration } from '../lib/utils';
 import { updateCardPriorityCache } from '../lib/card_priority/cache';
 import { PriorityBadge } from '../components';
 import {
-  findPreferredPDFInRem,
+  getActivePdfForIncRem,
+  setActivePdfForIncRem,
+  getAllPDFsInRem,
+  findHTMLinRem,
   getIncrementalPageRange,
   getPageHistory,
   getReadingStatistics,
@@ -24,6 +27,7 @@ import {
   safeRemTextToString,
   PageHistoryEntry,
 } from '../lib/pdfUtils';
+import { openAndScrollToHighlight } from '../lib/remHelpers';
 
 // Move styles outside component to avoid recreation on every render
 const adjustButtonStyle: React.CSSProperties = {
@@ -53,14 +57,115 @@ export function PriorityEditor() {
   const pdfEndRef = useRef<HTMLInputElement>(null);
   const pdfPageRef = useRef<HTMLInputElement>(null);
 
-  // Listen for cache refresh signal to force re-evaluation of all data
-  const refreshSignal = useTrackerPlugin(
-    (rp) => rp.storage.getSession(cardPriorityCacheRefreshKey),
-    []
-  );
+  // NOTE: We intentionally do NOT subscribe to the global cardPriorityCacheRefreshKey
+  // here. This widget is registered as RightSideOfEditor, meaning RemNote creates one
+  // instance per visible rem. Subscribing all instances to a global cache-flush signal
+  // causes N widgets × M cache-flushes worth of heavy async queries (getIncrementalRemFromRem,
+  // getCardPriority, getCards, etc.) to fire simultaneously, blocking the UI for 30+ seconds.
+  // The useTrackerPlugin hooks below already provide built-in reactivity for this rem's
+  // own powerup property changes — the global broadcast is not needed.
 
-  // SUPER OPTIMIZED: Combine ALL data fetching into a single hook
-  // This reduces the render cascade from ~9 renders to ~3 renders
+  // Bumped after the user pins a new active PDF, so the host-info refetch
+  // picks up the new active-PDF resolution. Otherwise `useRunAsync` keyed on
+  // `remId` alone would not re-fire.
+  const [pinRefreshCounter, setPinRefreshCounter] = useState(0);
+
+  // Host (PDF or HTML) resolution. Returns the full PDF option list and the
+  // current active-PDF id so the inline selector below can render. Keyed on
+  // `remId` (+ pinRefreshCounter) to avoid refetching when the card priority
+  // cache flushes — host structure doesn't change with priority.
+  type HostInfo =
+    | { hostKind: 'pdf'; pdfOptions: Array<{ remId: string; name: string; isPreferred: boolean }>; activePdfId: string | null; htmlRemId: string | null; htmlRemName: string | null }
+    | { hostKind: 'html'; pdfOptions: []; activePdfId: null; htmlRemId: string; htmlRemName: string | null }
+    | { hostKind: null; pdfOptions: []; activePdfId: null; htmlRemId: null; htmlRemName: null };
+
+  const hostInfo = useTrackerPlugin(async (rp): Promise<HostInfo | null> => {
+    if (!remId) return null;
+    const rem = await rp.rem.findOne(remId);
+    if (!rem) return null;
+
+    const pdfs = await getAllPDFsInRem(rp as any, rem);
+
+    if (pdfs.length > 0) {
+      const pdfOptions = await Promise.all(
+        pdfs.map(async (p) => ({
+          remId: p.rem._id,
+          name: await safeRemTextToString(rp as any, p.rem.text),
+          isPreferred: p.isPreferred,
+        }))
+      );
+      const activePdf = await getActivePdfForIncRem(rp as any, rem);
+      // Also resolve the HTML rem — bookmarks saved in Text Reader mode are
+      // stored under the HTML rem's history key even when a PDF is present.
+      const htmlRem = await findHTMLinRem(rp as any, rem);
+      const htmlRemName = htmlRem?.text ? await safeRemTextToString(rp as any, htmlRem.text) : null;
+      return {
+        hostKind: 'pdf',
+        pdfOptions,
+        activePdfId: activePdf?._id ?? null,
+        htmlRemId: htmlRem?._id ?? null,
+        htmlRemName,
+      };
+    }
+
+    const htmlRem = await findHTMLinRem(rp as any, rem);
+    if (!htmlRem) {
+      return { hostKind: null, pdfOptions: [], activePdfId: null, htmlRemId: null, htmlRemName: null };
+    }
+    const htmlRemName = htmlRem.text ? await safeRemTextToString(rp as any, htmlRem.text) : null;
+    return {
+      hostKind: 'html',
+      pdfOptions: [],
+      activePdfId: null,
+      htmlRemId: htmlRem._id,
+      htmlRemName,
+    };
+  }, [remId, pinRefreshCounter]);
+
+  const pdfOptions = hostInfo?.pdfOptions ?? [];
+  const activePdfId = hostInfo?.activePdfId ?? null;
+  const hostKind = hostInfo?.hostKind ?? null;
+
+  // User-chosen view-only override. null = follow the active pin. Resets when
+  // the rem changes so each IncRem starts at its own active PDF.
+  const [selectedPdfRemId, setSelectedPdfRemId] = useState<string | null>(null);
+  useEffect(() => { setSelectedPdfRemId(null); }, [remId]);
+
+  // The host id whose data the panel currently displays.
+  const viewedPdfRemId =
+    hostKind === 'pdf'
+      ? (selectedPdfRemId && pdfOptions.some((o) => o.remId === selectedPdfRemId)
+          ? selectedPdfRemId
+          : activePdfId)
+      : hostInfo?.htmlRemId ?? null;
+
+  const viewedHostName =
+    hostKind === 'pdf'
+      ? pdfOptions.find((o) => o.remId === viewedPdfRemId)?.name ?? null
+      : hostInfo?.htmlRemName ?? null;
+
+  // Kept names for downstream code that already reads these.
+  const hostPdfRemId = viewedPdfRemId;
+  const hostPdfRemName = viewedHostName;
+
+  // When the primary host is a PDF, this holds the parallel HTML rem ID (if any)
+  // so hostData can also fetch history for bookmarks saved in Text Reader mode.
+  const secondaryHtmlRemId = hostKind === 'pdf' ? (hostInfo?.htmlRemId ?? null) : null;
+
+  // Pin the currently-viewed PDF as the IncRem's active PDF.
+  const handleSetActive = useCallback(async () => {
+    if (!remId || !viewedPdfRemId || viewedPdfRemId === activePdfId) return;
+    await setActivePdfForIncRem(plugin as any, remId, viewedPdfRemId);
+    setPinRefreshCounter((c) => c + 1);
+    // Clear the local override now that the pin matches what we were viewing.
+    setSelectedPdfRemId(null);
+    await plugin.app.toast('Active PDF updated');
+  }, [plugin, remId, viewedPdfRemId, activePdfId]);
+
+  // SUPER OPTIMIZED: Combine priority queries into a single hook.
+  // Host range/history/stats are fetched in a separate tracker below so that
+  // priority cache flushes (during inheritance cascades) don't trigger refetches
+  // of unrelated host data.
   const remData = useTrackerPlugin(
     async (plugin) => {
       if (!remId) return null;
@@ -68,8 +173,8 @@ export function PriorityEditor() {
       const rem = await plugin.rem.findOne(remId);
       if (!rem) return null;
 
-      // Execute ALL queries in parallel for maximum performance
-      const [incRemInfo, cardInfo, cards, hasPowerup, allIncRems, allPrioritizedCardInfo, displayMode, pdfRem] = await Promise.all([
+      // Execute priority queries in parallel for maximum performance.
+      const [incRemInfo, cardInfo, cards, hasPowerup, allIncRems, allPrioritizedCardInfo, displayMode] = await Promise.all([
         getIncrementalRemFromRem(plugin, rem),
         getCardPriority(plugin, rem),
         rem.getCards(),
@@ -77,27 +182,7 @@ export function PriorityEditor() {
         plugin.storage.getSession<IncrementalRem[]>(allIncrementalRemKey),
         plugin.storage.getSession<CardPriorityInfo[]>(allCardPriorityInfoKey),
         plugin.settings.getSetting<string>('priorityEditorDisplayMode'),
-        findPreferredPDFInRem(plugin as any, rem, false),
       ]);
-
-      // Fetch PDF range / history / stats if a PDF source was found
-      let pdfRemId: string | null = null;
-      let pdfRemName: string | null = null;
-      let pdfRange: { start: number; end: number | null } | null = null;
-      let pdfHistory: PageHistoryEntry[] = [];
-      let pdfStats: any = null;
-      if (pdfRem) {
-        pdfRemId = pdfRem._id;
-        pdfRemName = pdfRem.text ? await safeRemTextToString(plugin as any, pdfRem.text) : null;
-        const [range, history, stats] = await Promise.all([
-          getIncrementalPageRange(plugin as any, rem._id, pdfRem._id),
-          getPageHistory(plugin as any, rem._id, pdfRem._id),
-          getReadingStatistics(plugin as any, rem._id, pdfRem._id),
-        ]);
-        pdfRange = range;
-        pdfHistory = history;
-        pdfStats = stats;
-      }
 
       // Calculate relative priorities inline
       const incRemRelativePriority = (incRemInfo && allIncRems && allIncRems.length > 0)
@@ -118,15 +203,37 @@ export function PriorityEditor() {
         cardRelativePriority,
         allPrioritizedCardInfo: allPrioritizedCardInfo || [],
         displayMode: displayMode || 'all',
-        pdfRemId,
-        pdfRemName,
-        pdfRange,
-        pdfHistory,
-        pdfStats,
       };
     },
-    [remId, refreshSignal]
+    [remId]
   );
+
+  // Host data (range / history / stats). Reads only from the synced storage
+  // keys for this incRem+host pair, so it does NOT subscribe to priority
+  // caches and won't refetch during inheritance cascades. Re-runs only when
+  // the user actually changes range/history (or when remId/host change).
+  const hostData = useTrackerPlugin(
+    async (plugin) => {
+      if (!remId || !hostPdfRemId) return null;
+      const [range, history, stats, htmlHistory] = await Promise.all([
+        hostKind === 'pdf'
+          ? getIncrementalPageRange(plugin as any, remId, hostPdfRemId)
+          : Promise.resolve(null),
+        getPageHistory(plugin as any, remId, hostPdfRemId),
+        getReadingStatistics(plugin as any, remId, hostPdfRemId),
+        secondaryHtmlRemId
+          ? getPageHistory(plugin as any, remId, secondaryHtmlRemId)
+          : Promise.resolve([] as PageHistoryEntry[]),
+      ]);
+      return { pdfRange: range, pdfHistory: history, pdfStats: stats as any, htmlHistory };
+    },
+    [remId, hostPdfRemId, hostKind, secondaryHtmlRemId]
+  );
+
+  const pdfRange = hostData?.pdfRange ?? null;
+  const pdfHistory = hostData?.pdfHistory ?? [];
+  const pdfStats: any = hostData?.pdfStats ?? null;
+  const htmlHistory: PageHistoryEntry[] = hostData?.htmlHistory ?? [];
 
   const rem = remData?.rem ?? null;
   const incRemInfo = remData?.incRemInfo ?? null;
@@ -179,9 +286,9 @@ export function PriorityEditor() {
 
   // PDF callbacks
   const pdfSaveRange = useCallback(async () => {
-    if (pdfEdit.mode !== 'range' || !remId || !remData?.pdfRemId) return;
+    if (pdfEdit.mode !== 'range' || !remId || !hostPdfRemId) return;
     const { start, end } = pdfEdit;
-    const rangeKey = getPageRangeKey(remId, remData.pdfRemId);
+    const rangeKey = getPageRangeKey(remId, hostPdfRemId);
     if (start > 1 || end > 0) {
       await plugin.storage.setSynced(rangeKey, { start, end });
       await plugin.app.toast(`Saved page range: ${start}–${end || '∞'}`);
@@ -190,28 +297,33 @@ export function PriorityEditor() {
       await plugin.app.toast('Cleared page range');
     }
     setPdfEdit({ mode: 'none' });
-  }, [pdfEdit, remId, remData?.pdfRemId, plugin]);
+  }, [pdfEdit, remId, hostPdfRemId, plugin]);
 
   const pdfSaveHistory = useCallback(async () => {
-    if (pdfEdit.mode !== 'history' || !remId || !remData?.pdfRemId) return;
+    if (pdfEdit.mode !== 'history' || !remId || !hostPdfRemId) return;
     const { page } = pdfEdit;
     if (page <= 0) { await plugin.app.toast('Enter a valid page number.'); return; }
-    await setIncrementalReadingPosition(plugin as any, remId, remData.pdfRemId, page);
-    await addPageToHistory(plugin as any, remId, remData.pdfRemId, page, undefined);
+    await setIncrementalReadingPosition(plugin as any, remId, hostPdfRemId, page);
+    await addPageToHistory(plugin as any, remId, hostPdfRemId, page, undefined);
     await plugin.app.toast(`Reading position set to page ${page}`);
     setPdfEdit({ mode: 'none' });
-  }, [pdfEdit, remId, remData?.pdfRemId, plugin]);
+  }, [pdfEdit, remId, hostPdfRemId, plugin]);
 
   const openPdfPanel = useCallback(async () => {
-    if (!remId || !remData?.pdfRemId) return;
+    if (!remId || !hostPdfRemId) return;
+    // Carry over the currently-viewed PDF (not just the active one) so the
+    // PDF Control Panel opens on the same PDF the user was inspecting here.
+    // Also pre-populate `allPdfRemIds` so the panel's selector renders
+    // immediately without re-deriving the list.
     await plugin.storage.setSession('pageRangeContext', {
       incrementalRemId: remId,
-      pdfRemId: remData.pdfRemId,
+      pdfRemId: hostPdfRemId,
       totalPages: undefined,
       currentPage: undefined,
+      allPdfRemIds: pdfOptions.length > 0 ? pdfOptions.map((o) => o.remId) : undefined,
     });
     await plugin.widget.openPopup(pageRangeWidgetId, { remId });
-  }, [remId, remData?.pdfRemId, plugin]);
+  }, [remId, hostPdfRemId, plugin, pdfOptions]);
 
   // Memoize computed values
   const showCardEditor = useMemo(
@@ -271,31 +383,74 @@ export function PriorityEditor() {
           {showCardEditor && (
             <PriorityBadge priority={cardInfo?.priority ?? 50} percentile={cardRelativePriority ?? undefined} compact source={cardInfo?.source} isCardPriority={true} />
           )}
-          {remData?.pdfRemId && (
-            <span
-              title={remData.pdfRange ? `PDF: p.${remData.pdfRange.start}–${remData.pdfRange.end || '∞'}` : 'PDF source — no range set'}
-              style={{
-                fontSize: '10px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 2,
-                color: remData.pdfRange ? 'var(--rn-clr-content-secondary)' : 'var(--rn-clr-content-tertiary)',
-                opacity: remData.pdfRange ? 1 : 0.55,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              📄{remData.pdfRange ? (
-                <>
-                  {` p.${remData.pdfRange.start}–${remData.pdfRange.end || '∞'}`}
-                  {remData.pdfHistory && remData.pdfHistory.length > 0 && (
-                    <span style={{ color: '#10b981', marginLeft: '2px' }}>
-                      ({remData.pdfHistory[remData.pdfHistory.length - 1].page})
-                    </span>
-                  )}
-                </>
-              ) : ' —'}
-            </span>
-          )}
+          {hostKind === 'pdf' && hostPdfRemId && (() => {
+            const last = pdfHistory?.[pdfHistory.length - 1];
+            const hasPage = typeof last?.page === 'number';
+            // Fresh = last entry itself has a highlightId.
+            // Stale = an older entry has a highlightId but last doesn't.
+            const lastHasBookmark = !!last?.highlightId;
+            const hasAnyBookmark = lastHasBookmark
+              || pdfHistory.some(e => e.highlightId)
+              || htmlHistory.some(e => e.highlightId);
+            const isStaleBookmark = !lastHasBookmark && hasAnyBookmark;
+            const hasRange = !!pdfRange;
+            const hasAnyState = hasRange || hasPage || hasAnyBookmark;
+            const titleParts = [
+              hasRange ? `p.${pdfRange!.start}–${pdfRange!.end || '∞'}` : null,
+              hasAnyBookmark ? (isStaleBookmark ? 'stale bookmark' : 'saved bookmark') : null,
+            ].filter(Boolean);
+            const title = titleParts.length > 0
+              ? `PDF: ${titleParts.join(' · ')}`
+              : 'PDF source — no range set';
+            return (
+              <span
+                title={title}
+                style={{
+                  fontSize: '10px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 2,
+                  color: hasAnyState ? 'var(--rn-clr-content-secondary)' : 'var(--rn-clr-content-tertiary)',
+                  opacity: hasAnyState ? 1 : 0.55,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                📄
+                {hasRange && ` p.${pdfRange!.start}–${pdfRange!.end || '∞'}`}
+                {(hasPage || hasAnyBookmark) && (
+                  <span style={{ color: '#10b981', marginLeft: '2px' }}>
+                    {hasPage && `(${last!.page})`}
+                    {hasPage && hasAnyBookmark && ' '}
+                    {hasAnyBookmark && (
+                      <span style={{ opacity: isStaleBookmark ? 0.5 : 1 }} title={isStaleBookmark ? 'Stale bookmark — a newer page-only record exists' : undefined}>
+                        🔖
+                      </span>
+                    )}
+                  </span>
+                )}
+                {!hasAnyState && ' —'}
+              </span>
+            );
+          })()}
+          {hostKind === 'html' && hostPdfRemId && (() => {
+            const last = pdfHistory?.[pdfHistory.length - 1];
+            const hasBookmark = !!last?.highlightId;
+            return (
+              <span
+                title={hasBookmark ? 'Web source — saved bookmark' : 'Web source'}
+                style={{
+                  fontSize: '10px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 2,
+                  color: 'var(--rn-clr-content-secondary)',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                🌐{hasBookmark && <span style={{ color: '#10b981', marginLeft: '2px' }}>🔖</span>}
+              </span>
+            );
+          })()}
         </div>
       ) : (
         <div className="flex flex-col gap-3">
@@ -443,7 +598,7 @@ export function PriorityEditor() {
           )}
 
           {/* PDF Range Section */}
-          {remData?.pdfRemId && (
+          {hostKind === 'pdf' && hostPdfRemId && (
             <div
               className="p-3 rounded-lg"
               style={{
@@ -456,25 +611,74 @@ export function PriorityEditor() {
                 <div className="flex items-center gap-1.5">
                   <span className="text-xs">📄</span>
                   <span className="text-xs font-semibold" style={{ color: 'var(--rn-clr-content-primary)' }}>PDF Range</span>
-                  {remData.pdfRemName && (
+                  {/* Single-PDF case: show the name inline. Multi-PDF case: the
+                      name is shown in the selector below, so we omit it here. */}
+                  {hostPdfRemName && pdfOptions.length <= 1 && (
                     <span className="text-[10px] truncate max-w-[100px]" style={{ color: 'var(--rn-clr-content-tertiary)' }}
-                      title={remData.pdfRemName}>{remData.pdfRemName}</span>
+                      title={hostPdfRemName}>{hostPdfRemName}</span>
                   )}
                 </div>
-                {remData.pdfRange ? (
+                {pdfRange ? (
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium"
                     style={{ backgroundColor: 'var(--rn-clr-background-primary)', color: 'var(--rn-clr-content-secondary)', whiteSpace: 'nowrap' }}>
-                    p.{remData.pdfRange.start}–{remData.pdfRange.end || '∞'}
-                    {remData.pdfHistory && remData.pdfHistory.length > 0 && (
-                      <span style={{ color: '#10b981', marginLeft: '2px' }}>
-                        ({remData.pdfHistory[remData.pdfHistory.length - 1].page})
-                      </span>
-                    )}
+                    p.{pdfRange.start}–{pdfRange.end || '∞'}
+                    {(() => {
+                      const last = pdfHistory?.[pdfHistory.length - 1];
+                      if (!last) return null;
+                      const hasPage = typeof last.page === 'number';
+                      if (!hasPage && !last.highlightId) return null;
+                      return (
+                        <span style={{ color: '#10b981', marginLeft: '2px' }}>
+                          {hasPage && `(${last.page})`}
+                          {hasPage && last.highlightId && ' '}
+                          {last.highlightId && '🔖'}
+                        </span>
+                      );
+                    })()}
                   </span>
                 ) : (
                   <span className="text-[10px]" style={{ color: 'var(--rn-clr-content-tertiary)', opacity: 0.6 }}>No range</span>
                 )}
               </div>
+
+              {/* PDF Selector — appears only when the IncRem has multiple PDFs.
+                  Selecting an option changes what the panel displays (range,
+                  position, history, stats) but does NOT pin. The "📌 Set as
+                  active" button (only visible while viewing a non-pinned PDF)
+                  is the explicit pin action. ★ = #preferthispdf · 📌 = active. */}
+              {pdfOptions.length > 1 && (
+                <div className="flex items-center gap-1 mb-2">
+                  <select
+                    value={viewedPdfRemId ?? ''}
+                    onChange={(e) => setSelectedPdfRemId(e.target.value)}
+                    title="View this PDF's data (does not change the active PDF)"
+                    className="text-[11px] px-1.5 py-1 rounded flex-1 min-w-0"
+                    style={{
+                      border: '1px solid var(--rn-clr-border-primary)',
+                      backgroundColor: 'var(--rn-clr-background-primary)',
+                      color: 'var(--rn-clr-content-primary)',
+                    }}
+                  >
+                    {pdfOptions.map((opt) => (
+                      <option key={opt.remId} value={opt.remId}>
+                        {opt.name}{opt.isPreferred ? ' ★' : ''}{opt.remId === activePdfId ? ' 📌' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {viewedPdfRemId && viewedPdfRemId !== activePdfId && (
+                    <button
+                      onClick={handleSetActive}
+                      title="Pin this PDF as the active one for this Inc Rem"
+                      className="px-2 py-1 text-[11px] rounded whitespace-nowrap transition-colors"
+                      style={{ backgroundColor: '#3b82f6', color: 'white', border: 'none' }}
+                      onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#2563eb'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#3b82f6'; }}
+                    >
+                      📌 Set as active
+                    </button>
+                  )}
+                </div>
+              )}
 
               {/* Editing area */}
               {pdfEdit.mode === 'range' && (
@@ -512,8 +716,8 @@ export function PriorityEditor() {
                 </div>
               )}
               {pdfEdit.mode === 'history' && (() => {
-                const rangeStart = remData.pdfRange?.start ?? 1;
-                const rangeEnd = remData.pdfRange?.end ?? null;
+                const rangeStart = pdfRange?.start ?? 1;
+                const rangeEnd = pdfRange?.end ?? null;
                 const outOfRange = pdfEdit.page < rangeStart || (rangeEnd !== null && pdfEdit.page > rangeEnd);
                 return (
                   <div
@@ -555,7 +759,7 @@ export function PriorityEditor() {
               {pdfEdit.mode === 'none' && (
                 <div className="flex gap-1 flex-wrap">
                   <button
-                    onClick={() => setPdfEdit({ mode: 'range', start: remData.pdfRange?.start || 1, end: remData.pdfRange?.end || 0 })}
+                    onClick={() => setPdfEdit({ mode: 'range', start: pdfRange?.start || 1, end: pdfRange?.end || 0 })}
                     className="px-2 py-1 text-[11px] rounded transition-colors"
                     style={{ backgroundColor: 'var(--rn-clr-background-tertiary)', color: '#3b82f6' }}
                     onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#3b82f6'; e.currentTarget.style.color = 'white'; }}
@@ -563,8 +767,8 @@ export function PriorityEditor() {
                   >📄 Range</button>
                   <button
                     onClick={() => {
-                      const lastPage = remData.pdfHistory?.slice(-1)[0]?.page
-                        ?? remData.pdfRange?.start
+                      const lastPage = pdfHistory?.slice(-1)[0]?.page
+                        ?? pdfRange?.start
                         ?? 1;
                       setPdfEdit({ mode: 'history', page: lastPage });
                     }}
@@ -577,20 +781,75 @@ export function PriorityEditor() {
               )}
 
               {/* Stats + last session */}
-              {(remData.pdfStats?.totalTimeSeconds > 0 || remData.pdfHistory?.length > 0) && (
+              {(pdfStats?.totalTimeSeconds > 0 || pdfHistory?.length > 0) && (
                 <div className="mt-2 flex items-center gap-3 flex-wrap">
-                  {remData.pdfStats?.totalTimeSeconds > 0 && (
+                  {pdfStats?.totalTimeSeconds > 0 && (
                     <span className="text-[10px]" style={{ color: '#10b981' }}
-                      title="Total reading time">⏱️{formatDuration(remData.pdfStats.totalTimeSeconds)}</span>
+                      title="Total reading time">⏱️{formatDuration(pdfStats.totalTimeSeconds)}</span>
                   )}
-                  {remData.pdfHistory?.length > 0 && (
-                    <span className="text-[10px]" style={{ color: 'var(--rn-clr-content-tertiary)' }}
-                      title={`Last: page ${remData.pdfHistory[remData.pdfHistory.length - 1].page}`}>
-                      Last p.{remData.pdfHistory[remData.pdfHistory.length - 1].page}
-                    </span>
-                  )}
+                  {pdfHistory?.length > 0 && (() => {
+                    const last = pdfHistory[pdfHistory.length - 1];
+                    const hasPage = typeof last.page === 'number';
+                    if (!hasPage && !last.highlightId) return null;
+                    const tooltip = hasPage
+                      ? `Last: page ${last.page}${last.highlightId ? ' (auto-scrollable bookmark)' : ''}`
+                      : 'Last: bookmark with no page info';
+                    return (
+                      <span className="text-[10px]" style={{ color: 'var(--rn-clr-content-tertiary)' }}
+                        title={tooltip}>
+                        Last {hasPage ? `p.${last.page}` : ''}{hasPage && last.highlightId ? ' ' : ''}{last.highlightId ? '🔖' : ''}
+                      </span>
+                    );
+                  })()}
                 </div>
               )}
+
+              {/* Scroll to Bookmark — checks both PDF and HTML (Text Reader) histories.
+                  Shows even when bookmark is stale (newer page-only record exists),
+                  with a dimmed style and tooltip warning to signal staleness. */}
+              {(() => {
+                const lastPdfEntry = pdfHistory[pdfHistory.length - 1];
+                const lastHtmlEntry = htmlHistory[htmlHistory.length - 1];
+                const lastEntryIsBookmark = !!lastPdfEntry?.highlightId || !!lastHtmlEntry?.highlightId;
+
+                let bestHighlightId: string | null = null;
+                let bestHostRemId: string | null = hostPdfRemId;
+                let bestTs = -1;
+                for (const e of pdfHistory) {
+                  if (e.highlightId && e.timestamp > bestTs) { bestTs = e.timestamp; bestHighlightId = e.highlightId; bestHostRemId = hostPdfRemId; }
+                }
+                for (const e of htmlHistory) {
+                  if (e.highlightId && e.timestamp > bestTs) { bestTs = e.timestamp; bestHighlightId = e.highlightId; bestHostRemId = secondaryHtmlRemId; }
+                }
+                if (!bestHighlightId) return null;
+                const isStale = !lastEntryIsBookmark;
+                const bookmarkHighlightId = bestHighlightId;
+                const bookmarkHost = bestHostRemId;
+                return (
+                  <button
+                    onClick={async () => {
+                      if (bookmarkHost) {
+                        await openAndScrollToHighlight(plugin, bookmarkHost, bookmarkHighlightId);
+                      } else {
+                        const bookmarkRem = await plugin.rem.findOne(bookmarkHighlightId);
+                        bookmarkRem?.scrollToReaderHighlight();
+                      }
+                    }}
+                    className="w-full mt-2 py-1 rounded text-[11px] font-semibold transition-colors"
+                    style={{
+                      backgroundColor: 'var(--rn-clr-background-secondary)',
+                      color: isStale ? 'var(--rn-clr-content-tertiary)' : 'var(--rn-clr-blue, #3b82f6)',
+                      border: `2px solid ${isStale ? 'var(--rn-clr-border-primary)' : 'var(--rn-clr-blue, #3b82f6)'}`,
+                      opacity: isStale ? 0.7 : 1,
+                    }}
+                    title={isStale
+                      ? '⚠️ Stale bookmark — a newer page-only record exists. Scrolls to last saved highlight position.'
+                      : 'Scroll to Bookmark: Open the PDF and jump to your last saved reading position'}
+                  >
+                    🔖 {isStale ? 'Scroll (stale)' : 'Scroll to Position'}
+                  </button>
+                );
+              })()}
 
               {/* Full panel link */}
               <button
@@ -602,6 +861,80 @@ export function PriorityEditor() {
               >
                 PDF Control Panel ↗
               </button>
+            </div>
+          )}
+
+          {/* Web Source Section (HTML hosts) — minimal panel: name + bookmark
+              info + Scroll to Position. No range / page editing because HTML
+              articles aren't paginated. */}
+          {hostKind === 'html' && hostPdfRemId && (
+            <div
+              className="p-3 rounded-lg"
+              style={{
+                backgroundColor: 'var(--rn-clr-background-secondary)',
+                border: '1px solid var(--rn-clr-border-primary)',
+              }}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs">🌐</span>
+                  <span className="text-xs font-semibold" style={{ color: 'var(--rn-clr-content-primary)' }}>Web Source</span>
+                  {hostPdfRemName && (
+                    <span className="text-[10px] truncate max-w-[140px]" style={{ color: 'var(--rn-clr-content-tertiary)' }}
+                      title={hostPdfRemName}>{hostPdfRemName}</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Stats + last bookmark */}
+              {(pdfStats?.totalTimeSeconds > 0 || pdfHistory?.length > 0) && (
+                <div className="mt-1 flex items-center gap-3 flex-wrap">
+                  {pdfStats?.totalTimeSeconds > 0 && (
+                    <span className="text-[10px]" style={{ color: '#10b981' }}
+                      title="Total reading time">⏱️{formatDuration(pdfStats.totalTimeSeconds)}</span>
+                  )}
+                  {pdfHistory?.length > 0 && (() => {
+                    const last = pdfHistory[pdfHistory.length - 1];
+                    if (!last.highlightId) return null;
+                    return (
+                      <span className="text-[10px]" style={{ color: 'var(--rn-clr-content-tertiary)' }}
+                        title="Last: bookmark with no page info">
+                        Last 🔖
+                      </span>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {/* Scroll to Bookmark — same logic as the PDF panel: only when the
+                  LAST history entry carries a highlightId. */}
+              {(() => {
+                const history = pdfHistory ?? [];
+                const lastEntry = history[history.length - 1];
+                const bookmarkHighlightId = lastEntry?.highlightId;
+                if (!bookmarkHighlightId) return null;
+                return (
+                  <button
+                    onClick={async () => {
+                      if (hostPdfRemId) {
+                        await openAndScrollToHighlight(plugin, hostPdfRemId, bookmarkHighlightId);
+                      } else {
+                        const bookmarkRem = await plugin.rem.findOne(bookmarkHighlightId);
+                        bookmarkRem?.scrollToReaderHighlight();
+                      }
+                    }}
+                    className="w-full mt-2 py-1 rounded text-[11px] font-semibold transition-colors"
+                    style={{
+                      backgroundColor: 'var(--rn-clr-background-secondary)',
+                      color: 'var(--rn-clr-blue, #3b82f6)',
+                      border: '2px solid var(--rn-clr-blue, #3b82f6)',
+                    }}
+                    title="Scroll to Bookmark: Open the article and jump to your last saved reading position"
+                  >
+                    🔖 Scroll to Position
+                  </button>
+                );
+              })()}
             </div>
           )}
 

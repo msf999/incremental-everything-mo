@@ -1,8 +1,9 @@
 import { RNPlugin, PluginRem } from '@remnote/plugin-sdk';
-import { findPDFinRem, getCurrentPageKey, addPageToHistory, safeRemTextToString } from './pdfUtils';
+import { getActivePdfForIncRem, getCurrentPageKey, addPageToHistory, safeRemTextToString } from './pdfUtils';
 import { getIncrementalRemFromRem, updateReviewRemData } from './incremental_rem';
 import { incremReviewStartTimeKey } from './consts';
 import { determineIncRemType } from './incRemHelpers';
+import { markIncRemTransition } from './queue_session';
 
 export const handleReviewInEditorRem = async (
     plugin: RNPlugin,
@@ -12,7 +13,7 @@ export const handleReviewInEditorRem = async (
     if (!rem) return;
 
     if (remType === 'pdf') {
-        const pdfRem = await findPDFinRem(plugin, rem);
+        const pdfRem = await getActivePdfForIncRem(plugin, rem);
         if (pdfRem) {
             const pageKey = getCurrentPageKey(rem._id, pdfRem._id);
             const currentPage = await plugin.storage.getSynced<number>(pageKey);
@@ -25,6 +26,10 @@ export const handleReviewInEditorRem = async (
 
     const incRemInfo = await getIncrementalRemFromRem(plugin, rem);
     await updateReviewRemData(plugin, incRemInfo ?? undefined);
+
+    // Tell PracticedQueues this is a queue→editor handoff for the same rem,
+    // so the editor timer's startIncRemEngagement doesn't double-count it.
+    markIncRemTransition(plugin, rem._id);
 
     // Start the timer
     const remName = await safeRemTextToString(plugin, rem.text);

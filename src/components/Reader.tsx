@@ -1,9 +1,9 @@
 // components/Reader.tsx
 import { usePlugin, RemId, ReactRNPlugin } from '@remnote/plugin-sdk';
 import React, { useMemo } from 'react';
-import { activeHighlightIdKey, pageRangeWidgetId } from '../lib/consts';
+import { activeHighlightIdKey, pageRangeWidgetId, incremNotesSidebarWidgetId } from '../lib/consts';
 import { HTMLActionItem, HTMLHighlightActionItem, PDFActionItem, PDFHighlightActionItem, RemActionItem } from '../lib/incremental_rem';
-import { getIncrementalReadingPosition, getIncrementalPageRange, clearIncrementalPDFData, PageRangeContext, getPageHistory } from '../lib/pdfUtils';
+import { getIncrementalReadingPosition, getIncrementalPageRange, clearIncrementalPDFData, PageRangeContext, getPageHistory, getAllPDFsInRem, setActivePdfForIncRem, safeRemTextToString } from '../lib/pdfUtils';
 import { Breadcrumb, BreadcrumbItem } from './Breadcrumb';
 import { useCriticalContext, useMetadataStats } from './reader/hooks';
 import { MemoizedPdfReader, PageControls, StatsGroup } from './reader/ui';
@@ -35,6 +35,10 @@ export function Reader(props: ReaderProps) {
   const [canRenderPdf, setCanRenderPdf] = React.useState(
     !(isIOS && (actionType === 'pdf' || actionType === 'pdf-highlight'))
   );
+  // PDFs available on the IncRem (>1 enables the switcher next to the 📝
+  // notes button). Only meaningful for actionType === 'pdf'; highlights are
+  // tied to a specific PDF and switching would invalidate the queue card.
+  const [pdfOptions, setPdfOptions] = React.useState<Array<{ remId: string; name: string; isPreferred: boolean }>>([]);
 
   // useState (Deferred States)
   const criticalContext = useCriticalContext(plugin as ReactRNPlugin, pdfRemId, pdfParentId, actionType, highlightExtractId || undefined, props.queueIncRemId);
@@ -167,7 +171,6 @@ export function Reader(props: ReaderProps) {
   // and by handleReviewInEditorRem. We do NOT save on unmount to avoid duplicate entries.
 
 
-
   // Handle highlights
   React.useEffect(() => {
     const isHighlight = actionType === 'pdf-highlight' || actionType === 'html-highlight';
@@ -177,7 +180,9 @@ export function Reader(props: ReaderProps) {
         highlightExtract?.scrollToReaderHighlight();
         hasScrolled.current = true;
       }, 100);
-    } else if (actionType === 'pdf' && !hasScrolled.current && isReaderReady && criticalContext?.incrementalRemId) {
+    } else if ((actionType === 'pdf' || actionType === 'html') && !hasScrolled.current && isReaderReady && criticalContext?.incrementalRemId) {
+      // Auto-scroll to last saved bookmark for both PDF docs and HTML articles
+      // (Reader Mode). Highlight reps already auto-scroll above.
       const checkAndScrollBookmark = async () => {
         try {
           const history = await getPageHistory(plugin as ReactRNPlugin, criticalContext.incrementalRemId!, pdfRemId);
@@ -223,6 +228,47 @@ export function Reader(props: ReaderProps) {
     hasScrolled.current = false;
   }, [pdfRemId]);
 
+  // Load PDF selector options when the IncRem is known. Keyed on IncRem id
+  // (not pdfRemId) so switching between this IncRem's PDFs doesn't re-fetch
+  // the list — the option set is the same.
+  const incRemIdForOptions = criticalContext?.incrementalRemId ?? null;
+  React.useEffect(() => {
+    if (!incRemIdForOptions || actionType !== 'pdf') {
+      setPdfOptions([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const incRem = await plugin.rem.findOne(incRemIdForOptions);
+        if (!incRem || cancelled) return;
+        const pdfs = await getAllPDFsInRem(plugin as ReactRNPlugin, incRem);
+        if (cancelled) return;
+        const options = await Promise.all(
+          pdfs.map(async (p) => ({
+            remId: p.rem._id,
+            name: await safeRemTextToString(plugin as ReactRNPlugin, p.rem.text),
+            isPreferred: p.isPreferred,
+          }))
+        );
+        if (!cancelled) setPdfOptions(options);
+      } catch (e) {
+        console.error('[Reader] Failed to load PDF options:', e);
+        if (!cancelled) setPdfOptions([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [incRemIdForOptions, actionType, plugin]);
+
+  // Switch the active PDF for the IncRem. Writes the pin to synced storage,
+  // which fires queue.tsx's `remToActionItemType` tracker (it reads the pin
+  // key); the queue then hands Reader a new actionItem with the new PDF,
+  // and React reconciliation re-renders everything against the new pdfRemId.
+  const handlePdfSwitch = React.useCallback(async (newPdfId: string) => {
+    if (!incRemIdForOptions || newPdfId === pdfRemId) return;
+    await setActivePdfForIncRem(plugin as ReactRNPlugin, incRemIdForOptions, newPdfId);
+  }, [plugin, incRemIdForOptions, pdfRemId]);
+
   // --- 5. RENDER START ---
 
   // Use state variables for rendering
@@ -245,15 +291,22 @@ export function Reader(props: ReaderProps) {
     pdfHighlightCount = '...',
   } = metadata || {};
 
+  // Only show the notes button when there is a separate IncRem document.
+  // If incrementalRemId === pdfRemId the IncRem IS the PDF source, so there is
+  // no distinct note document to show.
+  const canShowNotesPanel = !!incrementalRemId && incrementalRemId !== pdfRemId;
 
   return (
     <div className="pdf-reader-viewer" style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
 
-      {/* Breadcrumb Section */}
+      {/* Breadcrumb Section – 📝 button inline on the left when a distinct IncRem exists */}
       <div
         className="breadcrumb-section"
         style={{
-          padding: '8px 12px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '4px',
+          padding: '4px 12px',
           borderBottom: '1px solid var(--rn-clr-border-primary)',
           backgroundColor: 'var(--rn-clr-background-secondary)',
           flexShrink: 0,
@@ -261,12 +314,49 @@ export function Reader(props: ReaderProps) {
           minHeight: '28px',
         }}
       >
-        <Breadcrumb
-          items={ancestors as BreadcrumbItem[]}
-          isLoading={isContextLoading}
-          loadingText="Loading breadcrumbs..."
-          onClick={handleBreadcrumbClick}
-        />
+        {canShowNotesPanel && (
+          <button
+            title="Open document notes in sidebar"
+            style={{ flexShrink: 0, lineHeight: 1, padding: '0 2px', fontSize: '14px', background: 'none', border: 'none', cursor: 'pointer' }}
+            onClick={() => {
+              plugin.window.openWidgetInRightSidebar(incremNotesSidebarWidgetId);
+            }}
+          >
+            📝
+          </button>
+        )}
+        {actionType === 'pdf' && pdfOptions.length > 1 && (
+          <select
+            value={pdfRemId}
+            onChange={(e) => handlePdfSwitch(e.target.value)}
+            title="Switch active PDF for this IncRem"
+            style={{
+              flexShrink: 0,
+              fontSize: '11px',
+              padding: '2px 6px',
+              borderRadius: '4px',
+              border: '1px solid var(--rn-clr-border-primary)',
+              backgroundColor: 'var(--rn-clr-background-primary)',
+              color: 'var(--rn-clr-content-primary)',
+              maxWidth: '220px',
+              cursor: 'pointer',
+            }}
+          >
+            {pdfOptions.map((opt) => (
+              <option key={opt.remId} value={opt.remId}>
+                📄 {opt.name}{opt.isPreferred ? ' ★' : ''}
+              </option>
+            ))}
+          </select>
+        )}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Breadcrumb
+            items={ancestors as BreadcrumbItem[]}
+            isLoading={isContextLoading}
+            loadingText="Loading breadcrumbs..."
+            onClick={handleBreadcrumbClick}
+          />
+        </div>
       </div>
 
       {/* PDF Reader Section (Renders INSTANTLY) */}
@@ -276,7 +366,7 @@ export function Reader(props: ReaderProps) {
             ref={pdfReaderRef}
             remId={pdfRemId}
             height={isIOS ? '100vh' : '100%'}
-            key={pdfRemId} // Ensure key is the PDF rem ID
+            key={pdfRemId}
           />
         ) : (
           <div style={{ padding: '20px', textAlign: 'center' }}>Loading PDF for iOS...</div>

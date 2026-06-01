@@ -18,7 +18,6 @@ import {
   defaultPriorityId,
   currentIncRemKey,
   incremReviewStartTimeKey,
-  incRemCacheReloadKey,
 } from '../consts';
 import parseDuration from 'parse-duration';
 import { getNextSpacingDateForRem, updateSRSDataForRem } from '../scheduler';
@@ -27,6 +26,7 @@ import { tryParseJson, getDailyDocReferenceForDate, sleep } from '../utils';
 import { getInitialPriority } from '../priority_inheritance';
 import { updateIncrementalRemCache } from './cache';
 import { mergeHistoryFromDismissed } from '../dismissed';
+import { registerRemsAsPdfKnown, registerRemsAsHtmlKnown, isHtmlSource } from '../pdfUtils';
 
 type ReviewOverrideOptions = {
   /**
@@ -371,7 +371,7 @@ async function getInitialRotation(
  * @param rem PluginRem to initialize.
  * @returns Promise that resolves after the Rem is initialized or skipped if already incremental.
  */
-export async function initIncrementalRem(plugin: ReactRNPlugin, rem: PluginRem, options?: { skipFlagManagement?: boolean }) {
+export async function initIncrementalRem(plugin: ReactRNPlugin, rem: PluginRem, options?: { skipFlagManagement?: boolean, explicitParentId?: string, skipInitialCascade?: boolean }) {
   const isAlreadyIncremental = await rem.hasPowerup(powerupCode);
 
   if (!isAlreadyIncremental) {
@@ -391,7 +391,8 @@ export async function initIncrementalRem(plugin: ReactRNPlugin, rem: PluginRem, 
       const defaultPrioritySetting = (await plugin.settings.getSetting<number>(defaultPriorityId)) || 10;
       const defaultPriority = Math.min(100, Math.max(0, defaultPrioritySetting));
 
-      const initialPriority = await getInitialPriority(plugin, rem, defaultPriority);
+      // Pass explicitParentId to override stale SDK cache when creating a new Rem and moving it
+      const initialPriority = await getInitialPriority(plugin, rem, defaultPriority, options?.explicitParentId);
 
       await rem.addPowerup(powerupCode);
 
@@ -447,12 +448,45 @@ export async function initIncrementalRem(plugin: ReactRNPlugin, rem: PluginRem, 
       }
 
       await updateIncrementalRemCache(plugin, newIncRem);
-      // Bump the reload trigger so the tracker picks up the new IncRem.
-      // The tracker reads incRemCacheReloadKey reactively; writing a new timestamp
-      // here causes it to re-run loadIncrementalRemCache (via non-reactive plugin ref).
-      await plugin.storage.setSession(incRemCacheReloadKey, Date.now());
-      plugin.storage.setSession('pendingInheritanceCascade', rem._id).catch(console.error);
-      triggeredCascade = true;
+
+      // Register in the known_pdf_rems_ / known_html_rems_ synced indexes so
+      // the parent selector and bookmark popup can discover this IncRem
+      // instantly (PART 2 of findAllRemsFor*), even when the session cache
+      // (allIncrementalRemKey) is not yet loaded (e.g., WebBrowser / Light Mode).
+      try {
+        const sources = await rem.getSources();
+        const allSources = [rem, ...sources];
+        for (const candidate of allSources) {
+          const isPdf = await candidate.hasPowerup(BuiltInPowerupCodes.UploadedFile);
+          if (isPdf) {
+            try {
+              const url = await candidate.getPowerupProperty(BuiltInPowerupCodes.UploadedFile, 'URL');
+              if (typeof url === 'string' && url.toLowerCase().endsWith('.pdf')) {
+                await registerRemsAsPdfKnown(plugin as any, candidate._id, [rem._id]);
+              }
+            } catch {
+              // Skip candidates where URL can't be read
+            }
+            continue;
+          }
+          if (await isHtmlSource(candidate)) {
+            try {
+              await registerRemsAsHtmlKnown(plugin as any, candidate._id, [rem._id]);
+            } catch {
+              // Skip candidates that fail registration
+            }
+          }
+        }
+      } catch (e) {
+        console.error('[initIncrementalRem] Error registering in known host indexes:', e);
+      }
+
+      // The targeted updateIncrementalRemCache call above already inserts the new
+      // IncRem into the in-session cache, so no global reload trigger is needed.
+      if (!options?.skipInitialCascade) {
+        plugin.storage.setSession('pendingInheritanceCascade', rem._id).catch(console.error);
+        triggeredCascade = true;
+      }
     } finally {
       // Only clear the flag if no cascade was triggered.
       // If cascade IS pending, leave the flag up — the cascade tracker will clear it.

@@ -72,6 +72,11 @@ function Priority() {
   // RelPriority moved to useMemo below derivedData to ensure synchronous updates (fixing flicker)
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [showInheritanceForIncRem, setShowInheritanceForIncRem] = useState(false);
+  // Optimistic flag: flipped instantly when the user clicks "Convert to Manual"
+  // so the UI reflects the new source before the background tracker's DB write
+  // propagates back through useTrackerPlugin. Auto-cleared below once the raw
+  // cardInfo.source resolves to 'manual'.
+  const [convertedToManual, setConvertedToManual] = useState(false);
   const incSliderRef = useRef<PrioritySliderRef>(null);
   const cardSliderRef = useRef<PrioritySliderRef>(null);
   const isSaving = useRef(false);
@@ -93,7 +98,7 @@ function Priority() {
       remId = await plugin.storage.getSession<string>('priorityPopupTargetRemId');
       if (remId) {
         // Clear it immediately so it doesn't persist for other uses
-        // await plugin.storage.setSession('priorityPopupTargetRemId', undefined);
+        await plugin.storage.setSession('priorityPopupTargetRemId', undefined);
       }
     }
 
@@ -264,7 +269,17 @@ function Priority() {
 
   // Then use:
   const hasCards = cardData?.hasCards ?? undefined;
-  const cardInfo = cardData?.cardInfo ?? undefined;
+  // Apply the optimistic 'Convert to Manual' override on top of the raw fetched
+  // cardInfo so every downstream consumer (badge, label, button visibility,
+  // confirmation dialog gating) sees the new source immediately.
+  const cardInfo = useMemo(() => {
+    const raw = cardData?.cardInfo;
+    if (!raw) return undefined;
+    if (convertedToManual && raw.source === 'inherited') {
+      return { ...raw, source: 'manual' as CardPriorityInfo['source'] };
+    }
+    return raw;
+  }, [cardData?.cardInfo, convertedToManual]);
   const hasCardPriorityPowerup = cardData?.hasCardPriorityPowerup ?? false;
 
   // This tracker is fast (direct Rem lookup) so it can run in both modes,
@@ -424,10 +439,21 @@ function Priority() {
   useEffect(() => {
     incIsDirty.current = false;
     cardIsDirty.current = false;
+    setConvertedToManual(false);
     // We don't necessarily want to set priorities to null here because other hooks
     // might be about to set them, and setting null might cause a flash.
     // However, for cleanliness on ID swap, we should relying on the data hooks to fire again.
   }, [rem?._id]);
+
+  // Auto-clear the 'Convert to Manual' override once useTrackerPlugin re-fetches
+  // cardInfo with source='manual' from the DB. We key off the RAW source from
+  // cardData (not the derived cardInfo.source, which is always 'manual' while
+  // the override is on) to avoid a flip-flop.
+  useEffect(() => {
+    if (convertedToManual && cardData?.cardInfo?.source === 'manual') {
+      setConvertedToManual(false);
+    }
+  }, [cardData?.cardInfo?.source, convertedToManual]);
 
   useEffect(() => {
     if (isSaving.current) return;
@@ -504,18 +530,38 @@ function Priority() {
   // --- MODIFIED: Initialize scope with original scope for Priority Review Documents ---
   useEffect(() => {
     const initializeScope = async () => {
-      if (inQueue && queueSubQueueId && performanceMode === PERFORMANCE_MODE_FULL) { // 🔌 Skip in light mode
-        // Use originalScopeId if available (Priority Review Document case)
-        const effectiveScopeId = originalScopeId || queueSubQueueId;
-        const scopeRem = await plugin.rem.findOne(effectiveScopeId);
+      if (!inQueue || !queueSubQueueId || performanceMode !== PERFORMANCE_MODE_FULL) return;
 
-        if (scopeRem) {
-          setScope({
-            remId: scopeRem._id,
-            name: await safeRemTextToString(plugin, scopeRem.text)
-          });
-          setScopeMode('document');
-        }
+      // Full-KB priority review doc: originalScopeId === null is the explicit
+      // "Full Knowledge Base" signal from extractOriginalScopeFromPriorityReview.
+      // Strict === null avoids matching `undefined` (tracker still loading).
+      if (isPriorityReviewDoc && originalScopeId === null) {
+        setScope({ remId: null, name: 'All KB' });
+        setScopeMode('all');
+        return;
+      }
+
+      // Priority Review Queue tag rem: when the user enters the queue from the
+      // tag itself (an aggregator across many priority review docs), the rem
+      // text is literally "Priority Review Queue". Treat this as full KB too,
+      // since the per-doc scope cache is meaningless across heterogeneous docs.
+      const tagRem = await plugin.rem.findByName(['Priority Review Queue'], null);
+      if (tagRem && queueSubQueueId === tagRem._id) {
+        setScope({ remId: null, name: 'All KB' });
+        setScopeMode('all');
+        return;
+      }
+
+      // Use originalScopeId if available (Priority Review Document case)
+      const effectiveScopeId = originalScopeId || queueSubQueueId;
+      const scopeRem = await plugin.rem.findOne(effectiveScopeId);
+
+      if (scopeRem) {
+        setScope({
+          remId: scopeRem._id,
+          name: await safeRemTextToString(plugin, scopeRem.text)
+        });
+        setScopeMode('document');
       }
     };
     initializeScope();
@@ -672,6 +718,33 @@ function Priority() {
 
   }, [rem, plugin, sessionCache, originalScopeId, performanceMode, cardInfo, hasCardPriorityPowerup]); // 🔌 Add performanceMode
 
+  // Convert an inherited card priority to manual without changing its numeric value.
+  // saveCardPriority alone only patches the session cache; the SOURCE_SLOT in the DB
+  // is only written by the background tracker watching pendingPrioritySaveKey. Without
+  // this dual write, the optimistic 'manual' flip is immediately overwritten the next
+  // time getCardPriority reads SOURCE_SLOT from the DB.
+  const convertToManual = useCallback(() => {
+    if (!rem || !cardInfo) return;
+
+    // 1. Flip the UI to 'manual' immediately. The override self-clears once the
+    //    DB write propagates back via useTrackerPlugin (see the auto-clear effect).
+    setConvertedToManual(true);
+
+    // 2. Optimistic cache update + descendant cascade trigger.
+    saveCardPriority(cardInfo.priority).catch(console.error);
+
+    // 3. Persist source='manual' to the DB via the background tracker.
+    //    triggerCascade=false because saveCardPriority already scheduled one.
+    plugin.storage.setSession(pendingPrioritySaveKey, {
+      remId: rem._id,
+      incPriority: null,
+      cardPriority: cardInfo.priority,
+      cardSource: 'manual',
+      needsAddPowerup: !hasCardPriorityPowerup,
+      triggerCascade: false,
+    }).catch(console.error);
+  }, [rem, cardInfo, hasCardPriorityPowerup, saveCardPriority, plugin]);
+
   const showInheritanceSection =
     (!showIncSection && !showCardSection) ||
     (showIncSection && !hasCards && cardInfo?.source === 'manual') ||
@@ -698,12 +771,12 @@ function Priority() {
     // while the tracker gracefully wraps the SDK writes in `plugin_operation_active`.
     if (incChanged || cardChanged) {
       plugin.storage.setSession(pendingPrioritySaveKey, {
-          remId: rem._id,
-          incPriority: incChanged ? incP : null,
-          cardPriority: cardChanged ? cardP : null,
-          cardSource: 'manual',
-          needsAddPowerup: cardChanged && !hasCardPriorityPowerup,
-          triggerCascade: incChanged || cardChanged,
+        remId: rem._id,
+        incPriority: incChanged ? incP : null,
+        cardPriority: cardChanged ? cardP : null,
+        cardSource: 'manual',
+        needsAddPowerup: cardChanged && !hasCardPriorityPowerup,
+        triggerCascade: incChanged || cardChanged,
       }).catch(console.error);
     }
 
@@ -1197,7 +1270,7 @@ function Priority() {
                   <span>Source: <strong>{cardInfo?.source}</strong> • Due: {cardInfo?.dueCards}/{cardInfo?.cardCount}</span>
                   {cardInfo?.source === 'inherited' && (
                     <button
-                      onClick={() => saveCardPriority(cardInfo.priority)}
+                      onClick={convertToManual}
                       className="text-xs hover:underline"
                       style={{ color: '#3b82f6' }}
                     >

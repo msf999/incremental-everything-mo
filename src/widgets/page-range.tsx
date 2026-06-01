@@ -10,10 +10,18 @@ import {
   getPageRangeKey,
   getPageHistory,
   getAllIncrementsForPDF,
+  getInstantRemsForPDF,
+  getCacheRemsForPDF,
+  getLocalRemsForPDF,
+  findIncrementalRemForPDFFast,
   getIncrementalPageRange,
   setIncrementalReadingPosition,
   addPageToHistory,
   getReadingStatistics,
+  getAllPDFsInRem,
+  getActivePdfForIncRem,
+  setActivePdfForIncRem,
+  safeRemTextToString,
   PageHistoryEntry,
   PageRangeContext,
 } from '../lib/pdfUtils';
@@ -52,6 +60,16 @@ function PageRangeWidget() {
 
   const [editingState, setEditingState] = useState<EditingState>({ type: 'none' });
   const [totalPdfReadingTime, setTotalPdfReadingTime] = useState<number>(0);
+  const [isBackgroundRefreshing, setIsBackgroundRefreshing] = useState(false);
+
+  // PDFs available on the IncRem context (computed after IncRem resolves).
+  // When length > 1 the header renders a selector that switches the panel's
+  // PDF *view*. Pinning the viewed PDF as active is a separate action
+  // (the "📌 Set as active" button next to the selector).
+  const [pdfOptions, setPdfOptions] = useState<Array<{ remId: string; name: string; isPreferred: boolean }>>([]);
+  // Currently-pinned active PDF for the IncRem, used to mark the option in
+  // the dropdown and decide whether the "Set as active" button is visible.
+  const [activePdfId, setActivePdfId] = useState<string | null>(null);
 
   const handleInitIncrementalRem = async (remId: string) => {
     try {
@@ -128,11 +146,12 @@ function PageRangeWidget() {
   };
 
   // Calculate priority info for each incremental rem
-  const calculatePriorities = async (rems: any[]) => {
+  // Accepts an explicit remsForCalculation list to avoid stale closure captures.
+  const calculatePriorities = async (rems: any[], remsForCalculation?: IncrementalRem[]) => {
     const priorities: Record<string, { absolute: number, percentile: number | null }> = {};
 
-    // Use allIncrementalRems from tracker
-    const remsForCalculation = allIncrementalRems || [];
+    // Prefer the explicitly-passed list; fall back to tracker value.
+    const calcRems = remsForCalculation ?? allIncrementalRems ?? [];
 
     for (const rem of rems) {
       if (rem.isIncremental) {
@@ -140,8 +159,8 @@ function PageRangeWidget() {
         if (remObj) {
           const incRemInfo = await getIncrementalRemFromRem(plugin, remObj);
           if (incRemInfo) {
-            const percentile = remsForCalculation.length > 0 ?
-              calculateRelativePercentile(remsForCalculation, rem.remId) : null;
+            const percentile = calcRems.length > 0 ?
+              calculateRelativePercentile(calcRems, rem.remId) : null;
             priorities[rem.remId] = {
               absolute: incRemInfo.priority,
               percentile
@@ -156,34 +175,85 @@ function PageRangeWidget() {
 
   const reloadRelatedRems = async () => {
     if (!contextData?.pdfRemId) return;
+    const pdfRemId = contextData.pdfRemId;
+    const t0 = performance.now();
 
-    const related = await getAllIncrementsForPDF(plugin, contextData.pdfRemId);
-    setRelatedRems(related);
+    // Helper: merges newly discovered entries into state and fetches their histories/stats
+    const patchNewEntries = async (newEntries: typeof sortedInstant) => {
+      if (newEntries.length === 0) return;
+      setEditingState(current => {
+        if (current.type !== 'none') return current; // user editing — defer
+        setRelatedRems(prev => {
+          const existingIds = new Set(prev.map(r => r.remId));
+          const fresh = newEntries.filter(r => !existingIds.has(r.remId));
+          if (fresh.length === 0) return prev;
+          const merged = [...prev, ...fresh].sort((a, b) => {
+            if (a.isIncremental !== b.isIncremental) return a.isIncremental ? -1 : 1;
+            return a.name.localeCompare(b.name);
+          });
+          (async () => {
+            const newHistories: Record<string, PageHistoryEntry[]> = {};
+            const newStats: Record<string, any> = {};
+            let addedTime = 0;
+            for (const item of fresh) {
+              const history = await getPageHistory(plugin, item.remId, pdfRemId);
+              if (history.length > 0) newHistories[item.remId] = history;
+              const stats = await getReadingStatistics(plugin, item.remId, pdfRemId);
+              newStats[item.remId] = stats;
+              addedTime += stats.totalTimeSeconds;
+            }
+            setRemHistories(h => ({ ...h, ...newHistories }));
+            setRemStatistics(s => ({ ...s, ...newStats }));
+            setTotalPdfReadingTime(t => t + addedTime);
+            await calculatePriorities(merged);
+          })();
+          return merged;
+        });
+        return current;
+      });
+    };
 
-    // Calculate priorities using tracker data
-    await calculatePriorities(related);
+    // ── PHASE 1 ─ INSTANT: known-rems index only (O(12) ≈ <100ms) ──────────
+    const { results: instantResults, processedIds: afterInstant } =
+      await getInstantRemsForPDF(plugin, pdfRemId);
 
-    // Fetch reading histories and statistics for each related rem
+    const sortedInstant = [...instantResults].sort((a, b) => {
+      if (a.isIncremental !== b.isIncremental) return a.isIncremental ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    setRelatedRems(sortedInstant);
+    await calculatePriorities(sortedInstant);
+
+    // Fetch histories/stats for instant results
     const histories: Record<string, PageHistoryEntry[]> = {};
     const statistics: Record<string, any> = {};
     let totalTime = 0;
-
-    for (const item of related) {
-      // Always fetch stats if it's a related rem
-      const history = await getPageHistory(plugin, item.remId, contextData.pdfRemId);
-      if (history.length > 0) {
-        histories[item.remId] = history;
-      }
-
-      const stats = await getReadingStatistics(plugin, item.remId, contextData.pdfRemId);
+    for (const item of sortedInstant) {
+      const history = await getPageHistory(plugin, item.remId, pdfRemId);
+      if (history.length > 0) histories[item.remId] = history;
+      const stats = await getReadingStatistics(plugin, item.remId, pdfRemId);
       statistics[item.remId] = stats;
       totalTime += stats.totalTimeSeconds;
-
     }
-
     setRemHistories(histories);
     setRemStatistics(statistics);
     setTotalPdfReadingTime(totalTime);
+    console.log(`⏱ [page-range] INSTANT phase + render prep: ${(performance.now() - t0).toFixed(0)}ms`);
+
+    // ── PHASES 2 & 3 ─ CACHE SCAN + LOCAL WALK: both in background ────────
+    setIsBackgroundRefreshing(true);
+    Promise.all([
+      getCacheRemsForPDF(plugin, pdfRemId, afterInstant),
+      getLocalRemsForPDF(plugin, pdfRemId, afterInstant),
+    ]).then(async ([{ results: cacheResults }, slowResults]) => {
+      setIsBackgroundRefreshing(false);
+      console.log(`⏱ [page-range] Background phases done: ${(performance.now() - t0).toFixed(0)}ms total`);
+      const combined = [...cacheResults, ...slowResults];
+      await patchNewEntries(combined);
+    }).catch(err => {
+      console.error('[page-range] Background phases failed:', err);
+      setIsBackgroundRefreshing(false);
+    });
   };
 
   // Toggle expanded state for a rem
@@ -239,10 +309,16 @@ function PageRangeWidget() {
     if (currentPage && currentPage > 0) {
       page = currentPage;
     } else {
-      // Check if we have history for this rem
+      // Check if we have history for this rem (skip page-less HTML/text reader bookmarks)
       const history = remHistories[remId];
       if (history && history.length > 0) {
-        page = history[history.length - 1].page;
+        for (let i = history.length - 1; i >= 0; i--) {
+          const p = history[i].page;
+          if (typeof p === 'number') {
+            page = p;
+            break;
+          }
+        }
       }
     }
     setEditingState({ type: 'history', remId, page });
@@ -290,14 +366,41 @@ function PageRangeWidget() {
   // Load data effect
   useEffect(() => {
     const loadData = async () => {
-      if (!contextData?.incrementalRemId || !contextData?.pdfRemId) {
+      if (!contextData?.pdfRemId) {
         setIsLoading(false);
         return;
       }
 
       try {
         setIsLoading(true);
-        const { incrementalRemId, pdfRemId } = contextData;
+        const pdfRemId = contextData.pdfRemId;
+        let incrementalRemId = contextData.incrementalRemId;
+
+        // If the menu opened the popup without resolving incrementalRemId,
+        // resolve it now using the fast cache-first path.
+        if (!incrementalRemId) {
+          console.log('[page-range] incrementalRemId missing — resolving fast...');
+          const pdfRem = await plugin.rem.findOne(pdfRemId);
+          if (pdfRem) {
+            const incRem = await findIncrementalRemForPDFFast(plugin, pdfRem);
+            if (incRem) {
+              incrementalRemId = incRem._id;
+              // Write it back to session so other parts of the widget (and getLocalRemsForPDF) can use it
+              await plugin.storage.setSession('pageRangeContext', {
+                ...contextData,
+                incrementalRemId,
+              });
+              console.log('[page-range] Resolved incrementalRemId:', incrementalRemId);
+            } else {
+              await plugin.app.toast('No incremental rem found for this PDF');
+              setIsLoading(false);
+              return;
+            }
+          } else {
+            setIsLoading(false);
+            return;
+          }
+        }
 
         // Fetch current rem details
         const currentRem = await plugin.rem.findOne(incrementalRemId);
@@ -306,6 +409,27 @@ function PageRangeWidget() {
           const isIncremental = await currentRem.hasPowerup(powerupCode);
           setCurrentRemName(remText);
           setIsCurrentRemIncremental(isIncremental);
+
+          // Build the PDF selector options for this IncRem. Hidden in the UI
+          // when length <= 1. Also resolve the currently-active PDF so we can
+          // mark it in the dropdown with 📌.
+          try {
+            const pdfs = await getAllPDFsInRem(plugin, currentRem);
+            const options = await Promise.all(
+              pdfs.map(async (p) => ({
+                remId: p.rem._id,
+                name: await safeRemTextToString(plugin, p.rem.text),
+                isPreferred: p.isPreferred,
+              }))
+            );
+            setPdfOptions(options);
+            const activePdf = await getActivePdfForIncRem(plugin, currentRem);
+            setActivePdfId(activePdf?._id ?? null);
+          } catch (e) {
+            console.error('[page-range] Failed to load PDF options:', e);
+            setPdfOptions([]);
+            setActivePdfId(null);
+          }
         }
 
         // Load page range for current rem
@@ -330,12 +454,13 @@ function PageRangeWidget() {
     };
 
     loadData();
-  }, [contextData?.incrementalRemId, contextData?.pdfRemId, plugin]);
+  }, [contextData?.pdfRemId, plugin]);
 
   // Recalculate priorities when allIncrementalRems tracker updates
   useEffect(() => {
     if (relatedRems.length > 0 && allIncrementalRems && allIncrementalRems.length > 0) {
-      calculatePriorities(relatedRems);
+      // Pass the fresh tracker value explicitly to avoid stale closure
+      calculatePriorities(relatedRems, allIncrementalRems);
     }
   }, [allIncrementalRems]);
 
@@ -405,6 +530,26 @@ function PageRangeWidget() {
   };
 
   const handleClose = () => plugin.widget.closePopup();
+
+  // Switch which PDF the panel is viewing. View-only — does NOT change the
+  // active pin. The user pins explicitly via the "📌 Set as active" button.
+  const handlePdfChange = async (newPdfId: string) => {
+    if (!contextData || newPdfId === contextData.pdfRemId) return;
+    await plugin.storage.setSession('pageRangeContext', {
+      ...contextData,
+      pdfRemId: newPdfId,
+    });
+  };
+
+  // Pin the currently-viewed PDF as the IncRem's active PDF. Shown only
+  // while viewing a non-active PDF; hidden once the view matches the pin.
+  const handleSetActive = async () => {
+    if (!contextData?.incrementalRemId || !contextData.pdfRemId) return;
+    if (contextData.pdfRemId === activePdfId) return;
+    await setActivePdfForIncRem(plugin, contextData.incrementalRemId, contextData.pdfRemId);
+    setActivePdfId(contextData.pdfRemId);
+    await plugin.app.toast('Active PDF updated');
+  };
 
 
 
@@ -643,6 +788,11 @@ function PageRangeWidget() {
               · ⏱️ {formatDuration(totalPdfReadingTime)}
             </span>
           )}
+          {isBackgroundRefreshing && (
+            <span className="text-xs" style={{ color: 'var(--rn-clr-content-tertiary)', opacity: 0.6 }} title="Searching for additional rems…">
+              · 🔍…
+            </span>
+          )}
         </div>
         <button
           onClick={handleClose}
@@ -655,6 +805,56 @@ function PageRangeWidget() {
           ✕
         </button>
       </div>
+
+      {/* PDF Selector — only shown when the IncRem has >1 PDF source.
+          Selecting an option changes only what the panel displays. To pin a
+          PDF as active for the IncRem, use the "📌 Set as active" button
+          (appears whenever the viewed PDF is not already the active one).
+          ★ = #preferthispdf · 📌 = currently active for this IncRem. */}
+      {pdfOptions.length > 1 && (
+        <div
+          className="flex items-center gap-2 px-4 py-1.5 shrink-0"
+          style={{
+            borderBottom: '1px solid var(--rn-clr-border-primary)',
+            backgroundColor: 'var(--rn-clr-background-secondary)',
+          }}
+        >
+          <span className="text-xs" style={{ color: 'var(--rn-clr-content-secondary)' }}>📄 PDF:</span>
+          <select
+            value={contextData?.pdfRemId ?? ''}
+            onChange={(e) => handlePdfChange(e.target.value)}
+            className="text-xs px-2 py-1 rounded"
+            style={{
+              backgroundColor: 'var(--rn-clr-background-primary)',
+              color: 'var(--rn-clr-content-primary)',
+              border: '1px solid var(--rn-clr-border-primary)',
+              maxWidth: '360px',
+            }}
+            title="Switch which PDF the panel is displaying (view-only — use the 📌 button to pin)"
+          >
+            {pdfOptions.map((opt) => (
+              <option key={opt.remId} value={opt.remId}>
+                {opt.name}{opt.isPreferred ? ' ★' : ''}{opt.remId === activePdfId ? ' 📌' : ''}
+              </option>
+            ))}
+          </select>
+          {contextData?.pdfRemId && contextData.pdfRemId !== activePdfId && (
+            <button
+              onClick={handleSetActive}
+              className="px-2 py-1 text-xs rounded transition-colors whitespace-nowrap"
+              style={{ backgroundColor: '#3b82f6', color: 'white', border: 'none' }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#2563eb'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#3b82f6'; }}
+              title="Pin this PDF as the active one for this Inc Rem"
+            >
+              📌 Set as active
+            </button>
+          )}
+          <span className="text-xs" style={{ color: 'var(--rn-clr-content-tertiary)' }}>
+            ★ #preferthispdf · 📌 active
+          </span>
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto px-3 py-2" style={{ minHeight: 0 }}>
 
@@ -773,7 +973,7 @@ function PageRangeWidget() {
                   coverageInfo={item.childCoverage}
                   priorityInfo={remPriorities[item.remId]}
                   statistics={remStatistics[item.remId]}
-                  history={remHistories[item.remId]}
+                  history={remHistories[item.remId]?.filter((e): e is { page: number; timestamp: number; sessionDuration?: number; highlightId?: string } => typeof e.page === 'number')}
                   editingState={editingState}
                   onToggleExpanded={toggleExpanded}
                   onInitIncremental={handleInitIncrementalRem}
