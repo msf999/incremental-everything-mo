@@ -1759,68 +1759,100 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     },
   });
 
-  // Next item in the queue command (Ctrl+Right Arrow)
+  // Next item in the queue action.
   // Only works in the queue with an Incremental Rem active.
   // Replicates the Next button logic: PDF page history + handleNextRepetitionClick.
+  // Shared by the cmd+right and opt+T bindings below.
+  const runNextInQueueAction = async () => {
+    const url = await plugin.window.getURL();
+
+    if (!url || !url.includes('/flashcards')) {
+      await plugin.app.toast('This command only works in the queue.');
+      return;
+    }
+
+    // Get current incremental rem
+    const currentQueueItem = await plugin.queue.getCurrentCard();
+    let remId = currentQueueItem?.remId;
+
+    if (!remId) {
+      remId = (await plugin.storage.getSession<string>(currentIncRemKey)) || undefined;
+    }
+
+    if (!remId) {
+      await plugin.app.toast('No Incremental Rem currently active in the queue.');
+      return;
+    }
+
+    const rem = await plugin.rem.findOne(remId);
+    if (!rem) {
+      await plugin.app.toast('Could not find the Rem.');
+      return;
+    }
+
+    const hasIncPowerup = await rem.hasPowerup(powerupCode);
+    if (!hasIncPowerup) {
+      await plugin.app.toast('This command only works with Incremental Rems, not regular flashcards.');
+      return;
+    }
+
+    const incRemInfo = await getIncrementalRemFromRem(plugin, rem);
+    if (!incRemInfo) {
+      await plugin.app.toast('Could not retrieve Incremental Rem information.');
+      return;
+    }
+
+    // Handle PDF page history (same as handleNextClick in answer_buttons.tsx)
+    const remType = await plugin.storage.getSession<string | null>(currentIncrementalRemTypeKey);
+    if (remType === 'pdf') {
+      const pdfRem = await getActivePdfForIncRem(plugin, rem);
+      if (pdfRem) {
+        const pageKey = getCurrentPageKey(rem._id, pdfRem._id);
+        const currentPage = await plugin.storage.getSynced<number>(pageKey);
+        if (currentPage) {
+          await addPageToHistory(plugin, rem._id, pdfRem._id, currentPage);
+        }
+      }
+    }
+
+    // Advance the queue (updates SRS data + removes current card)
+    await handleNextRepetitionClick(plugin, incRemInfo);
+  };
+
+  // Primary binding: Cmd+Right (Mac) / Ctrl+Right (Win/Linux).
   plugin.app.registerCommand({
     id: nextInQueueCommandId,
     name: 'Next Item in Queue',
     keyboardShortcut: 'cmd+right',
     quickCode: 'next',
+    action: runNextInQueueAction,
+  });
+
+  // Alternate binding for the Next button. Registered as its own command (like
+  // 'open-incremental-editor') so its shortcut is editable in RemNote → Settings →
+  // Shortcuts. 'opt+t' is only the default; the user can rebind it there.
+  plugin.app.registerCommand({
+    id: 'next-in-queue-alt',
+    name: 'Next Item in Queue (alternate)',
+    keyboardShortcut: 'opt+t',
+    action: runNextInQueueAction,
+  });
+
+  // Skip command. Registered as its own command (like 'open-incremental-editor')
+  // so its shortcut is editable in RemNote → Settings → Shortcuts. 'opt+b' is only
+  // the default. Mirrors the Skip button: advance to the next item without recording
+  // a review or rescheduling.
+  plugin.app.registerCommand({
+    id: 'skip-in-queue',
+    name: 'Skip Item in Queue',
+    keyboardShortcut: 'opt+b',
     action: async () => {
       const url = await plugin.window.getURL();
-
       if (!url || !url.includes('/flashcards')) {
         await plugin.app.toast('This command only works in the queue.');
         return;
       }
-
-      // Get current incremental rem
-      const currentQueueItem = await plugin.queue.getCurrentCard();
-      let remId = currentQueueItem?.remId;
-
-      if (!remId) {
-        remId = (await plugin.storage.getSession<string>(currentIncRemKey)) || undefined;
-      }
-
-      if (!remId) {
-        await plugin.app.toast('No Incremental Rem currently active in the queue.');
-        return;
-      }
-
-      const rem = await plugin.rem.findOne(remId);
-      if (!rem) {
-        await plugin.app.toast('Could not find the Rem.');
-        return;
-      }
-
-      const hasIncPowerup = await rem.hasPowerup(powerupCode);
-      if (!hasIncPowerup) {
-        await plugin.app.toast('This command only works with Incremental Rems, not regular flashcards.');
-        return;
-      }
-
-      const incRemInfo = await getIncrementalRemFromRem(plugin, rem);
-      if (!incRemInfo) {
-        await plugin.app.toast('Could not retrieve Incremental Rem information.');
-        return;
-      }
-
-      // Handle PDF page history (same as handleNextClick in answer_buttons.tsx)
-      const remType = await plugin.storage.getSession<string | null>(currentIncrementalRemTypeKey);
-      if (remType === 'pdf') {
-        const pdfRem = await getActivePdfForIncRem(plugin, rem);
-        if (pdfRem) {
-          const pageKey = getCurrentPageKey(rem._id, pdfRem._id);
-          const currentPage = await plugin.storage.getSynced<number>(pageKey);
-          if (currentPage) {
-            await addPageToHistory(plugin, rem._id, pdfRem._id, currentPage);
-          }
-        }
-      }
-
-      // Advance the queue (updates SRS data + removes current card)
-      await handleNextRepetitionClick(plugin, incRemInfo);
+      await plugin.queue.removeCurrentCardFromQueue();
     },
   });
 

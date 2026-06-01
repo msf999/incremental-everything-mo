@@ -12,7 +12,7 @@ import { VideoExtractViewer } from '../components/VideoExtractViewer';
 import { NativeVideoViewer } from '../components/NativeVideoViewer';
 import { ExtractViewer } from '../components/ExtractViewer';
 import { IsolatedCardViewer } from '../components/IsolatedCardViewer';
-import { remToActionItemType } from '../lib/incremental_rem';
+import { remToActionItemType, getIncrementalRemFromRem } from '../lib/incremental_rem';
 import {
   incrementalQueueActiveKey,
   shouldHideIncEverythingKey,
@@ -26,6 +26,7 @@ import {
 import { setCurrentIncrementalRem } from '../lib/incremental_rem';
 import { safeRemTextToString } from '../lib/pdfUtils';
 import { startIncRemEngagement, endIncRemEngagement } from '../lib/queue_session';
+import { isIncRemDue } from '../lib/shield_history';
 
 type ViewMode = 'isolated' | 'context';
 
@@ -168,6 +169,41 @@ export function QueueComponent() {
       plugin.queue.removeCurrentCardFromQueue(true);
     }
   }, [hasIncrementalPowerup, plugin]);
+
+  // Verify the encountered item is still due. The queue's item list is built once at
+  // session start, so an item rescheduled to a future date on another device can linger
+  // in this session's queue (e.g. reviewed on a laptop, then back to the desktop whose
+  // list was made earlier). Read the item's CURRENT scheduled date straight from the Rem
+  // (fresh after sync) on first encounter, and if it is no longer due, advance past it.
+  //
+  // Keyed on ctx.remId (NOT a reactive tracker) so it runs exactly once per item: it must
+  // not react to the future nextRepDate the user themselves writes when reviewing the
+  // current item (Next/Reschedule), which would skip the wrong card — yet it re-fires for
+  // each new item so consecutive stale entries chain-skip until a due one is reached.
+  useEffect(() => {
+    if (!ctx?.remId) return;
+    let cancelled = false;
+    (async () => {
+      const rem = await plugin.rem.findOne(ctx.remId);
+      if (!rem) return;
+      // A removed powerup is handled by the hasIncrementalPowerup effect above.
+      if (!(await rem.hasPowerup(powerupCode))) return;
+      const incRem = await getIncrementalRemFromRem(plugin, rem);
+      if (!incRem || cancelled) return;
+      if (!isIncRemDue(incRem)) {
+        console.log(
+          '[QueueComponent] Stale queue entry no longer due — advancing past it:',
+          ctx.remId,
+          'nextRepDate:',
+          incRem.nextRepDate
+        );
+        plugin.queue.removeCurrentCardFromQueue(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ctx?.remId, plugin]);
 
   // Reset view mode when switching to a new rem.
   // The default view mode is computed once `remAndType` and the user setting

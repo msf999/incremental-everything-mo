@@ -47,7 +47,7 @@ import {
   isCardDueOverdue,
   VerifyOptions,
 } from '../lib/shield_history';
-import { resetQueueSession, clearSeenItems, calculateDueIncRemCount } from '../lib/session_helpers';
+import { resetQueueSession, clearSeenItems, calculateDueIncRemStats } from '../lib/session_helpers';
 import { registerQueueCounter, clearQueueUI } from '../lib/ui_helpers';
 import { buildComprehensiveScope } from '../lib/scope_helpers';
 import { safeRemTextToString } from '../lib/pdfUtils';
@@ -465,7 +465,7 @@ export function registerQueueEnterListener(
     console.log('QUEUE ENTER: Pre-calculation complete. Session cache has been saved.');
 
     const performanceMode = await getPerformanceMode(plugin);
-    const dueIncRemCount = await calculateDueIncRemCount(
+    const dueIncRemStats = await calculateDueIncRemStats(
       plugin,
       allIncRems,
       sessionCache,
@@ -474,7 +474,7 @@ export function registerQueueEnterListener(
       performanceMode
     );
 
-    registerQueueCounter(plugin, dueIncRemCount);
+    registerQueueCounter(plugin, dueIncRemStats.count, dueIncRemStats.priorityBuckets);
   });
 }
 

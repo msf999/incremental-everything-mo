@@ -84,6 +84,13 @@ rotationSlotCode  = 'rotation'
 
 **Merge rule:** Retain the `open-incremental-editor` command registration, `remTitleEndsWithOpenLinkTag`, and the guarded URL-opening + skip-doc logic.
 
+**Also added (queue keyboard shortcuts):** Extracted upstream's `nextInQueueCommandId` ("Next Item in Queue", `cmd+right`) action into a shared `runNextInQueueAction` closure, and registered two fork-only commands (both registered like `open-incremental-editor` so they're rebindable in RemNote → Settings → Shortcuts):
+
+- `next-in-queue-alt` — "Next Item in Queue (alternate)", default **`opt+t`**. Reuses `runNextInQueueAction` (same behavior as upstream's Next command).
+- `skip-in-queue` — "Skip Item in Queue", default **`opt+b`**. Guards on the queue (`/flashcards`), then `removeCurrentCardFromQueue(false)` — mirrors the Skip button (advance without recording a review or rescheduling).
+
+**Merge rule (shortcuts):** Keep `runNextInQueueAction` and both fork commands. If upstream refactors the `nextInQueueCommandId` action body, re-extract it into `runNextInQueueAction` so both bindings stay in sync. `opt+t` / `opt+b` are defaults only.
+
 ### 4. `src/lib/incremental_rem/types.ts`
 
 **What changed:** Added `rotation: z.string().optional()` to the `IncrementalRem` Zod schema. Upstream also added optional `createdAt` (ms) for when the Rem was first made Incremental; both fields are kept.
@@ -121,7 +128,7 @@ This file has grown into the most heavily customised widget. All changes are add
 | **Link Auto-Open (guarded)** | Added `externalUrls` via `useTrackerPlugin` (extract from `rem.text`, `rem.backText`, Link powerup). `openExternalLinkTabsWhenOpenLinkTagged()` runs **first** on Open Editor clicks (sync `window.open` while the gesture is valid) but **only** when the title ends with **`(OpenLink)`**. If the title does **not** end with `(OpenLink)`, only the Rem document opens — external URLs are not opened in new tabs. |
 | **Title `(OpenLink)` → external tabs, no Rem doc** | `remTitleEndsWithOpenLinkTag` (`open_editor_link_tag.ts`) **and** non-empty `externalUrls`: `performOpenEditorFlow` skips `openEditorAction` so only external URL(s) open (one tab per URL). If the title has `(OpenLink)` but no URL was extracted, the Rem document still opens. Saturday/Monday dropdown paths use the same rules. |
 
-**Merge rule:** If upstream modifies the answer buttons layout, the Next button component, the Open Editor button, or the Skip area, re-apply our changes: (0) Previous button via `goBackToPreviousCard()`, (1) SplitButton with Saturday/Monday dropdown on Next, Open Editor, and Skip, (2) Open Editor uses in-app `openEditorAction` on all platforms and runs after scheduling, (3) `hasInvalidRotation` warning on Next + Open Editor, (4) `rescheduleWithoutReview` for Skip dropdown items, (5) accordion-style toggle logic for the power-user button array (`showAdvancedOptions` state block), (6) inject `openExternalLinkTabsWhenOpenLinkTagged()` at the start of Open Editor click handlers (URLs only when `(OpenLink)`), (7) skip `openEditorAction` when the title ends with `(OpenLink)` and `externalUrls` is non-empty.
+**Merge rule:** If upstream modifies the answer buttons layout, the Next button component, the Open Editor button, or the Skip area, re-apply our changes: (0) Previous button via `goBackToPreviousCard()`, (1) SplitButton with Saturday/Monday dropdown on Next, Open Editor, and Skip, (2) Open Editor uses in-app `openEditorAction` on all platforms and runs after scheduling, (3) `hasInvalidRotation` warning on Next + Open Editor, (4) `rescheduleWithoutReview` for Skip dropdown items, (5) accordion-style toggle logic for the power-user button array (`showAdvancedOptions` state block), (6) inject `openExternalLinkTabsWhenOpenLinkTagged()` at the start of Open Editor click handlers (URLs only when `(OpenLink)`), (7) skip `openEditorAction` when the title ends with `(OpenLink)` and `externalUrls` is non-empty; (8) Next/Skip button tooltips advertise the `Opt+T` / `Opt+B` queue shortcuts (see Deviation 3.1).
 
 ### 6.1. `src/lib/open_editor_link_tag.ts` *(new file)*
 
@@ -144,6 +151,23 @@ This file has grown into the most heavily customised widget. All changes are add
 **What changed:** Added `parse-duration` as a runtime dependency.
 
 **Merge rule:** After any upstream merge that touches dependencies, verify `parse-duration` is still present. Run `npm install` to regenerate the lock file.
+
+### 8. `src/widgets/queue.tsx` (due-on-encounter auto-skip)
+
+**What changed:** Added a due-date guard to `QueueComponent` (the `WidgetLocation.Flashcard` view for plugin queue items). Upstream already auto-advances when `remAndType === null` or the powerup is removed; this adds a parallel check. On first encounter of each item — a `useEffect` keyed on `ctx.remId` (deliberately **not** a reactive tracker) with a `cancelled` guard — it reads the item's *current* `nextRepDate` straight from the Rem via `getIncrementalRemFromRem` and, if `!isIncRemDue(incRem)`, calls `removeCurrentCardFromQueue(false)` to advance. Fixes stale queue entries: an item rescheduled to a future date on another device can linger in a session whose item list was built earlier (e.g. reviewed on a laptop, then back to a desktop). Consecutive stale items chain-skip. Imports: `getIncrementalRemFromRem` (added to the existing `../lib/incremental_rem` import) and `isIncRemDue` from `../lib/shield_history`.
+
+**Merge rule:** Keep the due-check `useEffect`. It **must** stay keyed on `ctx.remId` only (not reactive on rem data) — otherwise it reacts to the future `nextRepDate` the user writes when reviewing the *current* item and skips the wrong card. If upstream restructures `QueueComponent`, re-add the effect alongside the existing auto-advance effects.
+
+### 9. Queue counter priority distribution (`session_helpers.ts`, `ui_helpers.ts`, `events.ts`, `callbacks.ts`)
+
+**What changed:** Extended upstream's queue top-bar counter (which appends ` + <due IncRem count>` to RemNote's native card counter) to also show the due IncRems' **priority distribution** by range `[0-10, 11-30, 31-60, 61-100]` (inclusive), e.g. `1440 + 1610 (x, y, z, u)`. All four files modify **upstream** code:
+
+- `src/lib/session_helpers.ts` — added `getDueIncRemPriorityBuckets()` + `DueIncRemStats` type; **renamed upstream `calculateDueIncRemCount` → `calculateDueIncRemStats`**, now returning `{ count, priorityBuckets }`, computed from the same due-IncRem array in each branch (priority-doc / full-KB / scoped-full / scoped-light).
+- `src/lib/ui_helpers.ts` — `registerQueueCounter(plugin, count, priorityBuckets?)` gained an optional buckets arg; appends ` (x, y, z, u)` to the CSS `::after` content.
+- `src/register/events.ts` — QueueEnter calls `calculateDueIncRemStats` and passes `.count` + `.priorityBuckets`.
+- `src/register/callbacks.ts` — the live `GetNextCard` counter path (excludes already-seen rems) now calls `registerQueueCounter(plugin, filtered.length, getDueIncRemPriorityBuckets(filtered))` instead of inlining the CSS, keeping both counter paths consistent.
+
+**Merge rule:** If upstream changes `calculateDueIncRemCount`, re-apply the rename to `calculateDueIncRemStats` + bucket return (or wrap it). Keep `registerQueueCounter`'s optional `priorityBuckets` param and **both** call sites (events.ts QueueEnter + callbacks.ts GetNextCard) passing buckets, so the distribution doesn't flicker between the two paths. Buckets use the standard `priority` field (0-100) and `Date.now() >= nextRepDate` due semantics (`isIncRemDue`).
 
 ---
 
@@ -452,3 +476,22 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 - Plus ~100 upstream-only files: Study Dashboard, Outline Restructure (preview/undo), Mastery Drill, Rem History widget + global open-Rem listener, wide Weighted Shield popup, Text Case converter, cloze auto-priority, queue-display powerups/commands, `quickCodes` across commands, `createExtract` + `getActivePdfForIncRem` refactors; removed 3 legacy toolbar widgets (`create_inc_rem_toolbar`, `pdf_bookmark_toolbar`, `toggle_incremental_toolbar`).
 
 **Notes:** Large delta (~6 weeks). Only 3 files conflicted; resolutions were additive except the single `findPDFinRem` → `getActivePdfForIncRem` migration forced by an upstream API replacement. Merge performed on branch `merge/upstream-2955e9a`; backup branch `backup/pre-merge-2955e9a` retained at `86028a9` until verified in-app. The forward-looking runbook is in `UPSTREAM_MERGE_PLAN.md` (kept as the reusable procedure for future syncs).
+
+---
+
+### 2026-06-01 — Edit (Next/Skip queue shortcuts, due-on-encounter auto-skip, queue-counter priority distribution)
+
+**Upstream commit(s):** N/A (local features, layered on top of merge commit `996c710`)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (production `webpack` build + zip; `tsc` errors 17, all pre-existing, none in edited files)
+**Files touched:**
+- `src/register/commands.ts` — extracted upstream's Next-in-queue action into shared `runNextInQueueAction`; added `next-in-queue-alt` (default `opt+t`) and `skip-in-queue` (default `opt+b`), registered like `open-incremental-editor` so they're rebindable in RemNote → Settings → Shortcuts (see Deviation 3.1).
+- `src/widgets/answer_buttons.tsx` — Next tooltip now reads "Next (Cmd+Right / Ctrl+Right, or Opt+T)"; Skip tooltip "Skip (Opt+B): …".
+- `src/widgets/queue.tsx` — added due-on-encounter guard to `QueueComponent`: on first encounter of each item (effect keyed on `ctx.remId`) reads the fresh `nextRepDate` and calls `removeCurrentCardFromQueue(false)` if `!isIncRemDue`. Fixes future-dated items lingering in a stale cross-device queue (see Deviation 8).
+- `src/lib/session_helpers.ts` — added `getDueIncRemPriorityBuckets()`; renamed `calculateDueIncRemCount` → `calculateDueIncRemStats` (returns `{ count, priorityBuckets }`).
+- `src/lib/ui_helpers.ts` — `registerQueueCounter` gained optional `priorityBuckets` arg → appends ` (x, y, z, u)` to the counter.
+- `src/register/events.ts` — QueueEnter passes count + buckets to `registerQueueCounter`.
+- `src/register/callbacks.ts` — `GetNextCard` counter path now calls `registerQueueCounter` with buckets from `filtered` (see Deviation 9).
+
+**Notes:** Three independent local features. (1) `opt+t`/`opt+b` are defaults only (user-rebindable). (2) The due-check effect is intentionally non-reactive (keyed on `ctx.remId`) to avoid skipping the wrong card during the user's own review. (3) Queue counter now reads e.g. `1440 + 1610 (x, y, z, u)` where the four numbers are due IncRems in priority ranges 0-10 / 11-30 / 31-60 / 61-100; both the QueueEnter and live GetNextCard counter paths emit the distribution. All edits are uncommitted on `main`, layered on merge commit `996c710` (unpushed).

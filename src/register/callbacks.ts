@@ -23,6 +23,8 @@ import {
 import { getIncrementalRemFromRem, IncrementalRem } from '../lib/incremental_rem';
 import { getCardsPerRem, getSortingRandomness } from '../lib/sorting';
 import { consumePendingScrollRequest } from '../lib/remHelpers';
+import { registerQueueCounter } from '../lib/ui_helpers';
+import { getDueIncRemPriorityBuckets } from '../lib/session_helpers';
 
 
 // Registered once globally — safe because all selectors are highly specific to the
@@ -188,21 +190,9 @@ export function registerCallbacks(plugin: ReactRNPlugin) {
       // Always register the queue counter — don't gate it behind scope being cached.
       // During the race window (QueueEnter still running), the counter would never appear
       // because currentScopeRemIdsKey is null.
-      plugin.app.registerCSS(
-        queueCounterId,
-        `
-        .rn-queue__card-counter {
-          /*visibility: hidden;*/
-        }
-
-        .light .rn-queue__card-counter:after {
-          content: ' + ${filtered.length}';
-        }
-
-        .dark .rn-queue__card-counter:after {
-          content: ' + ${filtered.length}';
-        }`.trim()
-      );
+      // Includes the priority distribution [0-10, 11-30, 31-60, 61-100] of the items
+      // counted here, so the top bar reads e.g. `1440 + 1610 (x, y, z, u)`.
+      registerQueueCounter(plugin, filtered.length, getDueIncRemPriorityBuckets(filtered));
 
       const shouldShowIncRem =
         (typeof intervalBetweenIncRem === 'number' &&

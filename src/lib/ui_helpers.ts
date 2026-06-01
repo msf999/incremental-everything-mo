@@ -9,26 +9,37 @@ import {
 /**
  * Registers CSS to display the incremental rem counter next to the flashcard counter.
  *
+ * Renders ` + ${count}` after RemNote's native card counter (so the top bar reads
+ * `1440 + 1610`). When `priorityBuckets` is provided, also appends the due IncRems'
+ * priority distribution `[0-10, 11-30, 31-60, 61-100]`, e.g. `1440 + 1610 (x, y, z, u)`.
+ *
  * @param plugin Plugin instance
  * @param count Number of due incremental rems to display
+ * @param priorityBuckets Optional due-IncRem counts by priority range [0-10, 11-30, 31-60, 61-100]
  */
-export function registerQueueCounter(plugin: ReactRNPlugin, count: number): void {
+export function registerQueueCounter(
+  plugin: ReactRNPlugin,
+  count: number,
+  priorityBuckets?: [number, number, number, number]
+): void {
+  const distribution = priorityBuckets ? ` (${priorityBuckets.join(', ')})` : '';
+  const suffix = ` + ${count}${distribution}`;
   const css = `
     .rn-queue__card-counter {
       /*visibility: hidden;*/
     }
 
     .light .rn-queue__card-counter:after {
-      content: ' + ${count}';
+      content: '${suffix}';
     }
 
     .dark .rn-queue__card-counter:after {
-      content: ' + ${count}';
+      content: '${suffix}';
     }
   `.trim();
 
   plugin.app.registerCSS(queueCounterId, css);
-  console.log(`QUEUE ENTER: Queue counter updated to show ${count} due IncRems`);
+  console.log(`QUEUE ENTER: Queue counter updated to show ${count} due IncRems${distribution}`);
 }
 
 export async function registerPluginHidingCSS(plugin: ReactRNPlugin) {

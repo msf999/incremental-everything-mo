@@ -513,7 +513,7 @@ export function AnswerButtons() {
         <SplitButton
           variant="primary"
           onClick={handleNextClick}
-          title="Next (Cmd+Right on Mac; Ctrl+Right on Windows/Linux): Mark as reviewed, calculate next interval, and advance to next item"
+          title="Next (Cmd+Right / Ctrl+Right, or Opt+T): Mark as reviewed, calculate next interval, and advance to next item"
           menuItems={[
             { label: `Saturday (${daysUntilSaturday}d)`, onClick: () => runManualNext(daysUntilSaturday) },
             { label: `Monday (${daysUntilMonday}d)`, onClick: () => runManualNext(daysUntilMonday) },
@@ -591,7 +591,7 @@ export function AnswerButtons() {
           onClick={async () => {
             await plugin.queue.removeCurrentCardFromQueue();
           }}
-          title="Skip: Move to the next item without recording a review or rescheduling"
+          title="Skip (Opt+B): Move to the next item without recording a review or rescheduling"
           menuItems={[
             { label: `Saturday (${daysUntilSaturday}d)`, onClick: () => rescheduleWithoutReview(plugin, incRemInfo, daysUntilSaturday) },
             { label: `Monday (${daysUntilMonday}d)`, onClick: () => rescheduleWithoutReview(plugin, incRemInfo, daysUntilMonday) },

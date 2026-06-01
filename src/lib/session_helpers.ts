@@ -43,8 +43,35 @@ export async function clearSeenItems(plugin: ReactRNPlugin): Promise<void> {
   await plugin.storage.setSession(priorityCalcScopeRemIdsKey, null);
 }
 
+/** Counts of due IncRems bucketed by priority: [0-10, 11-30, 31-60, 61-100] (inclusive). */
+export type DueIncRemPriorityBuckets = [number, number, number, number];
+
+export interface DueIncRemStats {
+  /** Number of due Incremental Rems to display. */
+  count: number;
+  /** Due IncRems split into priority buckets [0-10, 11-30, 31-60, 61-100]. */
+  priorityBuckets: DueIncRemPriorityBuckets;
+}
+
 /**
- * Calculates the count of due Incremental Rems based on the current queue context.
+ * Buckets due IncRems by priority into [0-10, 11-30, 31-60, 61-100] (inclusive).
+ * Priority is 0-100 (lower = more important).
+ */
+export function getDueIncRemPriorityBuckets(dueIncRems: IncrementalRem[]): DueIncRemPriorityBuckets {
+  const buckets: DueIncRemPriorityBuckets = [0, 0, 0, 0];
+  for (const rem of dueIncRems) {
+    const p = rem.priority;
+    if (p <= 10) buckets[0]++;
+    else if (p <= 30) buckets[1]++;
+    else if (p <= 60) buckets[2]++;
+    else buckets[3]++;
+  }
+  return buckets;
+}
+
+/**
+ * Calculates due Incremental Rem stats (count + priority distribution) for the queue
+ * counter, based on the current queue context.
  *
  * @param plugin Plugin instance
  * @param allIncRems All incremental rems in the knowledge base
@@ -52,42 +79,45 @@ export async function clearSeenItems(plugin: ReactRNPlugin): Promise<void> {
  * @param isPriorityReviewDoc Whether this is a Priority Review Document
  * @param scopeForItemSelection The scope being used for item selection
  * @param performanceMode Current performance mode setting
- * @returns Count of due incremental rems to display
+ * @returns Count of due incremental rems plus their priority-bucket distribution
  */
-export async function calculateDueIncRemCount(
+export async function calculateDueIncRemStats(
   plugin: ReactRNPlugin,
   allIncRems: IncrementalRem[],
   sessionCache: QueueSessionCache,
   isPriorityReviewDoc: boolean,
   scopeForItemSelection: RemId | null,
   performanceMode: string
-): Promise<number> {
+): Promise<DueIncRemStats> {
+  const toStats = (dueIncRems: IncrementalRem[]): DueIncRemStats => ({
+    count: dueIncRems.length,
+    priorityBuckets: getDueIncRemPriorityBuckets(dueIncRems),
+  });
+
   // Priority Review Docs always calculate from scope
   if (isPriorityReviewDoc) {
     const scopeRemIds = (await plugin.storage.getSession<RemId[]>(currentScopeRemIdsKey)) || [];
-    return allIncRems.filter(
-      (rem) => scopeRemIds.includes(rem.remId) && Date.now() >= rem.nextRepDate
-    ).length;
+    return toStats(
+      allIncRems.filter((rem) => scopeRemIds.includes(rem.remId) && Date.now() >= rem.nextRepDate)
+    );
   }
 
   // No scope means full KB
   if (!scopeForItemSelection) {
-    return sessionCache.dueIncRemsInKB.length;
+    return toStats(sessionCache.dueIncRemsInKB);
   }
 
   // Scoped queue - use cache in full mode, calculate in light mode
   if (performanceMode === 'full') {
-    return sessionCache.dueIncRemsInScope.length;
+    return toStats(sessionCache.dueIncRemsInScope);
   }
 
   // Light mode with scope - calculate manually
-  console.log('QUEUE ENTER: Light mode - manually calculating due IncRem count...');
+  console.log('QUEUE ENTER: Light mode - manually calculating due IncRem stats...');
   const scopeRemIds = (await plugin.storage.getSession<RemId[]>(currentScopeRemIdsKey)) || [];
-  const count = scopeRemIds.length
-    ? allIncRems.filter(
-      (rem) => Date.now() >= rem.nextRepDate && scopeRemIds.includes(rem.remId)
-    ).length
-    : 0;
-  console.log(`QUEUE ENTER: Light mode - found ${count} due IncRems`);
-  return count;
+  const dueIncRems = scopeRemIds.length
+    ? allIncRems.filter((rem) => Date.now() >= rem.nextRepDate && scopeRemIds.includes(rem.remId))
+    : [];
+  console.log(`QUEUE ENTER: Light mode - found ${dueIncRems.length} due IncRems`);
+  return toStats(dueIncRems);
 }
