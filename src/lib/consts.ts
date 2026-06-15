@@ -63,6 +63,10 @@ export const queueLayoutFixId = 'incremental-everything-queue-layout-fix';
 export const queueHideElementsId = 'incremental-everything-queue-hide-elements';
 export const collapseTopBarCssId = 'incremental-everything-collapse-top-bar'; // CSS registration ID
 export const incrementalQueueActiveKey = 'incremental-queue-active';
+// Set by the Previous button right before goBackToPreviousCard(); consumed once by the
+// QueueComponent due-check so a just-reviewed (now future-dated) item revisited via Previous
+// is shown instead of auto-skipped.
+export const queueBackNavKey = 'queue-back-nav-flag';
 export const activeHighlightIdKey = 'active-highlight-id-key';
 export const currentIncrementalRemTypeKey = 'current-incremental-rem-type-key';
 export const currentScopeRemIdsKey = 'current-scope-rem-ids-key';

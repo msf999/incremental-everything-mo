@@ -440,8 +440,9 @@ export function IncRemTable({
     });
 
     if (sortBy === 'queueOrder') {
-      // 1. Sort by priority first
-      filtered.sort((a, b) => a.priority - b.priority);
+      // 1. Sort by priority first; break ties by most overdue (smallest nextRepDate)
+      //    so this preview matches the live queue's GetNextCard ordering.
+      filtered.sort((a, b) => a.priority - b.priority || a.nextRepDate - b.nextRepDate);
 
       // 2. Apply randomness swaps once, caching the resulting order via a mapped index
       const cacheNeedsInit = Object.keys(randomOrderCache.current).length === 0 ||

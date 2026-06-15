@@ -84,8 +84,14 @@ export function applySortingCriteria<T extends { priority: number }>(
     return [];
   }
 
-  // Sort by priority first
-  const sorted = [...items].sort((a, b) => a.priority - b.priority);
+  // Sort by priority first; break ties by most overdue (smallest nextRepDate).
+  // Guarded with `?? 0` so items without a nextRepDate (e.g. flashcards) keep their
+  // prior stable order, while Incremental Rems get most-overdue-first.
+  const sorted = [...items].sort(
+    (a, b) =>
+      a.priority - b.priority ||
+      ((a as any).nextRepDate ?? 0) - ((b as any).nextRepDate ?? 0)
+  );
   
   // Apply randomness through controlled swaps
   const numSwaps = Math.floor(randomness * items.length);

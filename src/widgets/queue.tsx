@@ -22,6 +22,7 @@ import {
   IsolatedQueueMode,
   powerupCode,
   currentHostDocumentIdKey,
+  queueBackNavKey,
 } from '../lib/consts';
 import { setCurrentIncrementalRem } from '../lib/incremental_rem';
 import { safeRemTextToString } from '../lib/pdfUtils';
@@ -184,6 +185,14 @@ export function QueueComponent() {
     if (!ctx?.remId) return;
     let cancelled = false;
     (async () => {
+      // Exception: when the user navigates BACK to an item (Previous button), don't auto-skip
+      // it even if it's no longer due — e.g. they just reviewed it and want to revisit. The
+      // Previous button sets this flag right before goBackToPreviousCard(); consume it once.
+      const cameFromBackNav = await plugin.storage.getSession<boolean>(queueBackNavKey);
+      if (cameFromBackNav) {
+        await plugin.storage.setSession(queueBackNavKey, false);
+        return;
+      }
       const rem = await plugin.rem.findOne(ctx.remId);
       if (!rem) return;
       // A removed powerup is handled by the hasIncrementalPowerup effect above.

@@ -87,7 +87,7 @@ rotationSlotCode  = 'rotation'
 **Also added (queue keyboard shortcuts):** Extracted upstream's `nextInQueueCommandId` ("Next Item in Queue", `cmd+right`) action into a shared `runNextInQueueAction` closure, and registered two fork-only commands (both registered like `open-incremental-editor` so they're rebindable in RemNote → Settings → Shortcuts):
 
 - `next-in-queue-alt` — "Next Item in Queue (alternate)", default **`opt+t`**. Reuses `runNextInQueueAction` (same behavior as upstream's Next command).
-- `skip-in-queue` — "Skip Item in Queue", default **`opt+b`**. Guards on the queue (`/flashcards`), then `removeCurrentCardFromQueue(false)` — mirrors the Skip button (advance without recording a review or rescheduling).
+- `skip-in-queue` — "Skip Item in Queue", default **`opt+b`**. Guards on the queue (`/flashcards`), then `removeCurrentCardFromQueue()` — mirrors the Skip button (advance without recording a review or rescheduling).
 
 **Merge rule (shortcuts):** Keep `runNextInQueueAction` and both fork commands. If upstream refactors the `nextInQueueCommandId` action body, re-extract it into `runNextInQueueAction` so both bindings stay in sync. `opt+t` / `opt+b` are defaults only.
 
@@ -156,7 +156,9 @@ This file has grown into the most heavily customised widget. All changes are add
 
 **What changed:** Added a due-date guard to `QueueComponent` (the `WidgetLocation.Flashcard` view for plugin queue items). Upstream already auto-advances when `remAndType === null` or the powerup is removed; this adds a parallel check. On first encounter of each item — a `useEffect` keyed on `ctx.remId` (deliberately **not** a reactive tracker) with a `cancelled` guard — it reads the item's *current* `nextRepDate` straight from the Rem via `getIncrementalRemFromRem` and, if `!isIncRemDue(incRem)`, calls `removeCurrentCardFromQueue(false)` to advance. Fixes stale queue entries: an item rescheduled to a future date on another device can linger in a session whose item list was built earlier (e.g. reviewed on a laptop, then back to a desktop). Consecutive stale items chain-skip. Imports: `getIncrementalRemFromRem` (added to the existing `../lib/incremental_rem` import) and `isIncRemDue` from `../lib/shield_history`.
 
-**Merge rule:** Keep the due-check `useEffect`. It **must** stay keyed on `ctx.remId` only (not reactive on rem data) — otherwise it reacts to the future `nextRepDate` the user writes when reviewing the *current* item and skips the wrong card. If upstream restructures `QueueComponent`, re-add the effect alongside the existing auto-advance effects.
+**Back-navigation exception:** As its very first step, the async effect reads and consumes a one-shot session flag `queueBackNavKey` (consts) — set by the **Previous** button in `answer_buttons.tsx` right before `goBackToPreviousCard()`. If set, the effect clears it and returns *without* the due check, so a just-reviewed (now future-dated) item revisited via Previous is shown instead of auto-skipped. The flag is also reset in `resetQueueSession` (`session_helpers.ts`). (Known minor edge: if Previous lands on a non-plugin card, the flag is consumed by the next IncRem instead — rare, bounded to one item per session.)
+
+**Merge rule:** Keep the due-check `useEffect`. It **must** stay keyed on `ctx.remId` only (not reactive on rem data) — otherwise it reacts to the future `nextRepDate` the user writes when reviewing the *current* item and skips the wrong card. Keep the `queueBackNavKey` consume-first early-out and the Previous-button hand-off together (they're a pair). If upstream restructures `QueueComponent`, re-add the effect alongside the existing auto-advance effects.
 
 ### 9. Queue counter priority distribution (`session_helpers.ts`, `ui_helpers.ts`, `events.ts`, `callbacks.ts`)
 
@@ -168,6 +170,18 @@ This file has grown into the most heavily customised widget. All changes are add
 - `src/register/callbacks.ts` — the live `GetNextCard` counter path (excludes already-seen rems) now calls `registerQueueCounter(plugin, filtered.length, getDueIncRemPriorityBuckets(filtered))` instead of inlining the CSS, keeping both counter paths consistent.
 
 **Merge rule:** If upstream changes `calculateDueIncRemCount`, re-apply the rename to `calculateDueIncRemStats` + bucket return (or wrap it). Keep `registerQueueCounter`'s optional `priorityBuckets` param and **both** call sites (events.ts QueueEnter + callbacks.ts GetNextCard) passing buckets, so the distribution doesn't flicker between the two paths. Buckets use the standard `priority` field (0-100) and `Date.now() >= nextRepDate` due semantics (`isIncRemDue`).
+
+### 10. Equal-priority tiebreak by `nextRepDate` (`callbacks.ts`, `IncRemTable.tsx`, `sorting.ts`)
+
+**What changed:** Added a deterministic secondary sort key so that when two or more Incremental Rems share the same priority, the **most overdue** one (smallest `nextRepDate`) is ordered first. Previously priority was the only sort key, so ties fell back to arbitrary KB load order (stable sort) or got shuffled by sorting randomness. The new key is additive — it only orders items that were already tied on the primary key. Three sort sites:
+
+- `src/register/callbacks.ts` — the authoritative live-queue selector. The `_.sortBy(allIncrementalRem, …)` in `GetNextCard` now uses the **two-iteratee** form `[primaryKey, (incRem) => incRem.nextRepDate]`. The primary iteratee is unchanged (scope index in `in-order` mode, else `priority`); in `in-order` mode the scope index is unique per rem, so the `nextRepDate` tiebreak never engages there. The existing random-swap block still runs after the sort when sorting randomness > 0.
+- `src/components/IncRemTable.tsx` — the **"Queue Order"** sort (the `sortBy === 'queueOrder'` branch) now sorts `a.priority - b.priority || a.nextRepDate - b.nextRepDate` before the randomness step, so the table preview mirrors the live queue. The separate user-selectable "priority" **column** sort is intentionally left unchanged.
+- `src/lib/sorting.ts` — `applySortingCriteria` (used by Priority Review Documents for both IncRems and cards) now sorts `a.priority - b.priority || ((a as any).nextRepDate ?? 0) - ((b as any).nextRepDate ?? 0)`. The `?? 0` guard keeps flashcards (no `nextRepDate`) in their prior stable order while IncRems get most-overdue-first.
+
+**Note:** `callbacks.ts` was already fork-touched for the queue counter (Deviation 9), but the **sort itself** was upstream code. `IncRemTable.tsx` and `sorting.ts` were previously pure-upstream files; this is their first fork deviation.
+
+**Merge rule:** If upstream modifies any of these three sorts, re-apply `nextRepDate` **ascending** as the secondary key. In the generic `applySortingCriteria` keep the `?? 0` guard so cards (which lack `nextRepDate`) are unaffected. Do **not** add the tiebreak to the percentile-only sorts (utils percentile helpers, `inc_rem_main_view.tsx`, `inc_rem_list.tsx`, shield/card-priority caches) or to the IncRemTable "priority" column sort — those are intentionally out of scope.
 
 ---
 
@@ -495,3 +509,36 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 - `src/register/callbacks.ts` — `GetNextCard` counter path now calls `registerQueueCounter` with buckets from `filtered` (see Deviation 9).
 
 **Notes:** Three independent local features. (1) `opt+t`/`opt+b` are defaults only (user-rebindable). (2) The due-check effect is intentionally non-reactive (keyed on `ctx.remId`) to avoid skipping the wrong card during the user's own review. (3) Queue counter now reads e.g. `1440 + 1610 (x, y, z, u)` where the four numbers are due IncRems in priority ranges 0-10 / 11-30 / 31-60 / 61-100; both the QueueEnter and live GetNextCard counter paths emit the distribution. All edits are uncommitted on `main`, layered on merge commit `996c710` (unpushed).
+
+---
+
+### 2026-06-02 — Fix (due-on-encounter auto-skip: back-navigation exception)
+
+**Upstream commit(s):** N/A (local fix to Deviation 8)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (production `webpack` build + zip; `tsc` errors 17, all pre-existing, none in edited files)
+**Files touched:**
+- `src/lib/consts.ts` — added `queueBackNavKey` session-flag constant.
+- `src/widgets/answer_buttons.tsx` — Previous button sets `queueBackNavKey = true` before `goBackToPreviousCard()`.
+- `src/widgets/queue.tsx` — due-check effect consumes `queueBackNavKey` as its first step; if set, clears it and returns without the due check (shows the item).
+- `src/lib/session_helpers.ts` — reset `queueBackNavKey` to `false` in `resetQueueSession`.
+
+**Notes:** Fixes a regression from the new due-on-encounter auto-skip (Deviation 8): after reviewing an item (Next), its `nextRepDate` moves to the future, so pressing **Previous** to revisit it tripped the due-check and removed it. "Seen" couldn't distinguish this from a genuine stale item because `seenRemInSessionKey` is written at show-time (callbacks.ts:252). The one-shot back-nav flag is the discriminator. Genuine stale items encountered going forward are still auto-skipped. Minor known edge: Previous landing on a non-plugin card consumes the flag on the next IncRem instead (rare, one item, bounded per session).
+
+---
+
+### 2026-06-15 — Edit (Equal-priority tiebreak by nextRepDate: most overdue first)
+
+**Upstream commit(s):** N/A (local feature)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`npm run build` — webpack succeeds; pre-existing `tsc` errors unchanged, none in edited files)
+**Files touched:**
+- `src/register/callbacks.ts` — `GetNextCard` sort changed from single-key `_.sortBy` to the two-iteratee form `[priority-or-scope-index, nextRepDate]`, so equal-priority IncRems are ordered most-overdue-first (see Deviation 10).
+- `src/components/IncRemTable.tsx` — "Queue Order" sort now `a.priority - b.priority || a.nextRepDate - b.nextRepDate` so the table preview matches the live queue.
+- `src/lib/sorting.ts` — `applySortingCriteria` adds a guarded `nextRepDate` secondary key (`?? 0` so flashcards are unaffected); used by Priority Review Documents.
+- `public/manifest.json` — bumped version `0.2.259` → `0.2.260`.
+- `FORK_TRACKING.md` — added Deviation 10 and this changelog entry; corrected Deviation 3.1 `removeCurrentCardFromQueue(false)` → `()` to match the code (audit fix).
+
+**Notes:** Previously priority was the only sort key, so ties fell back to arbitrary KB load order (stable sort) or were shuffled by sorting randomness. The new secondary key is purely additive — it only orders items already tied on priority. Order of precedence is now: priority → nextRepDate (most overdue first) → randomness swaps (if sorting randomness > 0, applied last, same as before). With the default randomness of 0 the tiebreak is strict. Percentile-only sorts and the IncRemTable "priority" column sort were intentionally left unchanged. This commit also includes the previously-uncommitted back-navigation exception fix (see 2026-06-02 entry).

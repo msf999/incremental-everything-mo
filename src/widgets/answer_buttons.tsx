@@ -25,6 +25,7 @@ import {
   queueSessionCacheKey,
   priorityCalcScopeRemIdsKey,
   incremReviewStartTimeKey,
+  queueBackNavKey,
 } from '../lib/consts';
 import { getIncrementalRemFromRem, handleNextRepetitionClick, handleNextRepetitionManualOffset, rescheduleWithoutReview, updateReviewRemData, getRotationIntervalMs } from '../lib/incremental_rem';
 import { removeIncrementalRemCache, updateIncrementalRemCache } from '../lib/incremental_rem/cache';
@@ -503,6 +504,9 @@ export function AnswerButtons() {
         <Button
           variant="secondary"
           onClick={async () => {
+            // Flag the back-navigation so the QueueComponent due-check doesn't auto-skip a
+            // just-reviewed (now future-dated) item when we revisit it via Previous.
+            await plugin.storage.setSession(queueBackNavKey, true);
             await plugin.queue.goBackToPreviousCard();
           }}
           title="Previous: Go back to the previous card in the queue"
