@@ -153,7 +153,8 @@ export function registerCallbacks(plugin: ReactRNPlugin) {
       const intervalBetweenIncRem =
         typeof cardsPerRem === 'number' ? cardsPerRem + 1 : cardsPerRem;
 
-      const sorted = _.sortBy(allIncrementalRem, [
+      const sorted = _.sortBy(
+        allIncrementalRem,
         (incRem) => {
           if (queueInfo.mode === 'in-order' && docScopeRemIds) {
             return docScopeRemIds.indexOf(incRem.remId);
@@ -164,8 +165,12 @@ export function registerCallbacks(plugin: ReactRNPlugin) {
         // Tiebreak: among equal-priority items, show the most overdue first
         // (smallest nextRepDate). In 'in-order' mode the primary key (scope index)
         // is unique per rem, so this secondary key never engages there.
+        // NOTE: remeda's sortBy takes projections as separate args — NOT a lodash
+        // array of iteratees. Wrapping them in [ ] makes remeda treat it as a
+        // [projection, order] pair and throw "comparator is not a function",
+        // which kills GetNextCard so no IncRems ever appear in the queue.
         (incRem) => incRem.nextRepDate,
-      ]);
+      );
 
       const seenRemIds = (await plugin.storage.getSession<RemId[]>(seenRemInSessionKey)) || [];
       const filtered = sorted.filter((x) => {
