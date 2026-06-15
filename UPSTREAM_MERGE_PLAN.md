@@ -11,17 +11,16 @@
 
 | Field | Value |
 |---|---|
-| **Base (last synced)** | `7e0bc0d` — _Merge PR #271_ (synced 2026-04-16) |
-| **Target (upstream HEAD)** | `2955e9a` — `bjsi/incremental-everything@main` |
-| **Our HEAD** | `86028a9` — `origin/main` |
-| **Delta size** | ~245 commits / ~6 weeks |
+| **Base (last synced)** | `be390d5` — _Merge PR #288_ (synced 2026-06-15) |
+| **Target (upstream HEAD)** | `be390d5` — **caught up, no pending delta** |
+| **Our HEAD** | merge commit `65578e9` on `main` |
+| **Delta size** | none pending (next sync: `git fetch upstream` then re-run the runbook) |
 
-**Upstream themes in this delta** (these drive the conflict hotspots):
-card-cluster expansion for sibling rems; PDF bookmark/highlight-preview improvements and
-preserve-highlight-references on extract; priority-shield overdue tracking + activation changes;
-`CardPriorityDisplay` sibling context; inheritance-cascade debounce removal + local ancestral
-lookup for inc-rem discovery; `quickCodes` added to all commands + command renames (incl. the
-extraction command); a new Rem History widget + global open-Rem listener; manifest patch bumps.
+**Last sync's themes** (for reference; the next delta will differ — re-recon at Step 3):
+Card Memory Analytics + FSRS Calibration views; period filtering across analytics/dashboard;
+per-card weighted-shield bucketing; monthly catch-up shield; scope-engine rewrite + debug tooling;
+rogue-CardPriority cleanup; the new ReferenceFinder widget; the Bulletize command; and the headline
+**priority-weighted lottery** replacing uniform random swaps in sorting (`sorting.ts`/`callbacks.ts`).
 
 > The exact per-file conflict set is confirmed at execution time in **Step 3** (GitHub omits the
 > inline file list for a diff this large, so it must be enumerated locally after `git fetch`).
