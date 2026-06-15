@@ -533,9 +533,9 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 **Upstream commit(s):** N/A (local feature)
 **Conflicts resolved:** None
 **Custom code preserved:** Yes
-**Compilation verified:** Yes (`npm run build` — webpack succeeds; pre-existing `tsc` errors unchanged, none in edited files)
+**Compilation verified:** Partially — `npm run build` (webpack, transpile-only) succeeded, but this claim was **inaccurate**: the `callbacks.ts` change introduced 4 `tsc` errors (count 17 → 21) **and a runtime crash** that webpack's transpile-only build never surfaced. **⚠️ Corrected by the 2026-06-15 — Fix below.**
 **Files touched:**
-- `src/register/callbacks.ts` — `GetNextCard` sort changed from single-key `_.sortBy` to the two-iteratee form `[priority-or-scope-index, nextRepDate]`, so equal-priority IncRems are ordered most-overdue-first (see Deviation 10).
+- `src/register/callbacks.ts` — `GetNextCard` sort changed from single-key `_.sortBy` to the lodash-style two-iteratee array form `_.sortBy(arr, [primaryKey, nextRepDate])` — **broken** because `_` is remeda, not lodash (see the 2026-06-15 Fix and Deviation 10).
 - `src/components/IncRemTable.tsx` — "Queue Order" sort now `a.priority - b.priority || a.nextRepDate - b.nextRepDate` so the table preview matches the live queue.
 - `src/lib/sorting.ts` — `applySortingCriteria` adds a guarded `nextRepDate` secondary key (`?? 0` so flashcards are unaffected); used by Priority Review Documents.
 - `public/manifest.json` — bumped version `0.2.259` → `0.2.260`.
@@ -565,13 +565,13 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 
 ### 2026-06-15 — Fix (No IncRems in queue — remeda `sortBy` crash carried in from `9e2a2bb`)
 
-**Upstream commit(s):** N/A (local fix; same fix applied independently on `main` as `0.2.261`)
+**Upstream commit(s):** N/A (local fix to the `9e2a2bb` tiebreak Edit / Deviation 10; the bug was carried into this branch unchanged by the `be390d5` merge)
 **Conflicts resolved:** None
 **Custom code preserved:** Yes
 **Compilation verified:** Yes — `tsc` error count dropped **21 → 17** (the 4 removed were this bug; 17 is the genuine baseline). `npm run build` (production webpack) compiles.
 **Files touched:**
 - `src/register/callbacks.ts` — changed `GetNextCard`'s sort from the broken lodash array form `_.sortBy(allIncrementalRem, [fn1, fn2])` to remeda's correct multi-projection form `_.sortBy(allIncrementalRem, fn1, fn2)`. Added a comment warning that `_` is remeda, not lodash.
 - `public/manifest.json` — bumped version `0.2.276` → `0.2.277`.
-- `FORK_TRACKING.md` — corrected Deviation 10's `callbacks.ts` description (remeda gotcha), the merge entry's `tsc` baseline note (retracted the "21 baseline" claim), and added this entry.
+- `FORK_TRACKING.md` — corrected Deviation 10's `callbacks.ts` description + merge rule (remeda gotcha), the 2026-06-15 Edit entry's inaccurate "Compilation verified" line, the merge entry's `tsc` baseline note (retracted the "21 baseline" claim), and added this entry.
 
 **Root cause:** `_` in `callbacks.ts` is **remeda** (`import * as _ from 'remeda'`). The `9e2a2bb` tiebreak commit wrote the sort using **lodash's** array-of-iteratees syntax `_.sortBy(arr, [fn1, fn2])`; remeda instead expects projections as separate args, reads the array as a `[projection, order]` pair (`order = fn2`), and throws `TypeError: comparator is not a function` from `_purryOrderRules`, crashing `GetNextCard` so no IncRems were injected. The `be390d5` merge auto-merged that broken line through unchanged, so this branch inherited the bug until this Fix. `IncRemTable.tsx` and `sorting.ts` are unaffected (native `Array.sort`).
