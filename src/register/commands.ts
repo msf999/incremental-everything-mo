@@ -12,6 +12,7 @@ import {
 import {
   powerupCode,
   currentIncRemKey,
+  editorReviewTimerRemIdKey,
   pageRangeWidgetId,
   noIncRemTimerKey,
   alwaysUseLightModeOnMobileId,
@@ -20,6 +21,7 @@ import {
   currentSubQueueIdKey,
   dismissIncRemCommandId,
   nextInQueueCommandId,
+  togglePdfHighlightBordersCommandId,
   currentIncrementalRemTypeKey,
   incremReviewStartTimeKey,
   allCardPriorityInfoKey,
@@ -27,16 +29,30 @@ import {
   seenCardInSessionKey,
   seenRemInSessionKey,
   priorityCalcScopeRemIdsKey,
+  sourceFloatingTargetKey,
+  sourceFloatingActiveIdKey,
+  preservedHistoryPowerupCode,
+  priorityBandColorsReloadKey,
+  enableMasteryDrillId,
+  enableFlashcardPrioritisationId,
 } from '../lib/consts';
-import { computeWeightedShieldBreakdown } from '../lib/utils';
+import { computeWeightedShieldBreakdown, formatDuration } from '../lib/utils';
+import {
+  planPreserveHistoryAndRemove,
+  executePreserveHistoryAndRemove,
+} from '../lib/history_transfer';
+import { resolvePowerupSlotDiagnostic } from '../lib/powerup_slot_compat';
+import { dumpRawPowerupSlots } from '../lib/raw_slot_dump';
+import { togglePdfHighlightBorders } from '../lib/ui_helpers';
 import { CardPriorityInfo, expandCardInfosToCards } from '../lib/card_priority/types';
 import { IncrementalRem as IncrementalRemType } from '../lib/incremental_rem/types';
 import { buildDocumentScope } from '../lib/scope_helpers';
 import { initIncrementalRem } from './powerups';
-import { getIncrementalRemFromRem, handleNextRepetitionClick, getCurrentIncrementalRem } from '../lib/incremental_rem';
+import { getIncrementalRemFromRem, handleNextRepetitionClick, getCurrentIncrementalRem, requestQueueDashboardRefocus } from '../lib/incremental_rem';
 import { removeIncrementalRemCache } from '../lib/incremental_rem/cache';
 import { IncrementalRep } from '../lib/incremental_rem/types';
-import { safeRemTextToString, getCurrentPageKey, addPageToHistory, registerRemsAsPdfKnown, getActivePdfForIncRem, getAllPDFsInRem, getDescendantsToDepth, getRemCardContent } from '../lib/pdfUtils';
+import { safeRemTextToString, getIncrementalReadingPosition, addPageToHistory, registerRemsAsPdfKnown, getActivePdfForIncRem, getAllPDFsInRem, getDescendantsToDepth, getRemCardContent, resolveSourcePopupTarget } from '../lib/pdfUtils';
+import { getHoveredReference } from './events';
 import { transferToDismissed } from '../lib/dismissed';
 import { addToIncrementalHistory, addDismissalToIncrementalHistory } from '../lib/history_utils';
 import { handleCardPriorityInheritance } from '../lib/card_priority/card_priority_inheritance';
@@ -70,6 +86,12 @@ import { handleReviewInEditorRem } from '../lib/review_actions';
 import { remTitleEndsWithOpenLinkTag, extractExternalHttpUrlsFromRem } from '../lib/open_editor_link_tag';
 import { determineIncRemType } from '../lib/incRemHelpers';
 import {
+  setRemReadPoint,
+  isDescendantOf,
+  findNearestAncestorIncRem,
+  resolveReadPointIncRem,
+} from '../lib/remReadPoint';
+import {
   detectCase,
   nextCase,
   transformCase,
@@ -80,22 +102,236 @@ import {
   OutlineSnapshot,
   revertSnapshot,
   isMetaRem,
+  getHeadingLevel,
+  applyHeadingLevel,
+  HeadingLevel,
 } from '../lib/outline_restructure';
+import {
+  HEADING_SNAPSHOT_KEY,
+  HeadingSnapshot,
+  revertHeadingSnapshot,
+} from '../lib/heading_assign';
 import {
   registerSelectionTracker,
   getEffectiveSelection,
 } from '../lib/editor_selection';
 import { createExtract } from '../lib/extract';
 import { bulletizeSelection } from '../lib/bulletize';
+import {
+  inlinizeListSelection,
+  breakInlineListToChildren,
+  restoreListRem,
+} from '../lib/listify';
+import { resolvePriorityTargets } from '../lib/priority_targets';
+// Static, not dynamic: any chunk a dynamic import() emits here is evaluated by
+// the RemNote index sandbox as a classic script and dies on `import.meta`.
+import {
+  syncPriorityBands,
+  removeAllPriorityBands,
+  clearBandEligibilityCache,
+  syncAllHighlightBands,
+} from '../lib/priority_bands';
+import { CARD_PRIORITY_CODE } from '../lib/card_priority/types';
+import { batchPriorityTargetRemIdsKey } from '../lib/consts';
+import { getIESetting } from '../lib/settings';
 
+// Opens a priority popup against one or many rems. Single-rem calls behave
+// exactly as before; multi-rem calls hand the full id list to the widget through
+// session storage (openPopup's contextData is not a reliable place for arrays
+// the widget re-reads across renders) and flag batchMode so it applies to all.
+async function openPriorityPopupForTargets(
+  plugin: ReactRNPlugin,
+  widgetId: 'priority' | 'priority_light',
+  remIds: string[]
+) {
+  // Clear stale targets first so a widget that mounts mid-write can never read
+  // the previous command's selection.
+  await plugin.storage.setSession('priorityPopupTargetRemId', undefined);
+  await plugin.storage.setSession(
+    batchPriorityTargetRemIdsKey,
+    remIds.length > 1 ? remIds : null
+  );
+
+  await plugin.widget.openPopup(widgetId, {
+    remId: remIds[0],
+    ...(remIds.length > 1 ? { batchMode: true, batchCount: remIds.length } : {}),
+  });
+}
 
 export async function registerCommands(plugin: ReactRNPlugin) {
   // Subscribe to EditorSelectionChanged so getEffectiveSelection() can recover
   // multi-rem selections after Cmd+/ Omnibar steals focus. See lib/editor_selection.ts.
   registerSelectionTracker(plugin);
 
+  // "Peek" toggle: show/hide the pdfextract & incremental marker borders over
+  // PDF-viewer highlights, so a cluttered page can be read cleanly on demand.
+  // Mirrors the highlight-toolbar button; both share the same local flag.
+  await plugin.app.registerCommand({
+    id: togglePdfHighlightBordersCommandId,
+    name: 'Toggle PDF Highlight Marker Borders',
+    quickCode: 'tb',
+    action: async () => {
+      const enabled = await togglePdfHighlightBorders(plugin);
+      await plugin.app.toast(
+        enabled ? 'Highlight marker borders shown' : 'Highlight marker borders hidden (peek)'
+      );
+    },
+  });
+
+  // Preserve history & remove: delete a rem's content (and its whole subtree)
+  // the way native delete does, but first consolidate all repetition history in
+  // the subtree — flashcards, Incremental and Dismissed powerups — onto the
+  // target's Dismissed powerup so the Study Dashboard keeps the study time.
+  await plugin.app.registerCommand({
+    id: 'preserve-history-and-remove',
+    name: 'Preserve history & remove',
+    quickCode: 'phr',
+    action: async () => {
+      // Resolve the target rem in BOTH contexts — the focused rem in the editor,
+      // or the current rem in the queue (the active card's rem, or the active
+      // IncRem via session storage). Mirrors 'Review in Editor (Execute Repetition)'.
+      let target: PluginRem | undefined;
+      const url = await plugin.window.getURL();
+      const isQueue = !!(url && url.includes('/flashcards'));
+      if (isQueue) {
+        const currentQueueItem = await plugin.queue.getCurrentCard();
+        let remId = currentQueueItem?.remId;
+        if (!remId) {
+          remId = (await plugin.storage.getSession<string>(currentIncRemKey)) || undefined;
+        }
+        target = remId ? (await plugin.rem.findOne(remId)) || undefined : undefined;
+      } else {
+        target = await plugin.focus.getFocusedRem();
+      }
+
+      if (!target) {
+        await plugin.app.toast(
+          isQueue
+            ? 'No active card or Incremental Rem in the queue.'
+            : 'No focused rem — place your cursor in a rem first.'
+        );
+        return;
+      }
+      if (await target.hasPowerup(preservedHistoryPowerupCode)) {
+        await plugin.app.toast('This rem is already a preserved-history tombstone.');
+        return;
+      }
+
+      // Resolve the name up-front so the confirmation can name the exact rem —
+      // critical in the queue, where the previewer/sidebar can hold a different
+      // rem than the one you think is selected.
+      const rawName = await safeRemTextToString(plugin, target.text);
+      const remName = rawName.length > 80 ? rawName.slice(0, 80) + '…' : rawName;
+
+      await plugin.app.toast('🔍 Scanning subtree…');
+      const plan = await planPreserveHistoryAndRemove(plugin, target);
+
+      const repCount = plan.merged.length;
+      const timeStr = formatDuration(Math.round(plan.totalReviewSeconds)) || '0s';
+      const historyLine =
+        repCount > 0
+          ? `• ${repCount} review(s) (≈ ${timeStr}) will be preserved on this rem`
+          : `• No review history found — this will FULLY delete the rem`;
+
+      const ok = confirm(
+        `🪦 Preserve history & remove\n\n` +
+          `Rem: "${remName}"\n\n` +
+          (plan.descendantCount > 0
+            ? `• ${plan.descendantCount} descendant rem(s) will be permanently deleted\n`
+            : '') +
+          (plan.cards.length > 0 ? `• ${plan.cards.length} flashcard(s) will be removed\n` : '') +
+          `${historyLine}\n` +
+          (plan.externalRefCount > 0
+            ? `• ${plan.externalRefCount} reference(s) from elsewhere will break\n`
+            : '') +
+          `\n⚠️ This cannot be undone.\n\nContinue?`
+      );
+      if (!ok) {
+        await plugin.app.toast('Cancelled.');
+        return;
+      }
+
+      // In the queue, advance off the current card BEFORE deleting it. Otherwise
+      // the queue keeps trying to render a rem/card we just removed and crashes
+      // ("Something went wrong"). removeCurrentCardFromQueue advances without
+      // recording a review (unlike rateCurrentCard). addToBackStack=false since
+      // the card is about to be deleted. Best-effort — it may not apply to an
+      // IncRem-type queue item.
+      if (isQueue) {
+        try {
+          await plugin.queue.removeCurrentCardFromQueue(false);
+        } catch (e) {
+          console.warn('[PreserveHistory] Could not advance the queue before deletion:', e);
+        }
+      }
+
+      try {
+        await executePreserveHistoryAndRemove(plugin, plan);
+        await plugin.app.toast(
+          repCount > 0
+            ? `✅ Content removed. ${repCount} review(s) (${timeStr}) preserved.`
+            : `✅ Rem fully deleted (no history to preserve).`
+        );
+      } catch (e) {
+        console.error('[PreserveHistory] Error:', e);
+        await plugin.app.toast('❌ Error during Preserve history & remove — see console.');
+      }
+    },
+  });
 
 
+  // Isolation probe for the RemNote runtime deprecation of
+  // plugin.powerup.getPowerupSlotByCode. Runs as a command (not a widget) so it
+  // executes even though the Debug widget can no longer mount — its data-load
+  // path itself calls the deprecated method and throws before render.
+  // Confirms (a) getPowerupSlotByCode throws "is deprecated" from the app side,
+  // and (b) the sibling getPowerupByCode still works — isolating the regression.
+  await plugin.app.registerCommand({
+    id: 'probe-slot-api',
+    name: 'Probe Slot API (deprecation check)',
+    quickCode: 'probeslot',
+    action: async () => {
+      console.log(`\n========== POWERUP SLOT API PROBE ==========`);
+
+      // getPowerupByCode — control: expected to still work.
+      for (const code of [powerupCode, 'cardPriority', BuiltInPowerupCodes.DailyDocument]) {
+        try {
+          const pu = await plugin.powerup.getPowerupByCode(code);
+          console.log(`getPowerupByCode('${code}') → OK, _id=${pu?._id ?? '(undefined)'}`);
+        } catch (e) {
+          console.log(`getPowerupByCode('${code}') → THREW: ${String(e)}`);
+        }
+      }
+
+      // getPowerupSlotByCode — the suspected-deprecated method.
+      const slotCases: Array<[string, string]> = [
+        [powerupCode, 'nextRepDate'],                 // plugin powerup (Incremental)
+        ['cardPriority', 'priority'],                 // plugin powerup (CardPriority)
+        [BuiltInPowerupCodes.PDFHighlight, 'Data'],   // built-in powerup
+      ];
+      for (const [pu, slot] of slotCases) {
+        try {
+          const slotRem = await plugin.powerup.getPowerupSlotByCode(pu, slot);
+          console.log(`getPowerupSlotByCode('${pu}', '${slot}') → OK, _id=${slotRem?._id ?? '(undefined)'}`);
+        } catch (e) {
+          console.log(`getPowerupSlotByCode('${pu}', '${slot}') → THREW: ${String(e)}`);
+        }
+      }
+
+      // getPowerupSlotByCodeSafe — the workaround shim. Reports which path
+      // resolved each slot: 'native' (method still works), 'fallback' (native
+      // failed, children-walk resolved it), or 'unresolved'.
+      console.log(`\n--- workaround shim (getPowerupSlotByCodeSafe) ---`);
+      for (const [pu, slot] of slotCases) {
+        const { slot: rem, path, nativeError } = await resolvePowerupSlotDiagnostic(plugin, pu, slot);
+        const errNote = nativeError ? `  (native threw: ${nativeError.replace(/^Error:\s*/, '')})` : '';
+        console.log(`getPowerupSlotByCodeSafe('${pu}', '${slot}') → path=${path}, _id=${rem?._id ?? '(undefined)'}${errNote}`);
+      }
+
+      console.log(`===========================================\n`);
+      await plugin.app.toast('Slot API probe done — open DevTools console to read results.');
+    },
+  });
 
   await plugin.app.registerCommand({
     id: 'extract-with-priority',
@@ -103,7 +339,11 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     keyboardShortcut: 'opt+shift+x',
     quickCode: 'ep',
     action: async () => {
-      const result = await createExtract(plugin);
+      // Skip the inheritance cascade during creation: the priority popup that
+      // follows fires its own cascade (via intervalBatchSave) with the user's
+      // chosen priority, so the creation-time cascade is redundant and only
+      // starves the popup's data load. Mirrors highlightActions' showPriorityPopup.
+      const result = await createExtract(plugin, { skipInitialCascade: true });
       if (!result) {
         return;
       }
@@ -214,6 +454,46 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       const combinedRichText = [...frontText, ...backText];
       const plainStart = toCorrectedPlainStart(combinedRichText, r_start);
 
+      // --- Rem-reference selection support ---------------------------------------
+      // A selection can contain rem-reference nodes ({ i: 'q' }). References are
+      // zero-width in plain-string space, which defeats the text matching in two ways:
+      //  - a reference-only selection has selStr '' (selLen 0) → nothing to search for;
+      //  - a reference at the edge of a mixed (text + reference) selection lands exactly
+      //    on the sect_r_start/sect_r_end boundary and is skipped by the strict range
+      //    test in processSection (`currIdx > localStart && currIdx < localEnd`).
+      //
+      // RemNote clozes a reference by setting the CLOZE (cId) property directly on the
+      // { i: 'q' } node (see RichTextElementRemInterface). We collect the reference _ids
+      // in the selection here; the specific node objects are resolved by identity once
+      // the section and range are known (see selectedRefNodes below), and applied in
+      // processSection / processParentSection.
+      const selectedRefIds = new Set<string>(
+        (selection.richText as any[])
+          .filter((it) => it && typeof it !== 'string' && it.i === 'q')
+          .map((it) => it._id)
+      );
+      // Reference-only selection (no text): there is no string to search for, so reuse
+      // the text occurrence machinery by matching the reference _id instead. Each
+      // candidate's section-relative plain offset feeds allFrontOffsets/allBackOffsets,
+      // letting the existing bestFront/bestBack → isBack → sect_r_start logic pick the
+      // section and disambiguate duplicates identically to text (same back-text handling).
+      const selRef = selLen === 0
+        ? (selection.richText as any[]).find((it) => it && typeof it !== 'string' && it.i === 'q')
+        : undefined;
+      const refCandOffsets = (section: RichTextInterface): number[] => {
+        const out: number[] = [];
+        if (!selRef) return out;
+        let plain = 0;
+        for (const item of section) {
+          const isStr = typeof item === 'string';
+          const node = isStr ? { i: 'm' as const, text: item as string } : (item as any);
+          if (!isStr && node.i === 'q' && node._id === selRef._id) out.push(plain);
+          // Plain-string offsets: only text nodes advance the position (references = 0).
+          plain += node.i === 'm' ? (node.text?.length || 0) : 0;
+        }
+        return out;
+      };
+
       // Among all occurrences of the selected text, pick the one whose plain-string
       // start position is closest to the corrected plain-string offset.
       // This correctly handles duplicate phrases — indexOf always returned the first one,
@@ -225,8 +505,12 @@ export async function registerCommands(plugin: ReactRNPlugin) {
         , offsets[0]);
       };
 
-      const allFrontOffsets = findAllOccurrences(frontStr, selStr);
-      const allBackOffsets  = hasBackText ? findAllOccurrences(backStr, selStr) : [];
+      // For a reference-only selection, use the reference's section-relative offsets;
+      // otherwise fall back to text matching. Either way the section/disambiguation
+      // logic below is identical.
+      const allFrontOffsets = selRef ? refCandOffsets(frontText) : findAllOccurrences(frontStr, selStr);
+      const allBackOffsets  = selRef ? refCandOffsets(backText)
+                                     : (hasBackText ? findAllOccurrences(backStr, selStr) : []);
 
       let isBack = false;
       let sect_r_start = 0;
@@ -260,6 +544,28 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       }
 
       const sect_r_end = sect_r_start + selLen;
+
+      // Now that the section (isBack) and range are resolved, collect the actual
+      // reference node objects the user selected: those in the chosen section whose
+      // _id is in the selection and whose zero-width plain position falls within
+      // [sect_r_start, sect_r_end] (inclusive, so an edge reference isn't skipped by
+      // the strict range test). processSection / processParentSection then apply the
+      // cloze / highlight to these nodes by identity. Guarded by _id so a reference
+      // merely adjacent to the selection isn't caught.
+      const selectedRefNodes = new Set<any>();
+      if (selectedRefIds.size > 0) {
+        const section = isBack ? backText : frontText;
+        let plain = 0;
+        for (const item of section) {
+          const isStr = typeof item === 'string';
+          const node = isStr ? { i: 'm' as const, text: item as string } : (item as any);
+          if (!isStr && node.i === 'q' && selectedRefIds.has(node._id)
+              && plain >= sect_r_start && plain <= sect_r_end) {
+            selectedRefNodes.add(item);
+          }
+          plain += node.i === 'm' ? (node.text?.length || 0) : 0;
+        }
+      }
 
       const clozeId = Math.random().toString(36).substring(2, 10);
 
@@ -351,7 +657,9 @@ export async function registerCommands(plugin: ReactRNPlugin) {
             const hadCloze = RICH_TEXT_FORMATTING.CLOZE in baseNode;
             delete baseNode[RICH_TEXT_FORMATTING.CLOZE];
             stripInheritedHintProps(baseNode);
-            if (inSel) {
+            // Selected references (selectedRefNodes) are clozed here — they're
+            // zero-width, so `inSel` (positional) may not flag them (edge/only case).
+            if (inSel || selectedRefNodes.has(item)) {
               arr.push({ ...baseNode, [RICH_TEXT_FORMATTING.CLOZE]: clozeId });
             } else if (hadCloze) {
               arr.push({ ...baseNode, [RICH_TEXT_FORMATTING.HIGHLIGHT]: 3, [RICH_TEXT_FORMATTING.TEXT_COLOR]: 1 });
@@ -434,7 +742,11 @@ export async function registerCommands(plugin: ReactRNPlugin) {
             const nodeLen = node.i === 'm' ? (node.text?.length || 0) : 0;
 
             if (nodeLen === 0) {
-              arr.push(item);
+              // Selected reference nodes get the same yellow-highlight + red-font
+              // mark as clozed text, so the parent shows they became a cloze extract.
+              arr.push(selectedRefNodes.has(item)
+                ? { ...(node as any), [RICH_TEXT_FORMATTING.HIGHLIGHT]: 3, [RICH_TEXT_FORMATTING.TEXT_COLOR]: 1 }
+                : item);
             } else {
               const nodeStart = currIdx;
               const nodeEnd   = currIdx + nodeLen;
@@ -492,6 +804,82 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     action: async () => { await createClozeDeletion(); },
   });
 
+  // Open the currently-hovered PDF/HTML source reference in a centered popup
+  // (PDFWebReader) without navigating away — keeps the queue alive. Hover a pin,
+  // then press the shortcut. Plain (non-source) references are ignored.
+  plugin.app.registerCommand({
+    id: 'open-source-in-popup',
+    name: 'Open Hovered Source in Popup',
+    keyboardShortcut: 'opt+o',
+    action: async () => {
+      const hovered = getHoveredReference();
+      if (!hovered?.remId) {
+        await plugin.app.toast('Hover a PDF/HTML source reference first, then press the shortcut.');
+        return;
+      }
+      const target = await resolveSourcePopupTarget(plugin, hovered.remId);
+      if (!target) {
+        await plugin.app.toast('That reference is not a PDF/HTML source.');
+        return;
+      }
+      await plugin.widget.openPopup('pdf_source_popup', {
+        hostRemId: target.hostRemId,
+        hoveredRemId: target.hoveredRemId,
+        kind: target.kind,
+        pageIndex: target.pageIndex,
+      });
+    },
+  });
+
+  // Floating (non-blocking) variant: same source viewer, but opened to the right
+  // side of the screen so the queue/editor stays visible for peeking back and
+  // forth. Auto-closes on card advance (see QueueLoadCard listener in events.ts).
+  plugin.app.registerCommand({
+    id: 'open-source-in-floating',
+    name: 'Open Hovered Source in Floating Window',
+    keyboardShortcut: 'opt+shift+o',
+    action: async () => {
+      const hovered = getHoveredReference();
+      if (!hovered?.remId) {
+        await plugin.app.toast('Hover a PDF/HTML source reference first, then press the shortcut.');
+        return;
+      }
+      const target = await resolveSourcePopupTarget(plugin, hovered.remId);
+      if (!target) {
+        await plugin.app.toast('That reference is not a PDF/HTML source.');
+        return;
+      }
+
+      // Close any existing floating source window so they don't stack.
+      const existingId = await plugin.storage.getSession<string>(sourceFloatingActiveIdKey);
+      if (existingId) {
+        try { await plugin.window.closeFloatingWidget(existingId); } catch { /* already gone */ }
+      }
+
+      // openFloatingWidget has no contextData param — hand off via session storage.
+      await plugin.storage.setSession(sourceFloatingTargetKey, {
+        hostRemId: target.hostRemId,
+        hoveredRemId: target.hoveredRemId,
+        kind: target.kind,
+        pageIndex: target.pageIndex,
+      });
+
+      // Anchor to the top-right portion of the screen (size is set in the widget
+      // registration). The 4th arg `closeWhenClickOutside: false` is essential:
+      // PDFWebReader renders in a sandboxed iframe, so clicking inside it counts
+      // as a click "outside" the widget and would otherwise close the float —
+      // preventing highlighting / selecting / clicking highlights in the PDF.
+      // The float is closed instead via its ✕ button or the QueueLoadCard listener.
+      const id = await plugin.window.openFloatingWidget(
+        'pdf_source_floating',
+        { top: 48, right: 24 },
+        undefined,
+        false
+      );
+      await plugin.storage.setSession(sourceFloatingActiveIdKey, id);
+    },
+  });
+
   plugin.app.registerCommand({
     id: 'create-cloze-deletion-with-priority',
     name: 'Create Cloze Deletion with Priority',
@@ -531,76 +919,16 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     quickCode: 'pri',
     action: async () => {
       console.log('--- Set Priority Command Triggered ---');
-      let remId: string | undefined;
-      const url = await plugin.window.getURL();
-      console.log('Current URL:', url);
+      const { remIds, source } = await resolvePriorityTargets(plugin);
+      console.log(`Set Priority targets: ${remIds.length} rem(s) from ${source}`);
 
-      // Check if we are in the queue AND targeting the flashcard explicitly
-      if (url.includes('/flashcards')) {
-        console.log('In flashcards view.');
-        const currentQueueItem = await plugin.queue.getCurrentCard();
-        const sel = await plugin.editor.getSelection();
-        const selType = sel?.type;
-
-        let isTargetingQueueContext = false;
-
-        // If no editor selection, we assume queue context
-        if (!selType) {
-          isTargetingQueueContext = true;
-        } else if (currentQueueItem) { // We have a native card AND a selection
-          if (selType === SelectionType.Rem && sel.remIds.includes(currentQueueItem.remId)) {
-            isTargetingQueueContext = true;
-          } else if (selType === SelectionType.Text && sel.remId === currentQueueItem.remId) {
-            isTargetingQueueContext = true;
-          }
-        } else {
-          // No current native card, maybe our Incremental Rem view
-          const currentIncRemId = await plugin.storage.getSession<string>(currentIncRemKey);
-          if (currentIncRemId) {
-            if (selType === SelectionType.Rem && sel.remIds.includes(currentIncRemId)) {
-              isTargetingQueueContext = true;
-            } else if (selType === SelectionType.Text && sel.remId === currentIncRemId) {
-              isTargetingQueueContext = true;
-            }
-          }
-        }
-
-        if (isTargetingQueueContext) {
-          if (currentQueueItem) {
-            remId = currentQueueItem.remId;
-            console.log('Found native card. remId:', remId);
-          } else {
-            console.log('Not a native card. Checking session storage for incremental rem...');
-            remId = await plugin.storage.getSession<string>(currentIncRemKey) || undefined;
-            console.log('remId from session storage (currentIncRemKey):', remId);
-          }
-        } else {
-          console.log('In flashcards view, but explicit selection detected. Using selection.');
-          if (selType === SelectionType.Rem && sel && 'remIds' in sel) {
-            remId = (sel as any).remIds[0];
-          } else if (selType === SelectionType.Text && sel && 'remId' in sel) {
-            remId = (sel as any).remId;
-          }
-        }
-      } else {
-        console.log('Not in flashcards view. Getting focused editor rem.');
-        const focusedRem = await plugin.focus.getFocusedRem();
-        remId = focusedRem?._id;
-        console.log('Focused editor remId:', remId);
-      }
-
-      console.log('Final remId to be used:', remId);
-
-      if (!remId) {
-        console.log('Set Priority: No focused Rem or card in queue found. Aborting.');
+      if (!remIds.length) {
+        console.log('Set Priority: No selection, focused Rem or card in queue found. Aborting.');
         await plugin.app.toast('Could not find a Rem to set priority for.');
         return;
       }
 
-      console.log(`Opening 'priority' popup for remId: ${remId}`);
-      await plugin.widget.openPopup('priority', {
-        remId: remId,
-      });
+      await openPriorityPopupForTargets(plugin, 'priority', remIds);
     },
   });
 
@@ -614,68 +942,19 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     action: async () => {
       const tCmd = performance.now();
       console.log('[set-priority-light] Command triggered');
-      let remId: string | undefined;
-      const url = await plugin.window.getURL();
 
-      // Context detection logic (Same as main command)
-      if (url.includes('/flashcards')) {
-        const currentQueueItem = await plugin.queue.getCurrentCard();
-        const sel = await plugin.editor.getSelection();
-        const selType = sel?.type;
+      const { remIds, source } = await resolvePriorityTargets(plugin);
+      console.log(
+        `[set-priority-light] context detection done: ${Math.round(performance.now() - tCmd)}ms, ` +
+        `${remIds.length} rem(s) from ${source}`
+      );
 
-        let isTargetingQueueContext = false;
-
-        if (!selType) {
-          isTargetingQueueContext = true;
-        } else if (currentQueueItem) {
-          if (selType === SelectionType.Rem && sel && 'remIds' in sel && sel.remIds.includes(currentQueueItem.remId)) {
-            isTargetingQueueContext = true;
-          } else if (selType === SelectionType.Text && sel && 'remId' in sel && sel.remId === currentQueueItem.remId) {
-            isTargetingQueueContext = true;
-          }
-        } else {
-          const currentIncRemId = await plugin.storage.getSession<string>(currentIncRemKey);
-          if (currentIncRemId) {
-            if (selType === SelectionType.Rem && sel && 'remIds' in sel && sel.remIds.includes(currentIncRemId)) {
-              isTargetingQueueContext = true;
-            } else if (selType === SelectionType.Text && sel && 'remId' in sel && sel.remId === currentIncRemId) {
-              isTargetingQueueContext = true;
-            }
-          }
-        }
-
-        if (isTargetingQueueContext) {
-          if (currentQueueItem) {
-            remId = currentQueueItem.remId;
-          } else {
-            remId = await plugin.storage.getSession<string>(currentIncRemKey) || undefined;
-          }
-        } else {
-          if (selType === SelectionType.Rem && sel && 'remIds' in sel) {
-            remId = sel.remIds[0];
-          } else if (selType === SelectionType.Text && sel && 'remId' in sel) {
-            remId = sel.remId;
-          }
-        }
-      } else {
-        const focusedRem = await plugin.focus.getFocusedRem();
-        remId = focusedRem?._id;
-      }
-
-      console.log(`[set-priority-light] context detection done: ${Math.round(performance.now() - tCmd)}ms, remId: ${remId}`);
-
-      if (!remId) {
+      if (!remIds.length) {
         await plugin.app.toast('No Rem found to set priority.');
         return;
       }
 
-      // Clear stale session storage to prevent race condition with widget context
-      await plugin.storage.setSession('priorityPopupTargetRemId', undefined);
-      console.log(`[set-priority-light] session cleared: ${Math.round(performance.now() - tCmd)}ms`);
-
-      await plugin.widget.openPopup('priority_light', {
-        remId: remId,
-      });
+      await openPriorityPopupForTargets(plugin, 'priority_light', remIds);
       console.log(`[set-priority-light] openPopup returned: ${Math.round(performance.now() - tCmd)}ms`);
     },
   });
@@ -846,6 +1125,36 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     },
   });
 
+  // Diagnostic: print the RAW stored value of every powerup property on the
+  // focused rem and its descendants. Needed because every priority the plugin
+  // displays has already passed through getIncrementalRemFromRem's `priority = 10`
+  // read fallback, so a displayed 10 cannot be told apart from an unreadable slot.
+  // This reads the property rems directly instead. Read-only.
+  plugin.app.registerCommand({
+    id: 'dump-raw-powerup-slots',
+    name: 'Debug: Dump Raw Powerup Slots (console)',
+    description:
+      'Reads the raw stored value of every powerup property on the focused Rem and its descendants, bypassing getPowerupProperty, and flags values that are stored but unreadable.',
+    action: async () => {
+      const rem = await plugin.focus.getFocusedRem();
+      if (!rem) {
+        await plugin.app.toast('Focus a Rem first.');
+        return;
+      }
+      await plugin.app.toast('Dumping raw powerup slots — see the console.');
+      try {
+        const report = await dumpRawPowerupSlots(plugin, rem);
+        await plugin.app.toast(
+          `Raw dump: ${report.scannedRems} rem(s), ${report.properties.length} propert(ies), ` +
+          `${report.unreachable.length} unreadable. See console.`
+        );
+      } catch (e) {
+        console.error('[RawSlotDump] Error:', e);
+        await plugin.app.toast('Raw slot dump failed — check console.');
+      }
+    },
+  });
+
   plugin.app.registerCommand({
     id: 'pdf-control-panel',
     name: 'PDF Control Panel',
@@ -915,15 +1224,50 @@ export async function registerCommands(plugin: ReactRNPlugin) {
 
   // Toggle "• " at the start of each selected line within a single rem. Handy
   // for restoring bullets that PDF highlights flatten into soft-wrapped text.
-  // opt+8 types the bullet glyph itself, so we use opt+shift+8 (mirrors the
-  // Ctrl/Cmd+Shift+8 "bulleted list" shortcut in Docs/Word).
+  // opt+8 types the bullet glyph and opt+shift+8 the degree symbol (°) on macOS,
+  // ctrl+opt+shift+8 is used to apply blue highlight to inline text in Remnote,
+  // so we use Shift+F8.
   plugin.app.registerCommand({
     id: 'bulletize-inline-selection',
     name: 'Bulletize Inline Selected Text',
-    keyboardShortcut: 'opt+shift+8',
+    keyboardShortcut: 'shift+F8',
     quickCode: 'bul',
     action: async () => {
       await bulletizeSelection(plugin);
+    },
+  });
+
+  // List tools — operate on the whole FOCUSED rem (no text selection needed),
+  // unlike bulletize which works line-by-line on a selection. See lib/listify.ts.
+  //
+  // Two-step, reviewable flow for turning a flattened PDF-highlight list into a
+  // proper outline: (1) inlinize inserts "\n• " before each detected enumerator
+  // so you can eyeball the split; (2) break-to-children turns each "• " line
+  // into a child rem after snapshotting the original for restore.
+  plugin.app.registerCommand({
+    id: 'inlinize-detected-list',
+    name: 'Inlinize Detected List',
+    quickCode: 'inl',
+    action: async () => {
+      await inlinizeListSelection(plugin);
+    },
+  });
+
+  plugin.app.registerCommand({
+    id: 'break-inline-list-to-children',
+    name: 'Break Inline List Into Children',
+    quickCode: 'brl',
+    action: async () => {
+      await breakInlineListToChildren(plugin);
+    },
+  });
+
+  plugin.app.registerCommand({
+    id: 'restore-list-rem',
+    name: 'Restore List Rem (undo break)',
+    quickCode: 'rlr',
+    action: async () => {
+      await restoreListRem(plugin);
     },
   });
 
@@ -971,20 +1315,67 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       } catch { /* no selection */ }
       await plugin.storage.setSession('reference-finder-initial-query', initialQuery);
 
-      // Open the picker at the caret. getCaretPosition can momentarily return
-      // undefined right after a shortcut fires (focus settling), and returns a
-      // valid rect for a collapsed caret too — so retry a few times.
+      // Capture the rem the picker was triggered from (focus is still in the
+      // editor here) so the widget can exclude it from results — referencing a
+      // rem to itself is never useful and it often ranked first.
+      let sourceRemId = '';
+      try {
+        const focused = await plugin.focus.getFocusedRem();
+        if (focused?._id) sourceRemId = focused._id;
+      } catch { /* no focused rem */ }
+      await plugin.storage.setSession('reference-finder-source-rem', sourceRemId);
+
+      // Open the picker with its LEFT edge at the caret. getCaretPosition can
+      // momentarily return undefined right after a shortcut fires (focus
+      // settling), and returns a valid rect for a collapsed caret too — so retry
+      // a few times. If the caret sits near the right edge the widget would spill
+      // off-screen; the widget itself measures the viewport and flips to the left
+      // (the plugin sandbox here can't read the host window width — innerWidth is
+      // 0 and cross-origin reads throw — so the correction has to live widget-side
+      // via plugin.widget.getDimensions).
       let position: { top?: number; left?: number } = { top: 90, left: 320 };
-      let caret: DOMRect | undefined;
-      for (let i = 0; i < 5; i++) {
-        try { caret = await plugin.editor.getCaretPosition(); } catch { /* retry */ }
-        if (caret) break;
-        await new Promise((r) => setTimeout(r, 40));
+      const readCaret = async (attempts: number, delayMs: number): Promise<DOMRect | undefined> => {
+        let c: DOMRect | undefined;
+        for (let i = 0; i < attempts; i++) {
+          try { c = await plugin.editor.getCaretPosition(); } catch { c = undefined; }
+          // A zero-rect (0,0,0,0) means the caret isn't reported yet (focus still
+          // settling) — keep retrying rather than accepting it and falling back.
+          if (c && (c.left !== 0 || c.top !== 0)) return c;
+          await new Promise((r) => setTimeout(r, delayMs));
+        }
+        return undefined;
+      };
+      let caret = await readCaret(8, 40);
+
+      // Empty rems (e.g. a Rem you just created with Enter) have NO caret rect —
+      // a collapsed selection in an empty element has no bounding box, so
+      // getCaretPosition returns undefined no matter how long we wait. Probe it:
+      // drop a zero-width space to give the caret something to measure against,
+      // read the position, then remove it (always cleaned up in `finally`).
+      if (!caret) {
+        let probed = false;
+        try {
+          await plugin.editor.insertPlainText('\u200B');
+          probed = true;
+          caret = await readCaret(5, 30);
+        } catch (e) {
+          console.warn('[reference-finder] caret probe failed:', e);
+        } finally {
+          if (probed) {
+            try { await plugin.editor.deleteCharacters(1, -1); }
+            catch (e) { console.warn('[reference-finder] caret probe cleanup failed:', e); }
+          }
+        }
       }
-      console.log('[reference-finder] caret position:', caret);
-      if (caret && (caret.left !== 0 || caret.top !== 0)) {
+      // Hand the caret rect to the widget so it can also flip ABOVE the caret
+      // when there isn't room below (DOMRect getters aren't JSON-serializable, so
+      // copy the fields onto a plain object).
+      let caretRect: { top: number; bottom: number; left: number; right: number } | null = null;
+      if (caret) {
         position = { top: Math.round(caret.bottom) + 6, left: Math.round(caret.left) };
+        caretRect = { top: caret.top, bottom: caret.bottom, left: caret.left, right: caret.right };
       }
+      await plugin.storage.setSession('reference-finder-caret', caretRect);
       await plugin.window.openFloatingWidget('reference_finder', position);
     },
   });
@@ -1030,6 +1421,131 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     name: 'Refresh Card Priority Cache',
     action: async () => {
       await loadCardPriorityCache(plugin);
+    },
+  });
+
+  // Backfill / repair for the table-cell priority badges. The band tags are kept
+  // current by the write paths (setCardPriority and the three IncRem priority
+  // writes in tracker.ts), so this exists for two cases: the first run after
+  // enabling the feature, and repairing drift from a priority written by a path
+  // that predates the hooks.
+  plugin.app.registerCommand({
+    id: 'refresh-priority-bands',
+    name: 'Refresh Priority Badges (Tables and PDF highlights)',
+    description:
+      'Recomputes the band tag that draws the priority badge inside table cells, for every IncRem and every rem with a card priority.',
+    action: async () => {
+      console.log('[PriorityBands] Refresh started');
+      // Tag definitions may have changed since the cache was filled.
+      clearBandEligibilityCache();
+      await plugin.app.toast('Refreshing priority badges…');
+      const t0 = performance.now();
+      try {
+        const [incPowerup, cardPowerup] = await Promise.all([
+          plugin.powerup.getPowerupByCode(powerupCode),
+          plugin.powerup.getPowerupByCode(CARD_PRIORITY_CODE),
+        ]);
+        const [incRems, cardRems] = await Promise.all([
+          incPowerup?.taggedRem() ?? Promise.resolve([]),
+          cardPowerup?.taggedRem() ?? Promise.resolve([]),
+        ]);
+
+        const remIds = Array.from(
+          new Set([...incRems, ...cardRems].map((r) => r._id))
+        );
+
+        // Suppress GlobalRemChanged for the duration — this writes powerups across
+        // potentially thousands of rems, exactly what the flag exists for.
+        console.log(
+          `[PriorityBands] Phase 1/2 — TABLE badges. Scanning ${remIds.length} prioritised rems ` +
+          `(${incRems.length} IncRems, ${cardRems.length} with card priority). ` +
+          `Also harvests their links, which phase 2 needs to find highlights.`
+        );
+
+        if (!remIds.length) {
+          console.log('[PriorityBands] Refresh complete — nothing to do');
+          await plugin.app.toast('Priority badges: nothing to refresh.');
+          return;
+        }
+
+        await plugin.storage.setSession('plugin_operation_active', true);
+        let stats = { changed: 0, eligible: 0 };
+        // Highlights this plugin never extracted from cannot be enumerated (see
+        // syncAllHighlightBands), so phase 1 harvests the links out of each
+        // prioritised rem's text as it goes and phase 2 resolves them.
+        const referencedIds = new Set<string>();
+        try {
+          stats = await syncPriorityBands(plugin as any, remIds, (done, total, sofar) => {
+            console.log(
+              `[PriorityBands] Phase 1 (table badges) ${done}/${total} scanned — ` +
+              `${sofar.changed} updated, ${sofar.eligible} table-eligible`
+            );
+          }, referencedIds);
+        } finally {
+          await plugin.storage.setSession('plugin_operation_active', false);
+        }
+
+        console.log(
+          `[PriorityBands] Phase 1 done — ${stats.changed} table badges updated ` +
+          `(${stats.eligible} of ${remIds.length} rems were table-eligible)`
+        );
+
+        // Phase 2: HIGHLIGHT badges, in the REVERSE direction — each highlight
+        // pulls from every rem linking to it. Deterministic where a push would be
+        // last-writer-wins, and it is the only path that sees dismissed rems and
+        // card-only links. Phase 1 does no highlight work at all.
+        console.log('[PriorityBands] Phase 2/2 — HIGHLIGHT badges. Enumerating highlights…');
+        await plugin.storage.setSession('plugin_operation_active', true);
+        let highlightStats = { scanned: 0, changed: 0, noPriority: 0, alreadyCorrect: 0 };
+        try {
+          highlightStats = await syncAllHighlightBands(
+            plugin as any,
+            (done, total, sofar) => {
+              console.log(
+                `[PriorityBands] Phase 2 (highlight badges) ${done}/${total} — ${sofar} updated`
+              );
+            },
+            referencedIds
+          );
+        } finally {
+          await plugin.storage.setSession('plugin_operation_active', false);
+        }
+        console.log(
+          `[PriorityBands] Phase 2 done — ${highlightStats.changed} highlight badges updated ` +
+          `of ${highlightStats.scanned} examined ` +
+          `(${highlightStats.alreadyCorrect} already correct, ` +
+          `${highlightStats.noPriority} resolved to no priority)`
+        );
+
+        const secs = Math.round((performance.now() - t0) / 100) / 10;
+        // Report the breakdown: "0 updated" is ambiguous on its own, since it can
+        // mean everything was already correct OR nothing was eligible.
+        const summary =
+          `Priority badges refreshed in ${secs}s — tables: ${stats.changed} updated ` +
+          `(${stats.eligible} eligible of ${remIds.length} rems); ` +
+          `highlights: ${highlightStats.changed} updated of ${highlightStats.scanned}.`;
+        console.log(`[PriorityBands] ✅ ${summary}`);
+        // Priorities moved, so the band→percentile colour mapping may have too.
+        // registerCSS is index-only; bumping this key makes the index widget's
+        // plugin.track re-register the band stylesheets with fresh colours.
+        await plugin.storage.setSession(priorityBandColorsReloadKey, Date.now());
+        await plugin.app.toast(`✅ ${summary}`);
+      } catch (err) {
+        console.error('[PriorityBands] refresh failed', err);
+        await plugin.app.toast('Refreshing priority badges failed — see console.');
+      }
+    },
+  });
+
+  // Command to bulk-import Incremental Rems with pre-computed rep histories
+  // from a JSON payload (e.g. generated by scripts/convert_study_log.py)
+  plugin.app.registerCommand({
+    id: 'import-incremental-history',
+    name: 'Import Incremental Rems with History',
+    description:
+      'Create Incremental Rems from a JSON file, including full repetition history, priority and Created date.',
+    action: async () => {
+      await plugin.widget.openPopup('import_increm_history');
     },
   });
 
@@ -1104,6 +1620,76 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     },
   });
 
+  // Set Read Point (Bookmark) for rem-type IncRems. Associates the focused rem
+  // (a descendant of an Incremental outline) as the IncRem's current reading
+  // position — the rem-type analogue of a PDF/HTML highlight bookmark.
+  plugin.app.registerCommand({
+    id: 'set-read-point',
+    name: 'Set Read Point (Bookmark)',
+    keyboardShortcut: 'ctrl+F7',
+    quickCode: 'srp',
+    action: async () => {
+      const focused = await plugin.focus.getFocusedRem();
+      if (!focused) {
+        await plugin.app.toast('No Rem focused — place your cursor in the rem you want to bookmark.');
+        return;
+      }
+
+      // Resolve the IncRem this read point belongs to. Prefer an active review
+      // session (editor-review timer → queue) whose IncRem actually contains
+      // the focused rem; otherwise fall back to the nearest ancestor IncRem.
+      // The focused rem must be a strict descendant — you can't bookmark the
+      // outline header against itself.
+      const sessionIncRemId =
+        (await plugin.storage.getSession<string>(editorReviewTimerRemIdKey)) ||
+        (await plugin.storage.getSession<string>(currentIncRemKey)) ||
+        null;
+
+      let incRemId: string | null = null;
+      if (
+        sessionIncRemId &&
+        sessionIncRemId !== focused._id &&
+        (await isDescendantOf(plugin, focused, sessionIncRemId))
+      ) {
+        incRemId = sessionIncRemId;
+      } else {
+        incRemId = await findNearestAncestorIncRem(plugin, focused);
+      }
+
+      if (!incRemId) {
+        await plugin.app.toast(
+          'No ancestor Incremental Rem found. Read points apply to a rem inside an Incremental outline.'
+        );
+        return;
+      }
+
+      await setRemReadPoint(plugin, incRemId, focused._id);
+      const text = await safeRemTextToString(plugin, focused.text);
+      const short = text.length > 50 ? text.slice(0, 50) + '…' : text;
+      await plugin.app.toast(`🔖 Read point set: "${short}"`);
+    },
+  });
+
+  // View the read-point history for a rem-type IncRem. Reuses the bookmark
+  // popup in "rem" mode (resolved from the focused rem or active session).
+  plugin.app.registerCommand({
+    id: 'view-read-points',
+    name: 'View Read Points (History)',
+    keyboardShortcut: 'ctrl+shift+F7',
+    quickCode: 'vrp',
+    action: async () => {
+      const focused = await plugin.focus.getFocusedRem();
+      const incRemId = await resolveReadPointIncRem(plugin, focused);
+      if (!incRemId) {
+        await plugin.app.toast(
+          'No Incremental Rem found. Focus a rem inside an Incremental outline (or review one) first.'
+        );
+        return;
+      }
+      await plugin.widget.openPopup('pdf_bookmark_popup', { mode: 'rem', incRemId });
+    },
+  });
+
   plugin.app.registerCommand({
     id: 'debug-video',
     name: 'Debug Video Detection',
@@ -1126,6 +1712,15 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     description: 'Update all inherited Card Priorities (and pre-compute and tag all card not yet prioritized)',
     quickCode: 'ucp',
     action: async () => {
+      // This command exists to materialise inherited/default tags KB-wide, which
+      // setCardPriority refuses while the opt-in is off. Without this check it
+      // would run its whole scan and report success having written nothing.
+      if (!(await getIESetting(plugin, enableFlashcardPrioritisationId))) {
+        await plugin.app.toast(
+          'Enable Flashcard Prioritisation first — inherited priorities are not tagged while it is off.'
+        );
+        return;
+      }
       await updateAllCardPriorities(plugin);
     },
   });
@@ -1138,6 +1733,19 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       'Completely remove all CardPriority powerup tags and data from your knowledge base',
     action: async () => {
       await removeAllCardPriorityTags(plugin);
+    },
+  });
+
+  // Band cleanup — mirrors the CardPriority cleanup above. Unlike that one this
+  // destroys nothing: bands are derived from the priority slots, so "Refresh
+  // Priority Badges (Tables)" rebuilds them exactly.
+  await plugin.app.registerCommand({
+    id: 'cleanup-priority-bands',
+    name: 'Remove All Priority Band Tags',
+    description:
+      'Remove the PriorityBand0-9 tags that draw priority badges in table cells. No priority data is lost; rebuild with "Refresh Priority Badges (Tables)".',
+    action: async () => {
+      await removeAllPriorityBands(plugin as any);
     },
   });
 
@@ -1213,16 +1821,28 @@ export async function registerCommands(plugin: ReactRNPlugin) {
   plugin.app.registerCommand({
     id: 'toggle-ignore-tag',
     name: 'Toggle Ignore Tag',
-    description: 'Tag/untag the focused Rem with #ignore — marks already-read snippets that were left for archive/consultation only.',
+    description: 'Tag/untag the focused Rem (or a multi-rem selection) with #ignore — marks already-read snippets that were left for archive/consultation only.',
     keyboardShortcut: 'ctrl+shift+i',
     quickCode: 'ign',
     action: async () => {
-      const rem = await plugin.focus.getFocusedRem();
-      if (!rem) {
-        await plugin.app.toast('No focused Rem.');
+      // Resolve target rems: a multi-rem outline selection (Omnibar-resilient,
+      // via getEffectiveSelection) takes precedence; otherwise the single
+      // focused rem. Mirrors the multi-rem pattern used by Text Case Converter.
+      const selection = await getEffectiveSelection(plugin);
+      let rems: PluginRem[] = [];
+      if (selection?.type === SelectionType.Rem && selection.remIds?.length) {
+        rems = (await plugin.rem.findMany(selection.remIds)) || [];
+      } else {
+        const focused = await plugin.focus.getFocusedRem();
+        if (focused) rems = [focused];
+      }
+
+      if (rems.length === 0) {
+        await plugin.app.toast('No focused or selected Rem.');
         return;
       }
 
+      // Resolve/create the #ignore tag once for the whole batch.
       let ignoreTagRem = await plugin.rem.findByName(['ignore'], null);
       if (!ignoreTagRem) {
         ignoreTagRem = await plugin.rem.createRem();
@@ -1232,16 +1852,43 @@ export async function registerCommands(plugin: ReactRNPlugin) {
         }
         await ignoreTagRem.setText(['ignore']);
       }
+      const tagId = ignoreTagRem._id;
 
-      const tags = await rem.getTagRems();
-      const alreadyTagged = tags.some((t) => t._id === ignoreTagRem!._id);
+      // Single-rem: plain toggle (unchanged behavior).
+      if (rems.length === 1) {
+        const rem = rems[0];
+        const alreadyTagged = (await rem.getTagRems()).some((t) => t._id === tagId);
+        if (alreadyTagged) {
+          await rem.removeTag(tagId);
+          await plugin.app.toast('Removed #ignore.');
+        } else {
+          await rem.addTag(tagId);
+          await plugin.app.toast('Tagged with #ignore.');
+        }
+        return;
+      }
 
-      if (alreadyTagged) {
-        await rem.removeTag(ignoreTagRem._id);
-        await plugin.app.toast('Removed #ignore.');
+      // Multi-rem: decide one action for the whole batch. If every selected rem
+      // is already tagged, remove from all; otherwise add to those that lack it
+      // (so a mixed selection becomes uniformly tagged) — mirrors the Bulletize
+      // toggle semantics.
+      const taggedFlags = await Promise.all(
+        rems.map(async (r) => (await r.getTagRems()).some((t) => t._id === tagId))
+      );
+      const allTagged = taggedFlags.every(Boolean);
+
+      if (allTagged) {
+        for (const r of rems) await r.removeTag(tagId);
+        await plugin.app.toast(`Removed #ignore from ${rems.length} rems.`);
       } else {
-        await rem.addTag(ignoreTagRem._id);
-        await plugin.app.toast('Tagged with #ignore.');
+        let added = 0;
+        for (let i = 0; i < rems.length; i++) {
+          if (!taggedFlags[i]) {
+            await rems[i].addTag(tagId);
+            added++;
+          }
+        }
+        await plugin.app.toast(`Tagged ${added} rem${added === 1 ? '' : 's'} with #ignore.`);
       }
     },
   });
@@ -1260,8 +1907,8 @@ export async function registerCommands(plugin: ReactRNPlugin) {
 
       // Get settings
       const setting = await getPerformanceMode(plugin);
-      const autoSwitchMobile = await plugin.settings.getSetting<boolean>(alwaysUseLightModeOnMobileId);
-      const autoSwitchWeb = await plugin.settings.getSetting<boolean>(alwaysUseLightModeOnWebId);
+      const autoSwitchMobile = await getIESetting(plugin, alwaysUseLightModeOnMobileId);
+      const autoSwitchWeb = await getIESetting(plugin, alwaysUseLightModeOnWebId);
 
       // Get friendly names
       const friendlyOS = getFriendlyOSName(os);
@@ -1762,6 +2409,10 @@ export async function registerCommands(plugin: ReactRNPlugin) {
         // removePowerup destroys the widget sandbox on the next microtask,
         // so both IPC messages must be sent in the same tick if targeting queue.
         if (isTargetingQueueContext) {
+          // Like "Next", dismissing the queue card means we've left the rem —
+          // restore the dashboard. Flag BEFORE the destructive call (consumed by
+          // the persistent QueueLoadCard listener once the next card loads).
+          await requestQueueDashboardRefocus(plugin, 'dismiss-command');
           await Promise.allSettled([
             rem.removePowerup(powerupCode),
             plugin.queue.removeCurrentCardFromQueue(true),
@@ -1877,8 +2528,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     if (remType === 'pdf') {
       const pdfRem = await getActivePdfForIncRem(plugin, rem);
       if (pdfRem) {
-        const pageKey = getCurrentPageKey(rem._id, pdfRem._id);
-        const currentPage = await plugin.storage.getSynced<number>(pageKey);
+        const currentPage = await getIncrementalReadingPosition(plugin, rem._id, pdfRem._id);
         if (currentPage) {
           await addPageToHistory(plugin, rem._id, pdfRem._id, currentPage);
         }
@@ -1984,8 +2634,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       if (remType === 'pdf') {
         const pdfRem = await getActivePdfForIncRem(plugin, rem);
         if (pdfRem) {
-          const pageKey = getCurrentPageKey(rem._id, pdfRem._id);
-          const currentPage = await plugin.storage.getSynced<number>(pageKey);
+          const currentPage = await getIncrementalReadingPosition(plugin, rem._id, pdfRem._id);
           if (currentPage) {
             await addPageToHistory(plugin, rem._id, pdfRem._id, currentPage);
           }
@@ -2334,92 +2983,243 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     },
   });
 
-  // TEMP PROBE — remove after H4-H6 detection is figured out.
-  // Run this command with the cursor inside an H1/H2/H3/H4/H5/H6 rem to see
-  // exactly what the SDK exposes for each heading level (typed getFontSize,
-  // the Header powerup's Size slot, raw object fields, and DOM classes).
+  // ─── Heading Levels: shared selection resolution ──────────────────────────
+  //
+  // Returns the rem ids the heading commands should act on. Whole-rem selection
+  // → those rems; text selection → the single rem; otherwise the focused rem.
+  // Uses getEffectiveSelection so Cmd+/ Omnibar invocations keep their selection
+  // (see lib/editor_selection.ts).
+  const resolveHeadingTargets = async (): Promise<string[]> => {
+    const selection = await getEffectiveSelection(plugin);
+    if (selection?.type === SelectionType.Rem && selection.remIds?.length) {
+      return selection.remIds;
+    }
+    if (selection?.type === SelectionType.Text && selection.remId) {
+      return [selection.remId];
+    }
+    const focused = await plugin.focus.getFocusedRem();
+    return focused?._id ? [focused._id] : [];
+  };
+
+  // ─── Apply Heading Levels by Hierarchy (Table of Contents) ────────────────
+  //
+  // Maps the selected outline's tree depth onto a heading-level range (e.g.
+  // H1–H3): the topmost selected rems get the start level and each level deeper
+  // adds one, clamped at the end level; rems deeper than the range are left
+  // unchanged. Opens a Before | After preview (with Top/Deepest level pickers)
+  // before applying; the change is undoable from the sidebar banner.
   plugin.app.registerCommand({
-    id: 'debug_probe_heading_level',
-    name: 'Debug: Probe Heading Level of Focused Rem',
-    quickCode: 'phl',
+    id: 'apply-toc-headings',
+    name: 'Apply Heading Levels by Hierarchy (Table of Contents)',
+    quickCode: 'htoc',
     action: async () => {
-      const focused = await plugin.focus.getFocusedRem();
-      if (!focused) {
-        await plugin.app.toast('No focused rem.');
-        console.log('[heading-probe] no focused rem');
+      const remIds = await resolveHeadingTargets();
+      if (remIds.length === 0) {
+        await plugin.app.toast('No rem selected or focused.');
         return;
       }
+      // scopeRootId is used only for the undo banner's label. The parent of the
+      // first target (the container) reads best; fall back to the rem itself.
+      const first = await plugin.rem.findOne(remIds[0]);
+      const parent = await first?.getParentRem();
+      const scopeRootId = parent?._id ?? remIds[0];
 
-      // 1. Typed SDK call (documented as H1|H2|H3|undefined).
-      let fontSizeViaApi: any = undefined;
-      try { fontSizeViaApi = await (focused as any).getFontSize?.(); }
-      catch (e) { fontSizeViaApi = `THREW: ${(e as any)?.message}`; }
-
-      // 2. Header powerup membership + its `Size` slot (the likely storage
-      //    location for H4/H5/H6 since the SDK type for getFontSize lags).
-      let hasHeaderPowerup: any = undefined;
-      let headerSizeAsString: any = undefined;
-      let headerSizeAsRichText: any = undefined;
-      let headerSizeAsRem: any = undefined;
-      try {
-        hasHeaderPowerup = await focused.hasPowerup(BuiltInPowerupCodes.Header);
-      } catch (e) { hasHeaderPowerup = `THREW: ${(e as any)?.message}`; }
-      try {
-        headerSizeAsString = await (focused as any).getPowerupProperty?.(
-          BuiltInPowerupCodes.Header, 'Size'
-        );
-      } catch (e) { headerSizeAsString = `THREW: ${(e as any)?.message}`; }
-      try {
-        headerSizeAsRichText = await (focused as any).getPowerupPropertyAsRichText?.(
-          BuiltInPowerupCodes.Header, 'Size'
-        );
-      } catch (e) { headerSizeAsRichText = `THREW: ${(e as any)?.message}`; }
-      try {
-        headerSizeAsRem = await (focused as any).getPowerupPropertyAsRem?.(
-          BuiltInPowerupCodes.Header, 'Size'
-        );
-      } catch (e) { headerSizeAsRem = `THREW: ${(e as any)?.message}`; }
-
-      // 3. Dump every enumerable, non-function property of the rem object —
-      //    catches any hidden field RemNote sets that the typed SDK omits.
-      const rawKeys = Object.keys(focused as any);
-      const rawSnapshot: Record<string, any> = {};
-      for (const k of rawKeys) {
-        try {
-          const v = (focused as any)[k];
-          if (typeof v !== 'function') rawSnapshot[k] = v;
-        } catch { /* skip */ }
-      }
-
-      // 4. DOM classes — last-resort signal (h4/h5/h6 styling lives here even
-      //    if no API exposes the level).
-      const domClassesByRemId: string[] = [];
-      try {
-        const els = document.querySelectorAll(`[data-rem-id="${focused._id}"]`);
-        els.forEach((el) => domClassesByRemId.push(el.className));
-      } catch { /* not in main document */ }
-
-      console.log('[heading-probe] focused rem _id:', focused._id);
-      console.log('[heading-probe] getFontSize() →', fontSizeViaApi);
-      console.log('[heading-probe] hasPowerup(Header):', hasHeaderPowerup);
-      console.log('[heading-probe] Header.Size (string):', headerSizeAsString);
-      console.log('[heading-probe] Header.Size (rich text):', headerSizeAsRichText);
-      console.log('[heading-probe] Header.Size (as rem):', headerSizeAsRem);
-      console.log('[heading-probe] rem keys:', rawKeys);
-      console.log('[heading-probe] rem snapshot:', rawSnapshot);
-      console.log('[heading-probe] DOM classes for this remId:', domClassesByRemId);
-      console.log('[heading-probe] full rem object (inspectable):', focused);
-
-      await plugin.app.toast(
-        `Heading probe logged. getFontSize=${JSON.stringify(fontSizeViaApi)} | Header.Size=${JSON.stringify(headerSizeAsString)}`
-      );
+      await plugin.widget.openPopup('heading_assign_preview', {
+        mode: 'toc',
+        scopeRootId,
+        inputRemIds: remIds,
+      });
     },
   });
 
-  const skipMasteryDrill = Boolean(
-    await plugin.settings.getSetting('skip_mastery_drill')
-  );
-  if (!skipMasteryDrill) {
+  // ─── Demote / Promote Heading Level (one step) ────────────────────────────
+  //
+  // Shift the SELECTED rems' existing headings by one level (descendants are not
+  // touched). Demote = deeper / bigger H number (H2→H3); Promote = shallower /
+  // smaller (H2→H1). Both open the same preview and are undoable.
+  const openShiftPreview = async (delta: number) => {
+    const remIds = await resolveHeadingTargets();
+    if (remIds.length === 0) {
+      await plugin.app.toast('No rem selected or focused.');
+      return;
+    }
+    await plugin.widget.openPopup('heading_assign_preview', {
+      mode: 'shift',
+      remIds,
+      delta,
+    });
+  };
+
+  plugin.app.registerCommand({
+    id: 'demote-heading-level',
+    name: 'Demote Heading Level (one level deeper)',
+    quickCode: 'hdmt',
+    action: async () => openShiftPreview(1),
+  });
+
+  plugin.app.registerCommand({
+    id: 'promote-heading-level',
+    name: 'Promote Heading Level (one level shallower)',
+    quickCode: 'hpmt',
+    action: async () => openShiftPreview(-1),
+  });
+
+  // Reverts the most recent heading-level change (ToC or shift) in this session.
+  // Same action as the Undo button on the sidebar banner.
+  plugin.app.registerCommand({
+    id: 'revert-last-heading-assign',
+    name: 'Revert Last Heading Level Change',
+    quickCode: 'rlh',
+    action: async () => {
+      const snapshot = await plugin.storage.getSession<HeadingSnapshot>(
+        HEADING_SNAPSHOT_KEY
+      );
+      if (!snapshot) {
+        await plugin.app.toast('No recent heading-level change to revert.');
+        return;
+      }
+      try {
+        await revertHeadingSnapshot(plugin, snapshot);
+        await plugin.storage.setSession(HEADING_SNAPSHOT_KEY, undefined);
+        await plugin.app.toast('Heading levels reverted.');
+      } catch (e) {
+        console.error('[heading-assign] revert failed:', e);
+        await plugin.app.toast(`Revert failed: ${(e as any)?.message ?? e}`);
+      }
+    },
+  });
+
+  // ─── Set Next Heading Level ───────────────────────────────────────────────
+  //
+  // Styles the selected rem(s) as one heading level deeper than their parent.
+  //   - Parent is a heading Hn → set the rem to H(n+1) (clamped at H6).
+  //   - Parent is NOT a heading but the grandparent is Hn → confirm, then set
+  //     the parent to H(n+1) and the rem to H(n+2). (E.g. grandparent H2 →
+  //     parent H3, selected rem H4.)
+  //   - Neither parent nor grandparent is a heading → nothing to do.
+  // Supports multi-rem outline selections (and Cmd+/ Omnibar invocation) via
+  // getEffectiveSelection, mirroring "Restructure Outline by Headings".
+  plugin.app.registerCommand({
+    id: 'set-next-heading-level',
+    name: 'Set Next Heading Level',
+    quickCode: 'hn',
+    action: async () => {
+      const selection = await getEffectiveSelection(plugin);
+      const focusedRem = selection ? undefined : await plugin.focus.getFocusedRem();
+
+      // Resolve the set of target rems from the selection (whole-rem or text)
+      // or, failing that, the focused rem.
+      let targetIds: string[] = [];
+      if (selection?.type === SelectionType.Rem && selection.remIds?.length) {
+        targetIds = selection.remIds;
+      } else if (selection?.type === SelectionType.Text && selection.remId) {
+        targetIds = [selection.remId];
+      } else if (focusedRem?._id) {
+        targetIds = [focusedRem._id];
+      }
+
+      if (targetIds.length === 0) {
+        await plugin.app.toast('No rem selected or focused.');
+        return;
+      }
+
+      const clamp = (n: number): HeadingLevel => Math.min(n, 6) as HeadingLevel;
+
+      type DirectAction = { rem: PluginRem; level: HeadingLevel };
+      type FallbackAction = {
+        rem: PluginRem;
+        parent: PluginRem;
+        parentLevel: HeadingLevel;
+        remLevel: HeadingLevel;
+      };
+
+      const direct: DirectAction[] = [];
+      const fallback: FallbackAction[] = [];
+      let skipped = 0;
+
+      for (const id of targetIds) {
+        const rem = await plugin.rem.findOne(id);
+        if (!rem) {
+          skipped++;
+          continue;
+        }
+        const parent = await rem.getParentRem();
+        if (!parent) {
+          // Top-level rem — no ancestor heading to derive a level from.
+          skipped++;
+          continue;
+        }
+        const parentLevel = await getHeadingLevel(parent);
+        if (parentLevel) {
+          direct.push({ rem, level: clamp(parentLevel + 1) });
+          continue;
+        }
+        // Parent isn't a heading — look one level up at the grandparent.
+        const grandparent = await parent.getParentRem();
+        const grandparentLevel = grandparent ? await getHeadingLevel(grandparent) : null;
+        if (grandparentLevel) {
+          fallback.push({
+            rem,
+            parent,
+            parentLevel: clamp(grandparentLevel + 1),
+            remLevel: clamp(grandparentLevel + 2),
+          });
+        } else {
+          skipped++;
+        }
+      }
+
+      if (direct.length === 0 && fallback.length === 0) {
+        await plugin.app.toast(
+          'No heading found on the parent or grandparent of the selected rem(s).'
+        );
+        return;
+      }
+
+      // Apply the straightforward cases first (parent is already a heading).
+      for (const { rem, level } of direct) {
+        await applyHeadingLevel(rem, level);
+      }
+
+      // Grandparent-fallback cases mutate the parent too, so ask first. A single
+      // confirmation covers the whole batch; dedupe parents that several
+      // selected siblings share so each parent is styled only once.
+      let fallbackApplied = 0;
+      if (fallback.length > 0) {
+        const sample = fallback[0];
+        const confirmed = window.confirm(
+          `The parent of ${fallback.length === 1 ? 'the selected rem' : `${fallback.length} selected rem(s)`} ` +
+          `is not a heading, but the grandparent is.\n\n` +
+          `Click "OK" to apply headings to BOTH the parent and the selected rem ` +
+          `(e.g. parent → H${sample.parentLevel}, selected rem → H${sample.remLevel}), ` +
+          `or "Cancel" to leave them unchanged.`
+        );
+        if (confirmed) {
+          const styledParents = new Set<string>();
+          for (const { rem, parent, parentLevel, remLevel } of fallback) {
+            if (!styledParents.has(parent._id)) {
+              await applyHeadingLevel(parent, parentLevel);
+              styledParents.add(parent._id);
+            }
+            await applyHeadingLevel(rem, remLevel);
+            fallbackApplied++;
+          }
+        }
+      }
+
+      const styledCount = direct.length + fallbackApplied;
+      if (styledCount === 0) {
+        // Only fallback cases existed and the user cancelled.
+        return;
+      }
+      const parts = [`Set heading on ${styledCount} rem(s).`];
+      if (skipped > 0) parts.push(`${skipped} skipped (no ancestor heading).`);
+      await plugin.app.toast(parts.join(' '));
+    },
+  });
+
+  const masteryDrillEnabled = await getIESetting(plugin, enableMasteryDrillId);
+  if (masteryDrillEnabled) {
     plugin.app.registerCommand({
       id: 'open_mastery_drill',
       name: 'Mastery Drill: deliberately practice poorly rated cards',
@@ -2606,6 +3406,16 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     action: async () => {
       await plugin.storage.setSynced('flashcardHistoryData', []);
       await plugin.app.toast('Flashcard History cleared!');
+    },
+  });
+
+  plugin.app.registerCommand({
+    id: 'ie_open_settings',
+    name: 'Incremental Everything: Settings',
+    description: 'Open the Incremental Everything settings popup',
+    quickCode: 'ies',
+    action: async () => {
+      await plugin.widget.openPopup('ie_settings');
     },
   });
 

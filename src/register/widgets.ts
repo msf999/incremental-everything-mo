@@ -1,10 +1,18 @@
 import { QueueItemType, ReactRNPlugin, WidgetLocation } from '@remnote/plugin-sdk';
-import { pageRangeWidgetId, parentSelectorWidgetId, powerupCode, priorityGraphPowerupCode, incremNotesSidebarWidgetId } from '../lib/consts';
+import { pageRangeWidgetId, parentSelectorWidgetId, powerupCode, priorityGraphPowerupCode, incremNotesSidebarWidgetId, enableMasteryDrillId } from '../lib/consts';
+import { getIESetting } from '../lib/settings';
 
 export async function registerWidgets(plugin: ReactRNPlugin) {
-  const skipMasteryDrill = Boolean(
-    await plugin.settings.getSetting('skip_mastery_drill')
-  );
+  const masteryDrillEnabled = await getIESetting(plugin, enableMasteryDrillId);
+
+  // IE Settings popup — the plugin's own settings UI (grouped and layered,
+  // unlike RemNote's flat plugin-settings list).
+  plugin.app.registerWidget('ie_settings', WidgetLocation.Popup, {
+    dimensions: {
+      width: 940,
+      height: 720,
+    },
+  });
 
   // NEW: Light Priority Widget
   plugin.app.registerWidget('priority_light', WidgetLocation.Popup, {
@@ -140,7 +148,7 @@ export async function registerWidgets(plugin: ReactRNPlugin) {
     },
   });
 
-  plugin.app.registerWidget('card_priority_display', WidgetLocation.FlashcardUnder, {
+  plugin.app.registerWidget('card_info_bar', WidgetLocation.FlashcardUnder, {
     powerupFilter: 'cardPriority',
     dimensions: {
       width: '100%',
@@ -176,6 +184,11 @@ export async function registerWidgets(plugin: ReactRNPlugin) {
   // Register incremental rem main view - comprehensive view with filters
   plugin.app.registerWidget('inc_rem_main_view', WidgetLocation.Popup, {
     dimensions: { height: 800, width: 1000 },
+  });
+
+  // Import Incremental Rems (with full rep history) from a JSON payload
+  plugin.app.registerWidget('import_increm_history', WidgetLocation.Popup, {
+    dimensions: { height: 'auto', width: 620 },
   });
 
   // Register parent selector popup for creating rems under incremental rems
@@ -243,7 +256,10 @@ export async function registerWidgets(plugin: ReactRNPlugin) {
   // Repetition history popup for Answer Buttons
   plugin.app.registerWidget('repetition_history', WidgetLocation.Popup, {
     dimensions: {
-      width: '380px',
+      // 440px (was 380) so the header fits Show Aggregated + Add session + close
+      // on one line, and the history grid keeps its column widths beside the
+      // per-row edit/delete actions.
+      width: '440px',
       height: 'auto',
     },
   });
@@ -303,6 +319,32 @@ export async function registerWidgets(plugin: ReactRNPlugin) {
     },
   });
 
+  // Source-in-popup: renders a PDF/HTML source (PDFWebReader) in a centered
+  // modal so a hovered pin reference can be opened without killing the queue.
+  plugin.app.registerWidget('pdf_source_popup', WidgetLocation.Popup, {
+    dimensions: {
+      width: 1000,
+      height: 800,
+    },
+  });
+
+  // Floating (non-blocking) variant of the Source popup — opens to the side so
+  // the queue/editor stays visible. Positioned + auto-closed by the
+  // `open-source-in-floating` command and the QueueLoadCard listener.
+  // NOTE: RemNote floating widgets are not user-resizable, so this fixed size is
+  // the only size lever — keep it generous. Tune here if it overflows a screen.
+  plugin.app.registerWidget('pdf_source_floating', WidgetLocation.FloatingWidget, {
+    dimensions: {
+      // EXPERIMENT: width accepts a string (per WidgetOptions type), so try a
+      // viewport-relative width that adapts to screen size. If the float opens
+      // as a ~48px sliver, RemNote parsed this numerically — revert to a fixed
+      // number (e.g. 1100). Height MUST stay a fixed number (PDFWebReader needs
+      // an explicit height; the type forbids a string here anyway).
+      width: '40vw',
+      height: 1000,
+    },
+  });
+
   // Outline Restructure preview popup (Before | After + per-rem preserve toggles).
   plugin.app.registerWidget('outline_restructure_preview', WidgetLocation.Popup, {
     dimensions: {
@@ -324,8 +366,27 @@ export async function registerWidgets(plugin: ReactRNPlugin) {
     }
   );
 
-  // Mastery Drill widgets are gated behind the 'skip_mastery_drill' setting.
-  if (!skipMasteryDrill) {
+  // Heading Levels (Table of Contents / shift) preview popup — Before | After
+  // with level badges and Top/Deepest level selectors.
+  plugin.app.registerWidget('heading_assign_preview', WidgetLocation.Popup, {
+    dimensions: {
+      width: 1100,
+      height: 800,
+    },
+  });
+
+  // Heading Levels undo banner — appears in the sidebar after an apply, stays
+  // until the user clicks Undo or dismisses it. Separate snapshot slot from the
+  // outline restructure banner.
+  plugin.app.registerWidget('heading_assign_undo', WidgetLocation.SidebarEnd, {
+    dimensions: {
+      width: '100%',
+      height: 'auto',
+    },
+  });
+
+  // Mastery Drill widgets are gated behind the 'enable-mastery-drill' setting.
+  if (masteryDrillEnabled) {
     // Mastery Drill popup
     plugin.app.registerWidget('mastery_drill', WidgetLocation.Popup, {
       dimensions: {

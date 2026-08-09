@@ -6,10 +6,10 @@ import {
   RNPlugin,
   PluginRem,
 } from '@remnote/plugin-sdk';
-import React, { useMemo, useRef, useState, useLayoutEffect } from 'react';
+import React, { useMemo, useRef, useState, useLayoutEffect, useEffect } from 'react';
 import * as _ from 'remeda';
 import dayjs from 'dayjs';
-import { IncrementalRep } from '../lib/incremental_rem/types';
+import { IncrementalRep, repCountsForScheduling } from '../lib/incremental_rem/types';
 import { NextRepTime } from '../components/NextRepTime';
 import { SplitButton } from '../components/buttons/SplitButton';
 import { Button } from '../components/buttons/Button';
@@ -27,21 +27,25 @@ import {
   incremReviewStartTimeKey,
   queueBackNavKey,
 } from '../lib/consts';
-import { getIncrementalRemFromRem, handleNextRepetitionClick, handleNextRepetitionManualOffset, rescheduleWithoutReview, updateReviewRemData, getRotationIntervalMs } from '../lib/incremental_rem';
+import { getIncrementalRemFromRem, handleNextRepetitionClick, handleNextRepetitionManualOffset, rescheduleWithoutReview, updateReviewRemData, getRotationIntervalMs, requestQueueDashboardRefocus } from '../lib/incremental_rem';
 import { removeIncrementalRemCache, updateIncrementalRemCache } from '../lib/incremental_rem/cache';
 import { IncrementalRem } from '../lib/incremental_rem';
 import { percentileToHslColor, calculateRelativePercentile, calculateVolumeBasedPercentile, calculateWeightedShield, PERFORMANCE_MODE_LIGHT } from '../lib/utils';
-import { safeRemTextToString, getActivePdfForIncRem, findHTMLinRem, addPageToHistory, getPageHistory, getCurrentPageKey, getDescendantsToDepth, resolveSessionBookmarkCarry } from '../lib/pdfUtils';
+import { safeRemTextToString, getActivePdfForIncRem, findHTMLinRem, addPageToHistory, getPageHistory, getIncrementalReadingPosition, getDescendantsToDepth, resolveSessionBookmarkCarry } from '../lib/pdfUtils';
 import { remTitleEndsWithOpenLinkTag, extractExternalHttpUrlsFromRem } from '../lib/open_editor_link_tag';
+import { getRemReadPoint } from '../lib/remReadPoint';
+import { resolveRemTextForBreadcrumb } from '../lib/richTextRemRefs';
 import { QueueSessionCache, setCardPriority } from '../lib/card_priority';
 import { WeightedShieldTooltip } from '../components';
 import { shouldUseLightMode } from '../lib/mobileUtils';
 import { getHtmlSourceUrl, determineIncRemType } from '../lib/incRemHelpers';
 import { transferToDismissed } from '../lib/dismissed';
+import { setPendingReviewNote, getPendingReviewNote, MAX_NOTE_LENGTH } from '../lib/history_notes';
 import { addToIncrementalHistory } from '../lib/history_utils';
 import { handleReviewInEditorRem } from '../lib/review_actions';
 
 import { handleCardPriorityInheritance } from '../lib/card_priority/card_priority_inheritance';
+import { getIESetting, useIESetting } from '../lib/settings';
 
 export function AnswerButtons() {
   const plugin = usePlugin();
@@ -58,15 +62,8 @@ export function AnswerButtons() {
     []
   ) || [];
 
-  const shouldDisplayShield = useTrackerPlugin(
-    (rp) => rp.settings.getSetting<boolean>(displayPriorityShieldId),
-    []
-  ) ?? true;
-
-  const shouldDisplayWeightedShield = useTrackerPlugin(
-    (rp) => rp.settings.getSetting<boolean>(displayWeightedShieldId),
-    []
-  ) ?? false;
+  const shouldDisplayShield = useIESetting(displayPriorityShieldId);
+  const shouldDisplayWeightedShield = useIESetting(displayWeightedShieldId);
 
   const activeHighlightId = useTrackerPlugin(
     (rp) => rp.storage.getSession<string | null>(activeHighlightIdKey),
@@ -240,6 +237,40 @@ export function AnswerButtons() {
     return lastEntry?.highlightId ?? null;
   }, [baseData?.rem?._id, remType]);
 
+  // Read point on the IncRem's OWN outline (a bookmarked descendant rem). Only
+  // surfaced for hybrid cards reviewed as a PDF/HTML source — pure rem-type cards
+  // already show the read point in the ExtractViewer body. The in-queue reader
+  // can't navigate to a descendant without leaving the queue, so this is an
+  // informational chip that points the user to "Review in Editor" instead of
+  // navigating. Also flags whether the read point is the most recent reading
+  // action (vs the PDF/HTML bookmark).
+  const remReadPointInfo = useTrackerPlugin(async (rp) => {
+    if (!baseData?.rem) return null;
+    const type = await rp.storage.getSession<string | null>(currentIncrementalRemTypeKey);
+    if (type !== 'pdf' && type !== 'html') return null;
+
+    const entry = await getRemReadPoint(rp, baseData.rem._id);
+    if (!entry?.highlightId) return null;
+
+    const targetRem = await rp.rem.findOne(entry.highlightId);
+    if (!targetRem) return null;
+    const text = await resolveRemTextForBreadcrumb(rp, targetRem.text || []);
+
+    const hostRem = type === 'pdf'
+      ? await getActivePdfForIncRem(rp, baseData.rem)
+      : await findHTMLinRem(rp, baseData.rem);
+    let readerTs = 0;
+    if (hostRem) {
+      const hist = await getPageHistory(rp, baseData.rem._id, hostRem._id);
+      readerTs = hist[hist.length - 1]?.timestamp ?? 0;
+    }
+    return {
+      targetRemId: entry.highlightId,
+      text,
+      isLatest: (entry.timestamp ?? 0) > readerTs,
+    };
+  }, [baseData?.rem?._id, remType]);
+
 
   // ✅ MEMOIZE CALCULATIONS (but they must run every render, not conditionally)
   const percentiles = useMemo(() => {
@@ -257,15 +288,10 @@ export function AnswerButtons() {
     if (!coreData?.incRemInfo?.history || coreData.incRemInfo.history.length === 0) {
       return { reps: 0, totalMinutes: 0 };
     }
-    // Only count real repetitions (events that count for interval calculation)
-    // Includes: undefined, 'rep', 'rescheduledInQueue', 'executeRepetition'
-    // Excludes: 'madeIncremental', 'dismissed', 'rescheduledInEditor', 'manualDateReset'
-    const realReps = coreData.incRemInfo.history.filter(
-      h => h.eventType === undefined ||
-        h.eventType === 'rep' ||
-        h.eventType === 'rescheduledInQueue' ||
-        h.eventType === 'executeRepetition'
-    );
+    // Only count real repetitions (events that count for interval calculation).
+    // Uses the shared scheduling predicate — excludes markers, slot edits, and
+    // 'importedRep' (imported flashcard reviews never belong to a rem's schedule).
+    const realReps = coreData.incRemInfo.history.filter(h => repCountsForScheduling(h.eventType));
     const reps = realReps.length;
     const totalSeconds = realReps.reduce((total, rep) => total + (rep.reviewTimeSeconds || 0), 0);
     const totalMinutes = Math.round(totalSeconds / 6) / 10; // Round to 1 decimal
@@ -293,6 +319,26 @@ export function AnswerButtons() {
     const sameRow = Math.abs(sepMid - statsMid) < 4;
     setStatsSepVisible(sameRow);
   }); // No deps — runs after every render so it catches the first render where refs are populated
+
+  // Review note (📝): parked per-rem in session storage on every keystroke and
+  // attached to the history entry written by whichever action ends this review
+  // (Next / Reschedule / Dismiss) — see stampNoteAndContext in lib/history_notes.
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [noteText, setNoteText] = useState('');
+  const currentRemId = baseData?.rem?._id;
+  useEffect(() => {
+    // New card: reset the input, then prefill from a previously parked note
+    // (e.g. typed earlier this session but not yet consumed).
+    setNoteOpen(false);
+    setNoteText('');
+    if (!currentRemId) return;
+    getPendingReviewNote(plugin, currentRemId).then((parked) => {
+      if (parked) {
+        setNoteText(parked);
+        setNoteOpen(true);
+      }
+    });
+  }, [currentRemId]);
 
   // ✅ NOW we can do early returns AFTER all hooks are called
   if (!coreData) {
@@ -329,8 +375,7 @@ export function AnswerButtons() {
     if (remType === 'pdf') {
       const pdfRem = await getActivePdfForIncRem(plugin, rem);
       if (pdfRem) {
-        const pageKey = getCurrentPageKey(rem._id, pdfRem._id);
-        const currentPage = await plugin.storage.getSynced<number>(pageKey);
+        const currentPage = await getIncrementalReadingPosition(plugin, rem._id, pdfRem._id);
 
         if (currentPage) {
           // Carry a session bookmark forward so this reading-time entry does
@@ -419,6 +464,11 @@ export function AnswerButtons() {
   const priorityColor = percentiles.kb ? percentileToHslColor(percentiles.kb) : '#6b7280';
   const buttonStyles = getButtonStyles();
 
+  // When both a reader bookmark and an outline read point exist, the reader
+  // bookmark is the "latest" only when the read point isn't (mirrors the editor
+  // timer's marker). With no read point there's nothing to compare, so no badge.
+  const readerBookmarkIsLatest = !!remReadPointInfo && !remReadPointInfo.isLatest;
+
   // --- NEW: Check if current IncRem is directly impacting the shield ---
   const isKbShieldActive = shieldStatusAsync?.kb && incRemInfo.priority === shieldStatusAsync.kb.absolute;
   const isDocShieldActive = shieldStatusAsync?.doc && incRemInfo.priority === shieldStatusAsync.doc.absolute;
@@ -488,9 +538,11 @@ export function AnswerButtons() {
           e.preventDefault();
         }
       }}
-      onClick={() => {
+      onClick={(e) => {
         // After any click, return focus to the parent window so native
-        // RemNote shortcuts work immediately.
+        // RemNote shortcuts work immediately. EXCEPT for text inputs (the
+        // review-note field) — blurring those would make typing impossible.
+        if ((e.target as HTMLElement).closest('input, textarea')) return;
         try {
           if (document.activeElement instanceof HTMLElement) {
             document.activeElement.blur();
@@ -632,6 +684,11 @@ export function AnswerButtons() {
             // Remove from session cache
             await removeIncrementalRemCache(plugin, rem._id);
 
+            // Like "Next", leaving the rem should restore the queue dashboard.
+            // Set the flag BEFORE the destructive call below (the persistent
+            // QueueLoadCard listener consumes it once the next card loads).
+            await requestQueueDashboardRefocus(plugin, 'dismiss-button');
+
             // CRITICAL: Both removePowerup and removeCurrentCardFromQueue must be
             // fired simultaneously. removePowerup destroys the widget sandbox
             // shortly after resolving, so any subsequent await never completes.
@@ -683,6 +740,14 @@ export function AnswerButtons() {
             <div style={buttonStyles.label}>📝 Review with Timer</div>
           </Button>
 
+          <Button
+            onClick={() => setNoteOpen((o) => !o)}
+            style={{ color: noteOpen || noteText ? 'var(--rn-clr-green, #16a34a)' : undefined }}
+            title="Review note: attach an observation to this repetition's history entry (saved when you press Next / Reschedule / Dismiss)"
+          >
+            <div style={buttonStyles.label}>📝 Review Note</div>
+          </Button>
+
           {activeHighlightId && (
             <Button onClick={async () => {
               const highlightRem = await plugin.rem.findOne(activeHighlightId);
@@ -706,7 +771,27 @@ export function AnswerButtons() {
               }}
               title="Scroll to Bookmark: Jump to your last saved reading position in the document"
             >
-              <div style={buttonStyles.label}>🔖 Scroll to Bookmark</div>
+              <div style={buttonStyles.label}>🔖 Scroll to Bookmark{readerBookmarkIsLatest ? ' • latest' : ''}</div>
+            </Button>
+          )}
+
+          {remReadPointInfo && (
+            <Button
+              onClick={async () => {
+                const ok = window.confirm(
+                  `Open the read point in the Editor?\n\n"${remReadPointInfo.text}"\n\n` +
+                  `This records a review for the current Incremental Rem (like "Review in Editor"), ` +
+                  `starts its timer, and opens the read point rem in the editor so you can resume reading there.`
+                );
+                if (!ok) return;
+                await handleReviewInEditorRem(plugin, rem, remType, {
+                  navigateToRemId: remReadPointInfo.targetRemId,
+                });
+              }}
+              style={{ color: 'var(--rn-clr-green, #16a34a)' }}
+              title={`Read point set on a descendant rem: "${remReadPointInfo.text}". Click to open it in the Editor — this reviews the current IncRem (starts its timer) and jumps to the read point.`}
+            >
+              <div style={buttonStyles.label}>🔖 Read point{remReadPointInfo.isLatest ? ' • latest' : ''}</div>
             </Button>
           )}
 
@@ -736,6 +821,42 @@ export function AnswerButtons() {
           <Button onClick={() => window.open('https://github.com/bjsi/incremental-everything/wiki/Reviewing-Items-in-the-Queue', '_blank')}>
             <div style={buttonStyles.label}>ℹ️ Help</div>
           </Button>
+        </div>
+      )}
+
+      {/* Review-note input — parked in session storage on every keystroke and
+          attached to this repetition's history entry by Next/Reschedule/Dismiss. */}
+      {noteOpen && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '13px' }}>📝</span>
+          <input
+            type="text"
+            autoFocus
+            value={noteText}
+            maxLength={MAX_NOTE_LENGTH}
+            placeholder="Observation for this repetition (saved with Next / Reschedule / Dismiss)…"
+            onChange={(e) => {
+              setNoteText(e.target.value);
+              setPendingReviewNote(plugin, rem._id, e.target.value).catch(console.error);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setNoteOpen(false);
+              }
+              // Keep queue shortcuts from firing while typing.
+              e.stopPropagation();
+            }}
+            style={{
+              flex: 1,
+              fontSize: '12px',
+              padding: '6px 10px',
+              borderRadius: '8px',
+              border: '1px solid var(--rn-clr-border-primary)',
+              backgroundColor: 'var(--rn-clr-background-secondary)',
+              color: 'var(--rn-clr-content-primary)',
+              outline: 'none',
+            }}
+          />
         </div>
       )}
 

@@ -1,10 +1,43 @@
 import { ReactRNPlugin } from '@remnote/plugin-sdk';
 import {
+  bandColorPercentile,
+  buildHighlightBandCSS,
+  buildPriorityBandCSS,
+  computeBandPercentiles,
+} from './priority_bands';
+import { percentileToHslColor } from './utils';
+import {
   queueCounterId,
   scrollToHighlightId,
   // collapseTopBarId, // Disabled: feature not working
   hideIncEverythingId,
+  pdfHighlightBordersEnabledKey,
+  pdfHighlightBordersReloadKey,
+  showPriorityBandsInTablesId,
 } from './consts';
+import { getIESetting } from './settings';
+
+/**
+ * Whether the pdfextract/incremental marker borders are currently drawn over
+ * PDF-viewer highlights. Backed by a per-device local flag; defaults to ON.
+ */
+export async function getPdfHighlightBordersEnabled(plugin: ReactRNPlugin): Promise<boolean> {
+  const stored = await plugin.storage.getLocal<boolean>(pdfHighlightBordersEnabledKey);
+  return stored ?? true;
+}
+
+/**
+ * "Peek" toggle: flip the marker-border flag. Persists the value in local storage
+ * and bumps a session key so the index widget's plugin.track re-registers the CSS
+ * (registerCSS is index-only, and this may run in the highlight-toolbar iframe).
+ * Returns the new enabled state. Shared by the toggle command and toolbar button.
+ */
+export async function togglePdfHighlightBorders(plugin: ReactRNPlugin): Promise<boolean> {
+  const next = !(await getPdfHighlightBordersEnabled(plugin));
+  await plugin.storage.setLocal(pdfHighlightBordersEnabledKey, next);
+  await plugin.storage.setSession(pdfHighlightBordersReloadKey, Date.now());
+  return next;
+}
 
 /**
  * Registers CSS to display the incremental rem counter next to the flashcard counter.
@@ -93,16 +126,111 @@ export async function registerPluginHidingCSS(plugin: ReactRNPlugin) {
 // Register CSS for PDF Highlight coloring based on tags
 // This replaces the old manual color setting logic
 export async function registerPdfHighlightCSS(plugin: ReactRNPlugin) {
+  // "Peek" toggle: when disabled, the PDF-viewer marker borders are omitted so the
+  // highlights read cleanly (original background only). Editor styling is unaffected.
+  const bordersEnabled = await getPdfHighlightBordersEnabled(plugin);
+  const pdfextractMarkers = bordersEnabled
+    ? `border-bottom: 1.5px dashed #1565a8 !important;
+      border-right: 3px solid #73a5cd !important;`
+    : '';
+  const incrementalMarkers = bordersEnabled
+    ? `border-bottom: 1.5px dashed #15803d !important;
+      border-right: 3px solid #4baf70 !important;`
+    : '';
+  // Same scale as the side-panel badges above: a PDF marker's colour comes from
+  // the IncRem extracted from that highlight.
+  const { inc: incPercentiles } = await computeBandPercentiles(plugin);
+  const highlightBandCSS = buildHighlightBandCSS((band) =>
+    percentileToHslColor(bandColorPercentile(incPercentiles, band))
+  );
   const css = `
+    /* PDF viewer: keep the highlight's ORIGINAL background and distinguish the tag
+       with (a) a dashed underline and (b) a thin left bar. The underline gets
+       covered by the next line's background between lines, so it's only a reliable
+       marker at a block's bottom edge; the left bar is the dependable block marker
+       — with box-decoration-break: clone it draws on every wrapped line, forming a
+       vertical rule down the left edge regardless of what follows the extract.
+       This base (unscoped) rule reaches both the PDF viewer and the editor; the
+       editor is overridden below to keep its coloured background (no bar/underline).
+       The border declarations are gated by the "peek" toggle (bordersEnabled). */
     [data-rem-tags~="pdf-highlight"][data-rem-tags~="pdfextract"],
     [data-rem-tags~="html-highlight"][data-rem-tags~="pdfextract"] {
-      background-color: #75ccf8 !important;
+      ${pdfextractMarkers}
       padding-bottom: 2.7px;
+      padding-left: 4px;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+    }
+    /* High-contrast text selection inside pdfextract highlights */
+    [data-rem-tags~="pdf-highlight"][data-rem-tags~="pdfextract"] ::selection,
+    [data-rem-tags~="html-highlight"][data-rem-tags~="pdfextract"] ::selection,
+    [data-rem-tags~="pdf-highlight"][data-rem-tags~="pdfextract"]::selection,
+    [data-rem-tags~="html-highlight"][data-rem-tags~="pdfextract"]::selection {
+      background-color: #0b2e6b !important;
+      color: #ffffff !important;
     }
     [data-rem-tags~="pdf-highlight"][data-rem-tags~="incremental"],
     [data-rem-tags~="html-highlight"][data-rem-tags~="incremental"] {
-      background-color: #75f8b2 !important;
+      ${incrementalMarkers}
       padding-bottom: 2.7px;
+      padding-left: 4px;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+    }
+    /* High-contrast text selection inside incremental highlights */
+    [data-rem-tags~="pdf-highlight"][data-rem-tags~="incremental"] ::selection,
+    [data-rem-tags~="html-highlight"][data-rem-tags~="incremental"] ::selection,
+    [data-rem-tags~="pdf-highlight"][data-rem-tags~="incremental"]::selection,
+    [data-rem-tags~="html-highlight"][data-rem-tags~="incremental"]::selection {
+      background-color: #0b4a2e !important;
+      color: #ffffff !important;
+    }
+
+    /* Editor: keep the coloured-background look (no underline). Overrides the
+       dashed-underline base rules above. The dark-mode editor rules below only
+       swap the background, so this border-bottom:none carries into dark mode too. */
+    .rn-editor [data-rem-tags~="pdf-highlight"][data-rem-tags~="pdfextract"],
+    .rn-editor [data-rem-tags~="html-highlight"][data-rem-tags~="pdfextract"] {
+      background-color: #8ad0f3 !important;
+      border-bottom: none !important;
+      border-right: none !important;
+      padding-left: 0 !important;
+    }
+    .rn-editor [data-rem-tags~="pdf-highlight"][data-rem-tags~="incremental"],
+    .rn-editor [data-rem-tags~="html-highlight"][data-rem-tags~="incremental"] {
+      background-color: #75f8b2 !important;
+      border-bottom: none !important;
+      border-right: none !important;
+      padding-left: 0 !important;
+    }
+
+    /* Dark mode: darken highlight backgrounds so light text stays readable.
+       Scoped to .rn-editor only. In the PDF viewer the highlight keeps its original
+       background (see the base rules above) and is distinguished by the dashed
+       underline instead, so no dark-mode background handling is needed there. */
+    .dark .rn-editor [data-rem-tags~="pdf-highlight"][data-rem-tags~="pdfextract"],
+    .dark .rn-editor [data-rem-tags~="html-highlight"][data-rem-tags~="pdfextract"] {
+      background-color: #1e496b !important;
+    }
+    .dark .rn-editor [data-rem-tags~="pdf-highlight"][data-rem-tags~="incremental"],
+    .dark .rn-editor [data-rem-tags~="html-highlight"][data-rem-tags~="incremental"] {
+      background-color: #1a5c3a !important;
+    }
+    /* Dark mode (editor): lighten the selection so it stands out on the darkened
+       background. The PDF viewer keeps the light-mode selection (navy/white). */
+    .dark .rn-editor [data-rem-tags~="pdf-highlight"][data-rem-tags~="pdfextract"] ::selection,
+    .dark .rn-editor [data-rem-tags~="html-highlight"][data-rem-tags~="pdfextract"] ::selection,
+    .dark .rn-editor [data-rem-tags~="pdf-highlight"][data-rem-tags~="pdfextract"]::selection,
+    .dark .rn-editor [data-rem-tags~="html-highlight"][data-rem-tags~="pdfextract"]::selection {
+      background-color: #7cc4f5 !important;
+      color: #06203f !important;
+    }
+    .dark .rn-editor [data-rem-tags~="pdf-highlight"][data-rem-tags~="incremental"] ::selection,
+    .dark .rn-editor [data-rem-tags~="html-highlight"][data-rem-tags~="incremental"] ::selection,
+    .dark .rn-editor [data-rem-tags~="pdf-highlight"][data-rem-tags~="incremental"]::selection,
+    .dark .rn-editor [data-rem-tags~="html-highlight"][data-rem-tags~="incremental"]::selection {
+      background-color: #6ee7a8 !important;
+      color: #05381f !important;
     }
 
     [data-rem-tags~="pdfextract"] .hierarchy-editor__tag-bar__tag {
@@ -112,9 +240,55 @@ export async function registerPdfHighlightCSS(plugin: ReactRNPlugin) {
       font-size: 12px;
       content: '✂️';
     }
+
+    /* Tint the extract marker with the priority band of the IncRem extracted
+       from this highlight, so importance is visible while re-reading the PDF.
+       Emitted here, after the base rules above, because those set the border
+       with !important and ordering between registerCSS calls is not guaranteed.
+       Gated on the same "peek" toggle: with borders off there is nothing to tint. */
+    ${bordersEnabled ? highlightBandCSS.markerColors : ''}
   `;
 
   await plugin.app.registerCSS('pdf-inc-highlight-styling', css);
+}
+
+/**
+ * Badges on extracted highlights, shown wherever the highlight rem renders —
+ * most usefully the Highlights side panel. Separate from the marker tint above,
+ * which has to live inside the PDF stylesheet for ordering reasons.
+ */
+export async function registerHighlightBandBadgeCSS(plugin: ReactRNPlugin) {
+  // Highlights are badged with the priority of the IncRem extracted from them,
+  // so they rank on the IncRem scale.
+  const { inc } = await computeBandPercentiles(plugin);
+  const { badges } = buildHighlightBandCSS((band) =>
+    percentileToHslColor(bandColorPercentile(inc, band))
+  );
+  await plugin.app.registerCSS('highlight-priority-band-badges', badges);
+}
+
+/**
+ * Table-cell badges. Registered here rather than in registerPluginSettings so it
+ * can be re-run when the band→percentile mapping changes; the setting is still
+ * what gates it.
+ */
+export async function registerTableBandBadgeCSS(plugin: ReactRNPlugin) {
+  const enabled = await getIESetting(plugin, showPriorityBandsInTablesId);
+  // Both scales are emitted; the stylesheet picks per rem from the `incremental`
+  // / `cardpriority` tags the rem already carries, so a table mixing IncRems and
+  // flashcards colours each on the scale its own Priority Editor uses.
+  const percentiles = enabled
+    ? await computeBandPercentiles(plugin)
+    : { inc: null, card: null };
+  await plugin.app.registerCSS(
+    showPriorityBandsInTablesId,
+    enabled
+      ? buildPriorityBandCSS({
+          inc: (band) => percentileToHslColor(bandColorPercentile(percentiles.inc, band)),
+          card: (band) => percentileToHslColor(bandColorPercentile(percentiles.card, band)),
+        })
+      : ''
+  );
 }
 
 export async function registerIgnoreTagCSS(plugin: ReactRNPlugin) {
@@ -137,12 +311,41 @@ export async function registerIgnoreTagCSS(plugin: ReactRNPlugin) {
 
 export async function registerTagBadgeCSS(plugin: ReactRNPlugin) {
   const css = `
-    [data-rem-tags~="incremental"] .hierarchy-editor__tag-bar__tag {
+    /* Replace the "Incremental" powerup label with a 🔍 badge in the editor.
+
+       A RemNote change made an applied powerup render in TWO places that both
+       carry the .hierarchy-editor__tag-bar__tag class the old rule keyed on:
+         1. the "Applied Powerup Pill" (a sibling of the Tag Bar), and
+         2. a legacy pill inside [data-test="Tag Bar"] (shown when the rem has a
+            single tag).
+       The old broad selector matched both — and, because its only qualifier was
+       "any rem tagged incremental", it also matched the pills of OTHER powerups
+       (e.g. CardPriority) on the same rem. So the badge appeared twice and
+       leaked onto unrelated powerups.
+
+       Fix: badge only the Incremental Applied Powerup Pill (matched by its stable
+       data-test), and hide the redundant Tag-Bar duplicate below. The extra
+       .hierarchy-editor__tag-bar__tag qualifier keeps this off the document
+       header's Applied Powerups Menu button, which reuses the same data-test but
+       is a <button> whose inline font-size our reset can't override. */
+    [data-test="Applied Powerup Pill Incremental"].hierarchy-editor__tag-bar__tag {
       font-size: 0px;
     }
-    [data-rem-tags~="incremental"] .hierarchy-editor__tag-bar__tag:before {
+    [data-test="Applied Powerup Pill Incremental"].hierarchy-editor__tag-bar__tag:before {
       font-size: 12px;
       content: '🔍';
+    }
+
+    /* Hide the powerup pill RemNote now duplicates inside the editor Tag Bar
+       (only visible for single-tag rems); the Applied Powerup Pill above is the
+       canonical representation. Scoped to our powerups via the rem's own
+       data-rem-tags so we never hide an unrelated tag, and gated on
+       .rem-powerup-icon (the ⚡) which marks a powerup pill, never a plain user
+       tag. */
+    [data-rem-tags~="incremental" i] [data-test="Tag Bar"] .hierarchy-editor__tag-bar__tag:has(.rem-powerup-icon),
+    [data-rem-tags~="cardpriority" i] [data-test="Tag Bar"] .hierarchy-editor__tag-bar__tag:has(.rem-powerup-icon),
+    [data-rem-tags~="dismissed" i] [data-test="Tag Bar"] .hierarchy-editor__tag-bar__tag:has(.rem-powerup-icon) {
+      display: none;
     }
   `;
   await plugin.app.registerCSS('tag-badge-styling', css);
@@ -201,6 +404,17 @@ export async function registerClozeExtractCSS(plugin: ReactRNPlugin) {
     .rn-editor [data-rem-tags~="cloze-extract"]:hover .rem-text {
       opacity: 1;
       filter: grayscale(0%);
+    }
+
+    /* Dark-mode contrast fix for the "already-clozed" source mark that Create
+       Cloze Deletion applies to the parent text (yellow highlight + red font,
+       see commands.ts). Bright-yellow-bg/red-text is low-contrast on a dark
+       canvas; swap to deep amber + light coral. The yellow+red class pair is
+       unique to our mark, so native RemNote clozes are left untouched. Covers
+       both the editor leaf container and the queue linear-editor item. */
+    .dark .has-highlight-color.highlight-color--yellow.text-color--red {
+      background-color: #4a3700 !important;
+      color: #ff9e80 !important;
     }
   `;
   await plugin.app.registerCSS('cloze-extract-badge', css);

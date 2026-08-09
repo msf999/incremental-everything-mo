@@ -75,7 +75,16 @@ export const IncrementalRep = z.object({
    * - 'executeRepetition': Execute Repetition command in editor - counts for interval
    * - 'madeIncremental': Marker for when the Rem was made Incremental
    * - 'dismissed': Marker for when the Rem was dismissed
-   * 
+   * - 'importedRep': A review imported from a flashcard whose rem was removed by
+   *   'Preserve history & remove'. COUNTS for study-time/rep statistics (the
+   *   Study Dashboard) but is intentionally IGNORED by the scheduler for
+   *   next-interval computation, since it never belonged to this rem's own
+   *   incremental schedule. See context.flashcardName / context.flashcardScore.
+   * - 'externalRep': A study session recorded after the fact by the user from the
+   *   Repetition History popup ("Add session") — reading done away from RemNote.
+   *   It is a genuine repetition of this rem, so it counts for BOTH statistics and
+   *   the scheduler's rep count, exactly like 'executeRepetition'.
+   *
    * The scheduler uses this to count only review events since the last 'madeIncremental' event.
    */
   eventType: z.enum([
@@ -85,20 +94,138 @@ export const IncrementalRep = z.object({
     'manualDateReset',
     'executeRepetition',
     'madeIncremental',
-    'dismissed'
+    'dismissed',
+    'importedRep',
+    'externalRep'
   ]).optional(),
   /**
    * The absolute priority (0-100) at the time of this repetition
    */
   priority: z.number().min(0).max(100).optional(),
+  /**
+   * The next-repetition timestamp (ms) scheduled at this point. Stamped on the
+   * most-recent entry at every scheduling write. Used as a reliable read-time
+   * fallback for the next-rep date when the Daily Doc reference in nextRepDateSlotCode
+   * can't be resolved (some daily-doc rems expose an empty 'Date' property). The Daily
+   * Doc reference stays authoritative on read so manual date edits still win — this is
+   * only consulted when that reference fails to round-trip.
+   */
+  nextRepMs: z.number().optional(),
+  /**
+   * Free-form USER-authored notes/observations attached to this history entry
+   * (e.g. why the rem was rescheduled or dismissed, context for the review).
+   * Machine-generated metadata goes in `context`, never here.
+   * Persisted in both the Incremental 'History' slot and the Dismissed 'History' slot.
+   */
+  notes: z.string().optional(),
+  /**
+   * MACHINE-generated snapshot of the reading-session state at the time of this
+   * history entry. Unlike the live synced-storage keys (current page, page range,
+   * bookmarks — see lib/pdfUtils.ts), this is stored inside the rem's powerup slot,
+   * so it survives synced-storage loss and records the historical trajectory
+   * (what page the user was on at EACH rep, not just now). All fields optional;
+   * omit the whole object when there is nothing meaningful to snapshot.
+   */
+  context: z
+    .object({
+      /** Current page at the time of this entry (PDF reader). */
+      page: z.number().optional(),
+      /** Active page range at the time of this entry. end 0/undefined = unbounded. */
+      rangeStart: z.number().optional(),
+      rangeEnd: z.number().optional(),
+      /** Name of the active PDF source (ranges/pages are per-PDF). */
+      pdfName: z.string().optional(),
+      /** Text of the last bookmark/highlight rem from this session, if any. */
+      bookmark: z.string().optional(),
+      /** Playback position in seconds (YouTube / video extracts). */
+      videoTime: z.number().optional(),
+      /**
+       * Name of the source flashcard, when this rep was imported from a card
+       * removed by 'Preserve history & remove' (eventType 'importedRep').
+       */
+      flashcardName: z.string().optional(),
+      /**
+       * The flashcard review's QueueInteractionScore (AGAIN/HARD/GOOD/EASY…),
+       * preserved so the imported rep can show how the card was graded.
+       */
+      flashcardScore: z.number().optional(),
+    })
+    .optional(),
 });
 
 export type IncrementalRep = z.infer<typeof IncrementalRep>;
+
+/**
+ * Whether a history entry counts as a real review for STATISTICS — the Study
+ * Dashboard's time/rep totals. Includes imported flashcard reps ('importedRep').
+ * Excludes slot-edit events ('rescheduledInEditor', 'manualDateReset') and
+ * lifecycle markers ('madeIncremental', 'dismissed').
+ *
+ * Single source of truth: authoritative_aggregates and the history-transfer
+ * collector both use this so the definition can't drift.
+ */
+export function repCountsForStats(eventType: IncrementalRep['eventType']): boolean {
+  return (
+    eventType === undefined ||
+    eventType === 'rep' ||
+    eventType === 'executeRepetition' ||
+    eventType === 'rescheduledInQueue' ||
+    eventType === 'importedRep' ||
+    eventType === 'externalRep'
+  );
+}
+
+/**
+ * Whether a history entry counts for the SCHEDULER's next-interval computation.
+ * Identical to {@link repCountsForStats} MINUS 'importedRep': imported flashcard
+ * reps never belonged to this rem's own incremental schedule, so they must never
+ * influence its intervals (even if the rem is later re-incrementalized).
+ * 'externalRep' DOES count — a session studied away from RemNote is still a
+ * repetition of this rem's own material.
+ */
+export function repCountsForScheduling(eventType: IncrementalRep['eventType']): boolean {
+  return (
+    eventType === undefined ||
+    eventType === 'rep' ||
+    eventType === 'executeRepetition' ||
+    eventType === 'rescheduledInQueue' ||
+    eventType === 'externalRep'
+  );
+}
+
+/**
+ * Priority used when a Rem's Priority slot cannot be read AND its history holds
+ * no recorded priority either — i.e. when nothing is actually known about it.
+ *
+ * This is deliberately a named constant rather than a literal inside the read
+ * path. It used to be a bare `let priority = 10` in `getIncrementalRemFromRem`,
+ * which made a fabricated value indistinguishable from a stored one: after
+ * RemNote's storage/sync overhaul detached some Priority slots, Rems whose real
+ * priority was still on them displayed as P10 with nothing marking it a guess.
+ * Anything reaching for this value must also honour `prioritySource`.
+ */
+export const UNREADABLE_PRIORITY_FALLBACK = 50;
+
+/**
+ * Where a resolved `priority` actually came from.
+ *
+ * - `slot`     — read from the Priority powerup slot. Trustworthy.
+ * - `history`  — the slot was unreadable; this is the last priority the Rem
+ *                recorded in its own repetition history. Trustworthy as a value,
+ *                but the slot needs repairing.
+ * - `fallback` — nothing was readable. The number is
+ *                {@link UNREADABLE_PRIORITY_FALLBACK} and means nothing; it must
+ *                not be written back or stamped into history.
+ */
+export const PrioritySource = z.enum(['slot', 'history', 'fallback']);
+export type PrioritySource = z.infer<typeof PrioritySource>;
 
 export const IncrementalRem = z.object({
   remId: z.string(),
   nextRepDate: z.number(),
   priority: z.number().min(0).max(100),
+  /** Provenance of `priority`. Absent on cached objects written before this existed. */
+  prioritySource: PrioritySource.optional(),
   history: z.array(IncrementalRep).optional(),
   rotation: z.string().optional(),
   /**

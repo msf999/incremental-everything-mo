@@ -26,8 +26,10 @@ import {
 } from '../lib/consts';
 import { setCurrentIncrementalRem } from '../lib/incremental_rem';
 import { safeRemTextToString } from '../lib/pdfUtils';
+import { getRemReadPoint } from '../lib/remReadPoint';
 import { startIncRemEngagement, endIncRemEngagement } from '../lib/queue_session';
 import { isIncRemDue } from '../lib/shield_history';
+import { useIESettingOptional } from '../lib/settings';
 
 type ViewMode = 'isolated' | 'context';
 
@@ -64,15 +66,36 @@ export function QueueComponent() {
     [ctx?.remId]
   );
 
-  const isolatedMode = useTrackerPlugin(
-    async (rp) => {
-      const value = await rp.settings.getSetting<IsolatedQueueMode>(isolatedQueueModeId);
-      return (value || 'highlights') as IsolatedQueueMode;
-    },
-    []
-  );
+  // Optional form on purpose: the effect that turns this into `viewMode` runs
+  // once and never revisits (it bails on `viewMode !== undefined`), so seeing the
+  // default during the loading frame would lock in the wrong view.
+  const isolatedMode = useIESettingOptional(isolatedQueueModeId);
   const isolatedDefaultForHighlight = isolatedMode === 'highlights' || isolatedMode === 'both';
   const isolatedDefaultForRem = isolatedMode === 'rems' || isolatedMode === 'both';
+
+  // Hybrid IncRems (a full-document PDF/HTML reading source AND their own outline
+  // content): offer a Reader ↔ Outline toggle when the IncRem also has a read
+  // point set on one of its descendants. This lets the user flip to the outline
+  // (with read-point emphasis + auto-scroll) without leaving the queue or
+  // re-tagging. The `#extractviewer` tag remains the explicit way to default a
+  // hybrid to the ExtractViewer instead.
+  const incRemRem = useTrackerPlugin(
+    async (rp) => (ctx?.remId ? await rp.rem.findOne(ctx.remId) : null),
+    [ctx?.remId]
+  );
+  const offerOutlineToggle = useTrackerPlugin(
+    async (rp) => {
+      if (!ctx?.remId) return false;
+      const t = remAndType?.type;
+      if (t !== 'pdf' && t !== 'html') return false; // full-document reading types only
+      const entry = await getRemReadPoint(rp, ctx.remId);
+      return !!entry?.highlightId;
+    },
+    [ctx?.remId, remAndType?.type]
+  ) ?? false;
+  // false = Reader (default), true = Outline (ExtractViewer). Reset on card change.
+  const [outlineView, setOutlineView] = useState(false);
+  useEffect(() => { setOutlineView(false); }, [ctx?.remId]);
 
   // This hook signals the component's state.
   useEffect(() => {
@@ -343,6 +366,37 @@ export function QueueComponent() {
             </button>
           </div>
         )}
+        {offerOutlineToggle && (
+          <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 10 }}>
+            <button
+              onClick={() => setOutlineView((v) => !v)}
+              style={{
+                padding: '6px 10px',
+                borderRadius: 6,
+                border: `1px solid var(--rn-clr-border-primary, #e2e8f0)`,
+                backgroundColor: 'var(--rn-clr-background-primary, #ffffff)',
+                color: 'var(--rn-clr-content-secondary, #475569)',
+                cursor: 'pointer',
+                fontSize: 12,
+                fontWeight: 600,
+                boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--rn-clr-background-tertiary, #f1f5f9)';
+                e.currentTarget.style.borderColor = 'var(--rn-clr-border-secondary, #cbd5e1)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--rn-clr-background-primary, #ffffff)';
+                e.currentTarget.style.borderColor = 'var(--rn-clr-border-primary, #e2e8f0)';
+              }}
+              title={outlineView
+                ? 'Switch back to the PDF/HTML reader'
+                : 'Switch to the outline view to see your notes and the read point (without leaving the queue)'}
+            >
+              {outlineView ? '📄 Read document' : '📑 View outline'}
+            </button>
+          </div>
+        )}
         {!remAndType ? null : shouldShowIsolated && isolatedRem ? (
           <IsolatedCardViewer
             rem={isolatedRem}
@@ -356,7 +410,13 @@ export function QueueComponent() {
           remAndType.type === 'html' ||
           remAndType.type === 'pdf-highlight' ||
           remAndType.type === 'html-highlight' ? (
-          <Reader actionItem={remAndType} queueIncRemId={ctx?.remId} />
+          // Hybrid toggle: flip a PDF/HTML reading card to its outline (read-only
+          // ExtractViewer on the IncRem) when the user has chosen the outline view.
+          offerOutlineToggle && outlineView && incRemRem ? (
+            <ExtractViewer rem={incRemRem} plugin={plugin} />
+          ) : (
+            <Reader actionItem={remAndType} queueIncRemId={ctx?.remId} />
+          )
         ) : remAndType.type === 'youtube' ? (
           <VideoViewer actionItem={remAndType} />
         ) : remAndType.type === 'youtube-highlight' ? (

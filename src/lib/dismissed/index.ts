@@ -1,11 +1,14 @@
 import { RNPlugin, PluginRem } from '@remnote/plugin-sdk';
 import {
+    powerupCode,
     dismissedPowerupCode,
     dismissedHistorySlotCode,
     dismissedDateSlotCode,
 } from '../consts';
+import { transferPdfState } from '../pdf_state';
 import { IncrementalRep } from '../incremental_rem/types';
 import { tryParseJson, getDailyDocReferenceForDate } from '../utils';
+import { stampNoteAndContext } from '../history_notes';
 
 /**
  * Check if a Rem has the dismissed powerup.
@@ -52,11 +55,13 @@ export async function getDismissedHistoryFromRem(
  * @param plugin RNPlugin instance
  * @param rem The Rem to add dismissed powerup to
  * @param history The history array to store
+ * @param note Optional user-supplied reason for the dismissal, stored on the marker
  */
 export async function transferToDismissed(
     plugin: RNPlugin,
     rem: PluginRem,
-    history: IncrementalRep[]
+    history: IncrementalRep[],
+    note?: string
 ): Promise<void> {
     if (!history || history.length === 0) {
         return;
@@ -68,6 +73,11 @@ export async function transferToDismissed(
         scheduled: Date.now(),
         eventType: 'dismissed',
     };
+
+    // Attach the dismissal reason (explicit param, or a parked pending note) plus a
+    // reading-state snapshot (page/range/bookmark) — records how far the user got
+    // before dropping this rem, and survives even if the synced-storage keys are lost.
+    await stampNoteAndContext(plugin, rem, dismissedMarker, note);
 
     // Add the dismissed marker to the history
     const historyWithMarker = [...history, dismissedMarker];
@@ -91,6 +101,22 @@ export async function transferToDismissed(
         if (dateRef) {
             await rem.setPowerupProperty(dismissedPowerupCode, dismissedDateSlotCode, dateRef);
         }
+    }
+
+    // Carry the PDF reading state (page, range, page history, active PDF) from
+    // the Incremental powerup to the Dismissed one. This must run AFTER the
+    // Dismissed powerup exists — you cannot set a property for a powerup the Rem
+    // does not have — and BEFORE the caller removes the Incremental powerup,
+    // which would take the source property with it. Both powerups declare the
+    // same slot with the same shape, so this is a string copy.
+    //
+    // A Rem dismissed with no history returns early above and never gains the
+    // Dismissed powerup, so its reading state is not preserved either. That
+    // matches how history itself behaves: nothing was recorded, nothing is kept.
+    try {
+        await transferPdfState(rem, powerupCode, dismissedPowerupCode);
+    } catch (err) {
+        console.warn('[Dismissed] Could not carry PDF reading state across', err);
     }
 }
 

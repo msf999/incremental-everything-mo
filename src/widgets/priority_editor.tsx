@@ -6,12 +6,12 @@ import {
 } from '@remnote/plugin-sdk';
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { getIncrementalRemFromRem } from '../lib/incremental_rem';
-import { updateIncrementalRemCache } from '../lib/incremental_rem/cache';
-import { getCardPriority, setCardPriority, CardPriorityInfo } from '../lib/card_priority';
-import { allIncrementalRemKey, powerupCode, prioritySlotCode, allCardPriorityInfoKey, pageRangeWidgetId } from '../lib/consts';
+import { getCardPriority, CardPriorityInfo } from '../lib/card_priority';
+import { allIncrementalRemKey, allCardPriorityInfoKey, pageRangeWidgetId, pendingPriorityDeltaQueueKey, priorityEditorDisplayModeId } from '../lib/consts';
+import { withQueueMutex } from '../lib/mutex';
+import { PriorityDeltaEntry } from '../lib/quick_priority';
 import { IncrementalRem } from '../lib/incremental_rem';
 import { calculateRelativePercentile, formatDuration } from '../lib/utils';
-import { updateCardPriorityCache } from '../lib/card_priority/cache';
 import { PriorityBadge } from '../components';
 import {
   getActivePdfForIncRem,
@@ -23,21 +23,26 @@ import {
   getReadingStatistics,
   setIncrementalReadingPosition,
   addPageToHistory,
-  getPageRangeKey,
+  setIncrementalPageRange,
+  clearIncrementalPageRange,
   safeRemTextToString,
   PageHistoryEntry,
 } from '../lib/pdfUtils';
 import { openAndScrollToHighlight } from '../lib/remHelpers';
+import { getIESetting } from '../lib/settings';
 
 // Move styles outside component to avoid recreation on every render
 const adjustButtonStyle: React.CSSProperties = {
-  padding: '6px 10px',
+  flex: 1,
+  minWidth: 0,
+  padding: '5px 2px',
   borderRadius: '6px',
-  fontSize: '11px',
+  fontSize: '10px',
   fontWeight: 600,
   cursor: 'pointer',
   border: 'none',
   transition: 'all 0.15s ease',
+  textAlign: 'center',
 };
 
 export function PriorityEditor() {
@@ -181,7 +186,7 @@ export function PriorityEditor() {
         rem.hasPowerup('cardPriority'),
         plugin.storage.getSession<IncrementalRem[]>(allIncrementalRemKey),
         plugin.storage.getSession<CardPriorityInfo[]>(allCardPriorityInfoKey),
-        plugin.settings.getSetting<string>('priorityEditorDisplayMode'),
+        getIESetting(plugin, priorityEditorDisplayModeId),
       ]);
 
       // Calculate relative priorities inline
@@ -250,33 +255,48 @@ export function PriorityEditor() {
   const canShowIncRem = useMemo(() => !!incRemInfo, [incRemInfo]);
   const canShowCard = useMemo(() => hasCards || hasCardPriorityPowerup, [hasCards, hasCardPriorityPowerup]);
 
-  // Memoize callback functions to avoid recreation on every render
+  // Quick-priority buttons append a RELATIVE delta to the shared delta queue
+  // (the same one the Ctrl+Opt+Up/Down shortcuts use) instead of doing a direct
+  // read-modify-write of an absolute value. This fixes rapid-click loss: writing
+  // an absolute value computed from the (stale) captured `incRemInfo.priority`
+  // meant 3 fast clicks all read the same base and the last write won, so −10×3
+  // collapsed to −10. The background tracker drains the queue under a mutex,
+  // sums the deltas against the live DB value, and does a single write — so
+  // −10×3 now composes correctly to −30. The tracker also handles the
+  // inheritance cascade and cache refresh, so we no longer do those here.
   const quickUpdateIncPriority = useCallback(async (delta: number) => {
     if (!incRemInfo || !rem) return;
-    const newPriority = Math.max(0, Math.min(100, incRemInfo.priority + delta));
-    await rem.setPowerupProperty(powerupCode, prioritySlotCode, [newPriority.toString()]);
-
-    // Update the incremental rem cache
-    const updatedIncRem = await getIncrementalRemFromRem(plugin, rem);
-    if (updatedIncRem) {
-      await updateIncrementalRemCache(plugin, updatedIncRem);
-    }
-    
-    // Trigger inheritance cascade in the background tracker
-    await plugin.storage.setSession('pendingInheritanceCascade', rem._id);
-  }, [incRemInfo, rem, plugin]);
+    const targetRemId = rem._id;
+    withQueueMutex(async () => {
+      const existing = await plugin.storage.getSession<PriorityDeltaEntry[]>(pendingPriorityDeltaQueueKey) || [];
+      existing.push({
+        remId: targetRemId,
+        incDelta: delta,
+        cardDelta: 0,
+        hasIncPowerup: true,
+        hasCards: hasCards,
+        hasCardPriorityPowerup: hasCardPriorityPowerup,
+      });
+      await plugin.storage.setSession(pendingPriorityDeltaQueueKey, existing);
+    }).catch((err) => console.error('[PriorityEditor] Failed to queue inc delta:', err));
+  }, [incRemInfo, rem, plugin, hasCards, hasCardPriorityPowerup]);
 
   const quickUpdateCardPriority = useCallback(async (delta: number) => {
     if (!rem) return;
-    const currentPriority = cardInfo?.priority ?? 50;
-    const newPriority = Math.max(0, Math.min(100, currentPriority + delta));
-
-    await setCardPriority(plugin, rem, newPriority, 'manual');
-    await updateCardPriorityCache(plugin, rem._id);
-
-    // Trigger inheritance cascade in the background tracker
-    await plugin.storage.setSession('pendingInheritanceCascade', rem._id);
-  }, [rem, cardInfo, plugin]);
+    const targetRemId = rem._id;
+    withQueueMutex(async () => {
+      const existing = await plugin.storage.getSession<PriorityDeltaEntry[]>(pendingPriorityDeltaQueueKey) || [];
+      existing.push({
+        remId: targetRemId,
+        incDelta: 0,
+        cardDelta: delta,
+        hasIncPowerup: !!incRemInfo,
+        hasCards: hasCards,
+        hasCardPriorityPowerup: hasCardPriorityPowerup,
+      });
+      await plugin.storage.setSession(pendingPriorityDeltaQueueKey, existing);
+    }).catch((err) => console.error('[PriorityEditor] Failed to queue card delta:', err));
+  }, [rem, plugin, incRemInfo, hasCards, hasCardPriorityPowerup]);
 
   // Memoize whether card priority is manual (for visual indicator)
   const isCardPriorityManual = useMemo(
@@ -288,12 +308,11 @@ export function PriorityEditor() {
   const pdfSaveRange = useCallback(async () => {
     if (pdfEdit.mode !== 'range' || !remId || !hostPdfRemId) return;
     const { start, end } = pdfEdit;
-    const rangeKey = getPageRangeKey(remId, hostPdfRemId);
     if (start > 1 || end > 0) {
-      await plugin.storage.setSynced(rangeKey, { start, end });
+      await setIncrementalPageRange(plugin, remId, hostPdfRemId, start, end);
       await plugin.app.toast(`Saved page range: ${start}–${end || '∞'}`);
     } else {
-      await plugin.storage.setSynced(rangeKey, null);
+      await clearIncrementalPageRange(plugin, remId, hostPdfRemId);
       await plugin.app.toast('Cleared page range');
     }
     setPdfEdit({ mode: 'none' });
@@ -494,7 +513,7 @@ export function PriorityEditor() {
                 </div>
                 <PriorityBadge priority={incRemInfo.priority} percentile={incRemRelativePriority ?? undefined} compact />
               </div>
-              <div className="flex items-center justify-center gap-1">
+              <div className="flex items-center justify-center gap-0.5">
                 <button
                   onClick={() => quickUpdateIncPriority(-10)}
                   style={{ ...adjustButtonStyle, backgroundColor: '#ef4444', color: 'white' }}
@@ -504,8 +523,16 @@ export function PriorityEditor() {
                   −10
                 </button>
                 <button
-                  onClick={() => quickUpdateIncPriority(-1)}
+                  onClick={() => quickUpdateIncPriority(-5)}
                   style={{ ...adjustButtonStyle, backgroundColor: '#f97316', color: 'white' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.8'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
+                >
+                  −5
+                </button>
+                <button
+                  onClick={() => quickUpdateIncPriority(-1)}
+                  style={{ ...adjustButtonStyle, backgroundColor: '#fb923c', color: 'white' }}
                   onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.8'; }}
                   onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
                 >
@@ -513,11 +540,19 @@ export function PriorityEditor() {
                 </button>
                 <button
                   onClick={() => quickUpdateIncPriority(1)}
-                  style={{ ...adjustButtonStyle, backgroundColor: '#22c55e', color: 'white' }}
+                  style={{ ...adjustButtonStyle, backgroundColor: '#4ade80', color: 'white' }}
                   onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.8'; }}
                   onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
                 >
                   +1
+                </button>
+                <button
+                  onClick={() => quickUpdateIncPriority(5)}
+                  style={{ ...adjustButtonStyle, backgroundColor: '#22c55e', color: 'white' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.8'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
+                >
+                  +5
                 </button>
                 <button
                   onClick={() => quickUpdateIncPriority(10)}
@@ -557,7 +592,7 @@ export function PriorityEditor() {
                 </div>
                 <PriorityBadge priority={cardInfo?.priority ?? 50} percentile={cardRelativePriority ?? undefined} compact source={cardInfo?.source} isCardPriority={true} />
               </div>
-              <div className="flex items-center justify-center gap-1">
+              <div className="flex items-center justify-center gap-0.5">
                 <button
                   onClick={() => quickUpdateCardPriority(-10)}
                   style={{ ...adjustButtonStyle, backgroundColor: '#ef4444', color: 'white' }}
@@ -567,8 +602,16 @@ export function PriorityEditor() {
                   −10
                 </button>
                 <button
-                  onClick={() => quickUpdateCardPriority(-1)}
+                  onClick={() => quickUpdateCardPriority(-5)}
                   style={{ ...adjustButtonStyle, backgroundColor: '#f97316', color: 'white' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.8'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
+                >
+                  −5
+                </button>
+                <button
+                  onClick={() => quickUpdateCardPriority(-1)}
+                  style={{ ...adjustButtonStyle, backgroundColor: '#fb923c', color: 'white' }}
                   onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.8'; }}
                   onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
                 >
@@ -576,11 +619,19 @@ export function PriorityEditor() {
                 </button>
                 <button
                   onClick={() => quickUpdateCardPriority(1)}
-                  style={{ ...adjustButtonStyle, backgroundColor: '#22c55e', color: 'white' }}
+                  style={{ ...adjustButtonStyle, backgroundColor: '#4ade80', color: 'white' }}
                   onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.8'; }}
                   onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
                 >
                   +1
+                </button>
+                <button
+                  onClick={() => quickUpdateCardPriority(5)}
+                  style={{ ...adjustButtonStyle, backgroundColor: '#22c55e', color: 'white' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.8'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
+                >
+                  +5
                 </button>
                 <button
                   onClick={() => quickUpdateCardPriority(10)}

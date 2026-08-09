@@ -19,6 +19,12 @@ import {
   incrementalQueueActiveKey,
   currentIncrementalRemTypeKey,
   displayWeightedShieldId,
+  sourceFloatingActiveIdKey,
+  autoFocusQueueDashboardId,
+  pendingQueueDashboardRefocusKey,
+  flashcardHistoryTextLimit,
+  remHistoryTextLimit,
+  enableMasteryDrillId,
 } from '../lib/consts';
 import {
   CardPriorityInfo,
@@ -58,6 +64,7 @@ import type { FlashcardHistoryData } from '../widgets/flashcard_history';
 import { registerQueueSessionTracking, saveCurrentSession, hasActiveSession } from '../lib/queue_session';
 import { shouldUseLightMode } from '../lib/mobileUtils';
 import dayjs from 'dayjs';
+import { getIESetting } from '../lib/settings';
 
 // Debounce/timeout constants
 const CARD_PROCESSING_DEBOUNCE_MS = 2000;
@@ -177,7 +184,7 @@ export function registerQueueExitListener(
       const seenRemIds = (await plugin.storage.getSession<string[]>(seenRemInSessionKey)) || [];
       const seenCardIds = (await plugin.storage.getSession<string[]>(seenCardInSessionKey)) || [];
 
-      const displayWeighted = await plugin.settings.getSetting<boolean>(displayWeightedShieldId) ?? false;
+      const displayWeighted = await getIESetting(plugin, displayWeightedShieldId);
 
       // Save KB-level shields
       if (shouldSaveIncRem) {
@@ -416,7 +423,7 @@ export function registerQueueEnterListener(
     };
 
     // Pre-compute Weighted Shield values if the setting is enabled
-    const displayWeighted = await plugin.settings.getSetting<boolean>(displayWeightedShieldId) ?? false;
+    const displayWeighted = await getIESetting(plugin, displayWeightedShieldId);
     if (displayWeighted && !(await shouldUseLightMode(plugin))) {
       const allIncRems_ws = (await plugin.storage.getSession<IncrementalRem[]>(allIncrementalRemKey)) || [];
       const seenRemIds_ws = (await plugin.storage.getSession<string[]>(seenRemInSessionKey)) || [];
@@ -521,7 +528,7 @@ export function registerQueueCompleteCardListener(plugin: ReactRNPlugin) {
         }
       }
 
-      // Cluster-aware: prefer the sibling cardId signaled by card_priority_display widget.
+      // Cluster-aware: prefer the sibling cardId signaled by card_info_bar widget.
       // Falls back to data.cardId when the widget hasn't mounted or hasn't signaled yet.
       // Note: do NOT clear clusterVisibleCardId here — queue_session.ts also reads it in
       // its own QueueCompleteCard listener, and clear order across listeners is not
@@ -557,8 +564,8 @@ export function registerQueueCompleteCardListener(plugin: ReactRNPlugin) {
           try {
             const frontRaw = rem?.text ? await safeRemTextToString(plugin, rem.text) : '';
             const backRaw = rem?.backText ? await safeRemTextToString(plugin, rem.backText) : '';
-            frontText = typeof frontRaw === 'string' && frontRaw !== 'Untitled' ? frontRaw.substring(0, 1000) : '';
-            backText = typeof backRaw === 'string' && backRaw !== 'Untitled' ? backRaw.substring(0, 1000) : '';
+            frontText = typeof frontRaw === 'string' && frontRaw !== 'Untitled' ? frontRaw.substring(0, flashcardHistoryTextLimit) : '';
+            backText = typeof backRaw === 'string' && backRaw !== 'Untitled' ? backRaw.substring(0, flashcardHistoryTextLimit) : '';
           } catch (error) {
             console.warn('Error parsing Rem text for flashcard history:', error);
             frontText = '[Complex Media Rem]';
@@ -574,7 +581,6 @@ export function registerQueueCompleteCardListener(plugin: ReactRNPlugin) {
               key: Math.random(),
               remId,
               cardId: effectiveCardId,
-              open: false,
               time: new Date().getTime(),
               kbId: currentKbId,
               text,
@@ -618,12 +624,10 @@ export function registerQueueCompleteCardListener(plugin: ReactRNPlugin) {
 
       // Mastery Drill: add AGAIN/HARD cards, remove on GOOD+.
       // Runs unconditionally (not gated by Light Mode).
-      // Gated by the 'skip_mastery_drill' setting.
+      // Gated by the 'enable-mastery-drill' setting.
       if (score !== undefined && remId) {
-        const skipMasteryDrill = Boolean(
-          await plugin.settings.getSetting('skip_mastery_drill')
-        );
-        if (!skipMasteryDrill) {
+        const masteryDrillEnabled = await getIESetting(plugin, enableMasteryDrillId);
+        if (masteryDrillEnabled) {
           try {
             const kbData = await plugin.kb.getCurrentKnowledgeBaseData();
             const currentKbId = kbData?._id;
@@ -695,7 +699,7 @@ export function registerGlobalRemChangedListener(plugin: ReactRNPlugin) {
       // --- Cluster card drill detection ---
       // QueueCompleteCard does not fire for cluster card ratings. GlobalRemChanged fires instead,
       // but with the cluster PARENT rem's ID — not the individual child card rem IDs. The bridge
-      // is clusterVisibleCardId: card_priority_display writes the sibling's cardId there before
+      // is clusterVisibleCardId: card_info_bar writes the sibling's cardId there before
       // the user can rate it, and GlobalRemChanged fires before QueueLoadCard clears it for the
       // next card. So at the time this runs, clusterVisibleCardId == the sibling just rated.
       //
@@ -708,8 +712,8 @@ export function registerGlobalRemChangedListener(plugin: ReactRNPlugin) {
       // settings read and the recentlyProcessedCards bookkeeping below.
       const clusterCardId = await plugin.storage.getSession<string>('clusterVisibleCardId');
       if (clusterCardId) {
-        const skipMasteryDrill = Boolean(await plugin.settings.getSetting('skip_mastery_drill'));
-        if (!skipMasteryDrill && !recentlyProcessedCards.has(data.remId)) {
+        const masteryDrillEnabled = await getIESetting(plugin, enableMasteryDrillId);
+        if (masteryDrillEnabled && !recentlyProcessedCards.has(data.remId)) {
           // Claim this remId synchronously before the first await so concurrent GlobalRemChanged
           // fires for the same cluster rating don't both pass this guard and double-write.
           // We use a finally block (not a fixed TTL) to release the claim: the async work takes
@@ -764,8 +768,8 @@ export function registerGlobalRemChangedListener(plugin: ReactRNPlugin) {
                   try {
                     const frontRaw = clusterRem?.text ? await safeRemTextToString(plugin, clusterRem.text) : '';
                     const backRaw = clusterRem?.backText ? await safeRemTextToString(plugin, clusterRem.backText) : '';
-                    frontText = typeof frontRaw === 'string' && frontRaw !== 'Untitled' ? frontRaw.substring(0, 1000) : '';
-                    backText = typeof backRaw === 'string' && backRaw !== 'Untitled' ? backRaw.substring(0, 1000) : '';
+                    frontText = typeof frontRaw === 'string' && frontRaw !== 'Untitled' ? frontRaw.substring(0, flashcardHistoryTextLimit) : '';
+                    backText = typeof backRaw === 'string' && backRaw !== 'Untitled' ? backRaw.substring(0, flashcardHistoryTextLimit) : '';
                   } catch (_e) {
                     frontText = '[Complex Media Rem]';
                   }
@@ -776,7 +780,6 @@ export function registerGlobalRemChangedListener(plugin: ReactRNPlugin) {
                       key: Math.random(),
                       remId: card?.remId,
                       cardId: clusterCardId,
-                      open: false,
                       time: new Date().getTime(),
                       kbId: currentKbId,
                       text,
@@ -904,12 +907,15 @@ export function registerGlobalRemChangedListener(plugin: ReactRNPlugin) {
                 // Calculate the new interval in days
                 const intervalDays = Math.round((currentIncRem.nextRepDate - Date.now()) / (1000 * 60 * 60 * 24));
 
-                // Add manualDateReset event to history
+                // Add manualDateReset event to history. Stamp nextRepMs with the user's
+                // new date so the read-time fallback stays in sync if they ever edit the
+                // chip to a date whose daily doc doesn't round-trip its 'Date' property.
                 const newHistoryEntry: IncrementalRep = {
                   date: Date.now(),
                   scheduled: oldNextRepDate,
                   interval: Math.max(0, intervalDays),
                   eventType: 'manualDateReset' as const,
+                  nextRepMs: currentIncRem.nextRepDate,
                 };
 
                 const updatedHistory: IncrementalRep[] = [
@@ -1073,8 +1079,16 @@ export function registerGlobalOpenRemListener(plugin: ReactRNPlugin) {
     try {
       const frontRaw = rem?.text ? await safeRemTextToString(plugin, rem.text) : '';
       const backRaw = rem?.backText ? await safeRemTextToString(plugin, rem.backText) : '';
-      frontText = typeof frontRaw === 'string' && frontRaw !== 'Untitled' ? frontRaw : '';
-      backText = typeof backRaw === 'string' && backRaw !== 'Untitled' ? backRaw : '';
+      // Capped to match the widget's own backfill: this writer had no limit at
+      // all, so visiting a Rem with a long body stored the whole thing.
+      frontText =
+        typeof frontRaw === 'string' && frontRaw !== 'Untitled'
+          ? frontRaw.substring(0, remHistoryTextLimit)
+          : '';
+      backText =
+        typeof backRaw === 'string' && backRaw !== 'Untitled'
+          ? backRaw.substring(0, remHistoryTextLimit)
+          : '';
     } catch (error) {
       console.warn('Error parsing Rem text for visited history:', error);
     }
@@ -1085,7 +1099,6 @@ export function registerGlobalOpenRemListener(plugin: ReactRNPlugin) {
       {
         key: Math.random(),
         remId: currentRemId,
-        open: false,
         time: new Date().getTime(),
         kbId: currentKbId,
         text,
@@ -1099,7 +1112,7 @@ export function registerGlobalOpenRemListener(plugin: ReactRNPlugin) {
 /**
  * Handles Mastery Drill add/remove for cards that are presented inside the drill popup
  * but whose ratings produce no QueueCompleteCard event (cluster cards) and whose
- * clusterVisibleCardId signal is unavailable (card_priority_display is not mounted there).
+ * clusterVisibleCardId signal is unavailable (card_info_bar is not mounted there).
  *
  * Strategy: on each QueueLoadCard (next card loaded → previous card was just rated) and on
  * QueueExit (last card in drill), check the previous card's latest repetition history entry.
@@ -1118,8 +1131,8 @@ function registerDrillCardRatingListener(plugin: ReactRNPlugin) {
     const isFinalDrillActive = await plugin.storage.getSession<boolean>('finalDrillActive');
     if (!isFinalDrillActive) return;
 
-    const skipMasteryDrill = Boolean(await plugin.settings.getSetting('skip_mastery_drill'));
-    if (skipMasteryDrill) return;
+    const masteryDrillEnabled = await getIESetting(plugin, enableMasteryDrillId);
+    if (!masteryDrillEnabled) return;
 
     const card = await plugin.card.findOne(prevDrillCardId);
     const history = card?.repetitionHistory;
@@ -1163,8 +1176,8 @@ function registerDrillCardRatingListener(plugin: ReactRNPlugin) {
         try {
           const frontRaw = drillRem?.text ? await safeRemTextToString(plugin, drillRem.text) : '';
           const backRaw = drillRem?.backText ? await safeRemTextToString(plugin, drillRem.backText) : '';
-          frontText = typeof frontRaw === 'string' && frontRaw !== 'Untitled' ? frontRaw.substring(0, 1000) : '';
-          backText = typeof backRaw === 'string' && backRaw !== 'Untitled' ? backRaw.substring(0, 1000) : '';
+          frontText = typeof frontRaw === 'string' && frontRaw !== 'Untitled' ? frontRaw.substring(0, flashcardHistoryTextLimit) : '';
+          backText = typeof backRaw === 'string' && backRaw !== 'Untitled' ? backRaw.substring(0, flashcardHistoryTextLimit) : '';
         } catch (_e) {
           frontText = '[Complex Media Rem]';
         }
@@ -1175,7 +1188,6 @@ function registerDrillCardRatingListener(plugin: ReactRNPlugin) {
             key: Math.random(),
             remId: card?.remId,
             cardId,
-            open: false,
             time: new Date().getTime(),
             kbId: currentKbId,
             text,
@@ -1215,4 +1227,76 @@ export function registerEventListeners(
   registerGlobalOpenRemListener(plugin);
   registerQueueSessionTracking(plugin);
   registerDrillCardRatingListener(plugin);
+
+  registerHoveredReferenceTracking(plugin);
+  registerQueueDashboardRefocusListener(plugin);
+}
+
+/**
+ * Restores the Practiced Queues dashboard after the user advances past an
+ * IncRem. The IncRem "Next" paths (lib/incremental_rem) drop a short-lived
+ * timestamp flag just before they advance the queue; we consume it here, in the
+ * plugin's persistent context, once the next card has loaded — because the
+ * widget that pressed Next has been torn down by then and can't make the call
+ * itself (its window call would hang). Gated by the "Auto focus Queue Dashboard"
+ * setting. Filter the console with [QDASH] to trace this.
+ */
+function registerQueueDashboardRefocusListener(plugin: ReactRNPlugin) {
+  const STALE_MS = 5000;
+  plugin.event.addListener(AppEvents.QueueLoadCard, undefined, async () => {
+    const requestedAt = await plugin.storage.getSession<number>(pendingQueueDashboardRefocusKey);
+    if (!requestedAt) return;
+    // Always clear, even if stale/disabled, so it can't fire on a later card.
+    await plugin.storage.setSession(pendingQueueDashboardRefocusKey, undefined);
+    if (Date.now() - requestedAt > STALE_MS) return;
+    const autoFocus = await getIESetting(plugin, autoFocusQueueDashboardId);
+    if (!autoFocus) return;
+    try {
+      await plugin.window.openWidgetInRightSidebar('practiced_queues');
+    } catch (e) {
+      console.warn(`[QDASH] dashboard refocus FAILED:`, e);
+    }
+  });
+}
+
+/**
+ * Tracks which reference is currently hovered in the editor/queue.
+ *
+ * `MouseOverLink` fires repeatedly while the cursor sits on a link, so we keep
+ * this handler cheap: just record the target rem id + coords synchronously. The
+ * expensive classification (is this a PDF/HTML source?) is deferred to whoever
+ * consumes the hovered target via `getHoveredReference()`.
+ */
+let hoveredReference: { remId: RemId; clientX: number; clientY: number } | null = null;
+
+export function getHoveredReference() {
+  return hoveredReference;
+}
+
+function registerHoveredReferenceTracking(plugin: ReactRNPlugin) {
+  plugin.event.addListener(AppEvents.MouseOverLink, undefined, (e: any) => {
+    if (e?.remId) {
+      hoveredReference = { remId: e.remId, clientX: e.clientX, clientY: e.clientY };
+    }
+  });
+  plugin.event.addListener(AppEvents.MouseOutLink, undefined, (e: any) => {
+    // Only clear if we're leaving the link we currently have stored, to avoid a
+    // stale out-event wiping a fresher hover.
+    if (!e?.remId || hoveredReference?.remId === e.remId) {
+      hoveredReference = null;
+    }
+  });
+
+  // Auto-close the floating Source window when the queue advances to a new card,
+  // so a previous card's source never lingers (stale) over the new one.
+  plugin.event.addListener(AppEvents.QueueLoadCard, undefined, async () => {
+    const activeId = await plugin.storage.getSession<string>(sourceFloatingActiveIdKey);
+    if (!activeId) return;
+    await plugin.storage.setSession(sourceFloatingActiveIdKey, undefined);
+    try {
+      await plugin.window.closeFloatingWidget(activeId);
+    } catch {
+      /* already closed */
+    }
+  });
 }

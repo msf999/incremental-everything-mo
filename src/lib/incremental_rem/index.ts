@@ -18,15 +18,21 @@ import {
   defaultPriorityId,
   currentIncRemKey,
   incremReviewStartTimeKey,
+  pendingQueueDashboardRefocusKey,
+  dismissedPowerupCode,
 } from '../consts';
 import parseDuration from 'parse-duration';
+import { readRawPdfState, writeRawPdfState } from '../pdf_state';
 import { getNextSpacingDateForRem, updateSRSDataForRem } from '../scheduler';
-import { IncrementalRem } from './types';
+import { IncrementalRem, IncrementalRep, UNREADABLE_PRIORITY_FALLBACK } from './types';
 import { tryParseJson, getDailyDocReferenceForDate, sleep } from '../utils';
 import { getInitialPriority } from '../priority_inheritance';
+import { stampNoteAndContext } from '../history_notes';
 import { updateIncrementalRemCache } from './cache';
 import { mergeHistoryFromDismissed } from '../dismissed';
 import { registerRemsAsPdfKnown, registerRemsAsHtmlKnown, isHtmlSource } from '../pdfUtils';
+import { syncPriorityBand } from '../priority_bands';
+import { getIESetting } from '../settings';
 
 type ReviewOverrideOptions = {
   /**
@@ -39,6 +45,46 @@ type ReviewOverrideOptions = {
    */
   overrideIntervalDays?: number;
 };
+
+/**
+ * THE write path for an Incremental Rem's priority. Use this instead of calling
+ * `rem.setPowerupProperty(powerupCode, prioritySlotCode, …)` directly.
+ *
+ * Why it exists: the priority slot is not the only thing that has to move when a
+ * priority changes — the table-cell badge is drawn from a `PriorityBand0–9`
+ * powerup tag that mirrors the effective priority (see lib/priority_bands.ts),
+ * and `effectivePriorityForBadge` reads the INCREMENTAL slot in preference to the
+ * card-priority one for any rem carrying the IncRem powerup. Card priority got
+ * this for free because every writer already went through `setCardPriority`,
+ * which syncs the band internally. Incremental priority had no such chokepoint,
+ * so each of eleven call sites was expected to remember `syncPriorityBand` — and
+ * eight of them did not, leaving stale badges after batch priority changes, the
+ * Priority & Interval batch save, reschedules, editor reviews and the list views.
+ * Routing every writer through here makes that impossible to forget again.
+ *
+ * `syncPriorityBand` writes nothing when the band is already correct (and returns
+ * early for the large majority of rems, which aren't band-eligible), so this is
+ * cheap on the common path and cannot loop. A band-sync failure is logged and
+ * swallowed: the badge is a derived mirror, and losing it must never cost the
+ * caller the priority write that just succeeded.
+ *
+ * Static import of priority_bands, matching card_priority/index.ts: a dynamic
+ * import() emits a chunk the RemNote index sandbox evaluates as a classic script,
+ * which dies on `import.meta` (see the note atop register/tracker.ts).
+ * priority_bands imports only consts + card_priority/types, so there is no cycle.
+ */
+export async function setIncRemPriority(
+  plugin: RNPlugin,
+  rem: PluginRem,
+  priority: number
+): Promise<void> {
+  await rem.setPowerupProperty(powerupCode, prioritySlotCode, [priority.toString()]);
+  try {
+    await syncPriorityBand(plugin, rem);
+  } catch (err) {
+    console.error('[IncRem] band sync failed', err);
+  }
+}
 
 /**
  * Persists the results of reviewing an incremental rem.
@@ -90,6 +136,16 @@ export async function updateReviewRemData(
     lastEntry.reviewTimeSeconds = reviewTimeSeconds;
   }
 
+  // Stamp any pending user note (parked by the review-note inputs) and a
+  // machine context snapshot (page/range/bookmark) onto the entry this review
+  // just created — same pattern as the reviewTimeSeconds annotation above.
+  if (lastEntry) {
+    const rem = await plugin.rem.findOne(incRem.remId);
+    if (rem) {
+      await stampNoteAndContext(plugin, rem, lastEntry);
+    }
+  }
+
   // Apply manual overrides when provided (used by drag-to-next/today UX)
   if (overrideOptions?.overrideIntervalDays !== undefined && lastEntry) {
     lastEntry.interval = overrideOptions.overrideIntervalDays;
@@ -113,6 +169,28 @@ export async function updateReviewRemData(
   await updateSRSDataForRem(plugin, incRem.remId, nextRepDateToUse, newHistory);
 
   return { ...nextSpacing, newNextRepDate: nextRepDateToUse, newHistory };
+}
+
+// Request that the Practiced Queues dashboard be restored in the right sidebar
+// after we advance past this IncRem (the sidebar may have been taken over for
+// editing — ExtractViewer auto-opens notes for rem items, and RemNote auto-
+// focuses its own Summary pane for PDF/HTML).
+//
+// IMPORTANT: we must NOT call plugin.window.openWidgetInRightSidebar here. This
+// runs in a widget sandbox (e.g. the answer buttons) that is destroyed the
+// instant `removeCurrentCardFromQueue` advances the queue, so any window call
+// after that hangs (observed: a 40s stall) or never runs. Instead we drop a
+// short-lived timestamp flag *before* advancing (a fast session write that
+// completes while the sandbox is alive); a persistent QueueLoadCard listener in
+// register/events.ts consumes it and performs the actual refocus once the next
+// card has loaded. This only runs from the IncRem "Next" paths, so plain
+// flashcard ratings never touch the sidebar.
+export async function requestQueueDashboardRefocus(plugin: RNPlugin, source: string) {
+  try {
+    await plugin.storage.setSession(pendingQueueDashboardRefocusKey, Date.now());
+  } catch (e) {
+    console.warn(`[QDASH] failed to set refocus flag from "${source}":`, e);
+  }
 }
 
 export async function handleNextRepetitionClick(
@@ -142,6 +220,10 @@ export async function handleNextRepetitionClick(
     // Keep the sleep to be safe
     await sleep(150);
 
+    // Flag the refocus BEFORE advancing — removeCurrentCardFromQueue tears down
+    // this widget sandbox, so the actual refocus is done by the persistent
+    // QueueLoadCard listener in register/events.ts.
+    await requestQueueDashboardRefocus(plugin, 'handleNextRepetitionClick');
     await plugin.queue.removeCurrentCardFromQueue();
   } finally {
     await plugin.storage.setSession('plugin_operation_active', false);
@@ -167,14 +249,18 @@ export async function handleNextRepetitionManualOffset(
 
     const targetDay = dayjs().startOf('day').add(Math.max(offsetDays, 0), 'day').valueOf();
 
-    const newHistory = [
-      ...(incRem.history || []),
-      {
-        date: Date.now(),
-        scheduled: targetDay,
-        interval: Math.max(offsetDays, 0),
-      },
-    ];
+    const manualEntry: IncrementalRep = {
+      date: Date.now(),
+      scheduled: targetDay,
+      interval: Math.max(offsetDays, 0),
+    };
+    // Same note/context stamping as the regular review funnel.
+    const remForStamp = await plugin.rem.findOne(incRem.remId);
+    if (remForStamp) {
+      await stampNoteAndContext(plugin, remForStamp, manualEntry);
+    }
+
+    const newHistory = [...(incRem.history || []), manualEntry];
 
     await updateSRSDataForRem(plugin, incRem.remId, targetDay, newHistory);
 
@@ -187,6 +273,7 @@ export async function handleNextRepetitionManualOffset(
 
     await updateIncrementalRemCache(plugin as any, updatedIncRem);
 
+    await requestQueueDashboardRefocus(plugin, 'handleNextRepetitionManualOffset');
     await plugin.queue.removeCurrentCardFromQueue();
   } finally {
     await plugin.storage.setSession('plugin_operation_active', false);
@@ -240,32 +327,64 @@ export const getIncrementalRemFromRem = async (
   if (!r) {
     return null;
   }
-  const nextRepDateRichText = (await r.getPowerupPropertyAsRichText(
-    powerupCode,
-    nextRepDateSlotCode
-  )) as RichTextElementRemInterface[];
-  if (!nextRepDateRichText || nextRepDateRichText.length === 0 || !nextRepDateRichText[0]?._id) {
+
+  // A rem is incremental iff it carries the Incremental powerup. Resolution failures
+  // of the next-rep Daily Doc reference below must NOT make an incremental rem vanish
+  // from the cache/list — that is exactly what made interval-0 (today-referenced)
+  // rems disappear. We gate on the powerup and fall back to "due now" instead of
+  // returning null; null is reserved for rems that genuinely aren't incremental.
+  if (!(await r.hasPowerup(powerupCode))) {
     return null;
   }
 
-  const nextRepDateDoc = await plugin.rem.findOne(nextRepDateRichText[0]._id);
-  if (!nextRepDateDoc) {
-    return null;
-  }
+  // Resolves a Daily Document reference stored in a DATE slot back to a timestamp,
+  // or undefined when the slot is empty or the reference can't be resolved.
+  const resolveDailyDocSlot = async (slotCode: string): Promise<number | undefined> => {
+    const richText = (await r.getPowerupPropertyAsRichText(
+      powerupCode,
+      slotCode
+    )) as RichTextElementRemInterface[];
+    const refId = richText?.[0]?._id;
+    if (!refId) {
+      return undefined;
+    }
+    const refDoc = await plugin.rem.findOne(refId);
+    if (!refDoc) {
+      return undefined;
+    }
+    const yyyymmdd = await refDoc.getPowerupProperty<BuiltInPowerupCodes.DailyDocument>(
+      BuiltInPowerupCodes.DailyDocument,
+      'Date'
+    );
+    if (!yyyymmdd) {
+      return undefined;
+    }
+    return dayjs(yyyymmdd, 'YYYY-MM-DD').valueOf();
+  };
 
-  const yyyymmdd = await nextRepDateDoc.getPowerupProperty<BuiltInPowerupCodes.DailyDocument>(
-    BuiltInPowerupCodes.DailyDocument,
-    'Date'
-  );
+  const resolvedNextRepDate = await resolveDailyDocSlot(nextRepDateSlotCode);
 
-  if (!yyyymmdd) {
-    return null;
-  }
+  // Read the original incremental date slot (Daily Document reference)
+  let createdAt = await resolveDailyDocSlot(originalIncrementalDateSlotCode);
 
-  const date = dayjs(yyyymmdd, 'YYYY-MM-DD');
+  const history = tryParseJson(await r.getPowerupProperty(powerupCode, repHistorySlotCode));
 
+  // Priority resolution. The slot is authoritative, but it is not always
+  // readable: RemNote's storage/sync overhaul left some Rems with a Priority
+  // property whose slot definition no longer resolves, so getPowerupProperty
+  // returns nothing while the value is still sitting on the Rem.
+  //
+  // This used to fall straight through to a bare `let priority = 10`, which was
+  // indistinguishable from a genuinely stored 10 — a Rem whose history proved a
+  // priority of 17 displayed as P10 with nothing to say it was a guess. Worse,
+  // that fabricated number was then stamped into the next history entry
+  // (see scheduler.ts), turning a display glitch into permanent data.
+  //
+  // So: read the slot; failing that, recover the last priority the Rem itself
+  // recorded in its history; and only if there is nothing to go on at all fall
+  // back to a constant — flagged, never silent.
   const priorityRichText = await r.getPowerupPropertyAsRichText(powerupCode, prioritySlotCode);
-  let priority = 10;
+  let priority: number | undefined;
   if (priorityRichText && priorityRichText.length > 0) {
     const priorityString = await plugin.richText.toString(priorityRichText);
     const parsedPriority = parseInt(priorityString, 10);
@@ -274,6 +393,24 @@ export const getIncrementalRemFromRem = async (
     }
   }
 
+  let prioritySource: IncrementalRem['prioritySource'] = 'slot';
+  if (priority === undefined && Array.isArray(history)) {
+    // Walk backwards to the most recent rep that recorded a priority.
+    for (let i = history.length - 1; i >= 0; i--) {
+      const recorded = history[i]?.priority;
+      if (typeof recorded === 'number' && !isNaN(recorded)) {
+        priority = recorded;
+        prioritySource = 'history';
+        break;
+      }
+    }
+  }
+  if (priority === undefined) {
+    priority = UNREADABLE_PRIORITY_FALLBACK;
+    prioritySource = 'fallback';
+  }
+  priority = Math.min(100, Math.max(0, priority));
+
   const rotationRichText = await r.getPowerupPropertyAsRichText(powerupCode, rotationSlotCode);
   let rotation: string | undefined;
   if (rotationRichText && rotationRichText.length > 0) {
@@ -281,30 +418,49 @@ export const getIncrementalRemFromRem = async (
     if (rotationStr) rotation = rotationStr;
   }
 
-  // Read the original incremental date slot (Daily Document reference)
-  let createdAt: number | undefined;
-  const createdAtRichText = (await r.getPowerupPropertyAsRichText(
-    powerupCode,
-    originalIncrementalDateSlotCode
-  )) as RichTextElementRemInterface[];
-  if (createdAtRichText && createdAtRichText.length > 0 && createdAtRichText[0]?._id) {
-    const createdAtDoc = await plugin.rem.findOne(createdAtRichText[0]._id);
-    if (createdAtDoc) {
-      const createdAtYYYYMMDD = await createdAtDoc.getPowerupProperty<BuiltInPowerupCodes.DailyDocument>(
-        BuiltInPowerupCodes.DailyDocument,
-        'Date'
-      );
-      if (createdAtYYYYMMDD) {
-        createdAt = dayjs(createdAtYYYYMMDD, 'YYYY-MM-DD').valueOf();
-      }
+  // Fallback: derive createdAt from the 'madeIncremental' history marker when the
+  // originalIncDate slot is empty/unresolvable. This repairs rems whose Daily Doc
+  // reference failed to write (e.g. the concurrent getDailyDoc race in
+  // initIncrementalRem) or resolve, and legacy rems created before the slot existed.
+  // The marker's `date` is exactly when the rem was first made incremental, and we
+  // store it as start-of-day to match the Daily-Doc-derived value.
+  if (createdAt === undefined && Array.isArray(history)) {
+    const madeMarker = history.find((h: any) => h?.eventType === 'madeIncremental');
+    const fallbackDate =
+      typeof madeMarker?.date === 'number'
+        ? madeMarker.date
+        : typeof history[0]?.date === 'number'
+        ? history[0].date
+        : undefined;
+    if (fallbackDate !== undefined) {
+      createdAt = dayjs(fallbackDate).startOf('day').valueOf();
     }
+  }
+
+  // Next-rep date resolution order:
+  //  1. The Daily Doc reference — authoritative, so a manual edit of the date chip
+  //     always wins (it only updates this reference, not the history stamp below).
+  //  2. The nextRepMs stamped on the most-recent history entry — a reliable fallback
+  //     for daily-doc rems whose 'Date' property doesn't round-trip (e.g. an interval-0
+  //     reference to today's doc, the bug this resolves).
+  //  3. Due now — legacy rems with neither, so the rem still surfaces instead of vanishing.
+  let nextRepDate = resolvedNextRepDate;
+  if (nextRepDate === undefined && Array.isArray(history) && history.length > 0) {
+    const lastNextRepMs = history[history.length - 1]?.nextRepMs;
+    if (typeof lastNextRepMs === 'number') {
+      nextRepDate = lastNextRepMs;
+    }
+  }
+  if (nextRepDate === undefined) {
+    nextRepDate = dayjs().startOf('day').valueOf();
   }
 
   const rawData = {
     remId: r._id,
-    nextRepDate: date.valueOf(),
+    nextRepDate,
     priority: priority,
-    history: tryParseJson(await r.getPowerupProperty(powerupCode, repHistorySlotCode)),
+    prioritySource,
+    history,
     rotation,
     createdAt,
   };
@@ -371,7 +527,46 @@ async function getInitialRotation(
  * @param rem PluginRem to initialize.
  * @returns Promise that resolves after the Rem is initialized or skipped if already incremental.
  */
-export async function initIncrementalRem(plugin: ReactRNPlugin, rem: PluginRem, options?: { skipFlagManagement?: boolean, explicitParentId?: string, skipInitialCascade?: boolean }) {
+/**
+ * Registers a freshly-created IncRem in the known_pdf_rems_ / known_html_rems_
+ * synced indexes (PART 2 of findAllRemsFor*). Used so the parent selector and
+ * bookmark popup can discover this IncRem even before the session cache loads.
+ *
+ * Intentionally not on the critical path of initIncrementalRem — callers invoke
+ * it fire-and-forget so opening a popup right after extraction isn't blocked by
+ * getSources + per-source powerup probes.
+ */
+async function registerInKnownHostIndexes(plugin: ReactRNPlugin, rem: PluginRem) {
+  try {
+    const sources = await rem.getSources();
+    const allSources = [rem, ...sources];
+    for (const candidate of allSources) {
+      const isPdf = await candidate.hasPowerup(BuiltInPowerupCodes.UploadedFile);
+      if (isPdf) {
+        try {
+          const url = await candidate.getPowerupProperty(BuiltInPowerupCodes.UploadedFile, 'URL');
+          if (typeof url === 'string' && url.toLowerCase().endsWith('.pdf')) {
+            await registerRemsAsPdfKnown(plugin as any, candidate._id, [rem._id]);
+          }
+        } catch {
+          // Skip candidates where URL can't be read
+        }
+        continue;
+      }
+      if (await isHtmlSource(candidate)) {
+        try {
+          await registerRemsAsHtmlKnown(plugin as any, candidate._id, [rem._id]);
+        } catch {
+          // Skip candidates that fail registration
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[initIncrementalRem] Error registering in known host indexes:', e);
+  }
+}
+
+export async function initIncrementalRem(plugin: ReactRNPlugin, rem: PluginRem, options?: { skipFlagManagement?: boolean, explicitParentId?: string, skipInitialCascade?: boolean, deferCacheUpdate?: boolean }) {
   const isAlreadyIncremental = await rem.hasPowerup(powerupCode);
 
   if (!isAlreadyIncremental) {
@@ -382,38 +577,52 @@ export async function initIncrementalRem(plugin: ReactRNPlugin, rem: PluginRem, 
 
     let triggeredCascade = false;
     try {
-      // Check for dismissed history to import (merge from previous learning sessions)
-      const dismissedHistory = await mergeHistoryFromDismissed(plugin, rem);
+      // Read any PDF reading state parked on the Dismissed powerup BEFORE the
+      // merge below, which removes that powerup and would take the property with
+      // it. It is written back after the Incremental powerup is attached — a
+      // property cannot be set for a powerup the Rem does not yet carry.
+      const carriedPdfState = await readRawPdfState(rem, dismissedPowerupCode);
+
+      // Independent reads — run concurrently instead of serially. The dismissed-history
+      // merge and the two settings lookups don't depend on one another.
+      const [dismissedHistory, initialIntervalSetting, defaultPrioritySetting] = await Promise.all([
+        // Check for dismissed history to import (merge from previous learning sessions)
+        mergeHistoryFromDismissed(plugin, rem),
+        getIESetting(plugin, initialIntervalId),
+        getIESetting(plugin, defaultPriorityId),
+      ]);
       const hasExistingHistory = dismissedHistory && dismissedHistory.length > 0;
-
-      const initialInterval = (await plugin.settings.getSetting<number>(initialIntervalId)) || 0;
-
-      const defaultPrioritySetting = (await plugin.settings.getSetting<number>(defaultPriorityId)) || 10;
-      const defaultPriority = Math.min(100, Math.max(0, defaultPrioritySetting));
-
-      // Pass explicitParentId to override stale SDK cache when creating a new Rem and moving it
-      const initialPriority = await getInitialPriority(plugin, rem, defaultPriority, options?.explicitParentId);
-
-      await rem.addPowerup(powerupCode);
+      const initialInterval = initialIntervalSetting || 0;
+      const defaultPriority = Math.min(100, Math.max(0, defaultPrioritySetting || 10));
 
       const nextRepDate = new Date(Date.now() + (initialInterval * 24 * 60 * 60 * 1000));
-      const dateRef = await getDailyDocReferenceForDate(plugin, nextRepDate);
+
+      // The inherited-priority walk runs in parallel with the next-rep daily-doc
+      // lookup. The "today" reference, however, must NOT share a Promise.all with
+      // the next-rep lookup: plugin.date.getDailyDoc auto-creates missing daily
+      // docs, and firing two getDailyDoc calls concurrently can make one lose the
+      // race and resolve to undefined (which silently skipped the originalIncDate
+      // write, leaving createdAt unset). When the next-rep date is today
+      // (initialInterval === 0) both references are identical, so we reuse dateRef
+      // instead of doing a redundant — and racy — second lookup.
+      // getInitialPriority gets explicitParentId to override stale SDK cache when
+      // creating a new Rem and moving it.
+      const [initialPriority, dateRef] = await Promise.all([
+        getInitialPriority(plugin, rem, defaultPriority, options?.explicitParentId),
+        getDailyDocReferenceForDate(plugin, nextRepDate),
+      ]);
       if (!dateRef) {
         return;
       }
+      const todayRef =
+        initialInterval === 0 ? dateRef : await getDailyDocReferenceForDate(plugin, new Date());
 
-      await rem.setPowerupProperty(powerupCode, nextRepDateSlotCode, dateRef);
-      await rem.setPowerupProperty(powerupCode, prioritySlotCode, [initialPriority.toString()]);
+      await rem.addPowerup(powerupCode);
 
-      // Set First Added to today
-      const firstAddedRef = await getDailyDocReferenceForDate(plugin, new Date());
-      if (firstAddedRef) {
-        await rem.setPowerupProperty(powerupCode, firstAddedSlotCode, firstAddedRef);
-      }
-
-      // Inherit Rotation from closest incremental ancestor, or default to "Default"
+      // Inherit Rotation from closest incremental ancestor, or default to "Default".
+      // Resolved before the slot-write batch so the value is also in scope for the
+      // constructed cache entry below.
       const initialRotation = await getInitialRotation(plugin, rem);
-      await rem.setPowerupProperty(powerupCode, rotationSlotCode, [initialRotation]);
 
       // Create 'madeIncremental' marker to indicate the start of a new learning session
       // This is used by the scheduler to count only reps since this marker
@@ -422,6 +631,10 @@ export async function initIncrementalRem(plugin: ReactRNPlugin, rem: PluginRem, 
         scheduled: Date.now(),
         eventType: 'madeIncremental' as const,
         priority: Number(initialPriority), // Record priority at time of creation
+        // Reliable fallback for the next-rep date when this rem's Daily Doc reference
+        // can't be resolved on read (covers rems made incremental without a reschedule,
+        // e.g. the plain "make incremental" command, especially with initialInterval 0).
+        nextRepMs: nextRepDate.getTime(),
       };
 
       // Build history: dismissed history (if any) + madeIncremental marker
@@ -430,56 +643,93 @@ export async function initIncrementalRem(plugin: ReactRNPlugin, rem: PluginRem, 
         madeIncrementalMarker,
       ];
 
-      await rem.setPowerupProperty(powerupCode, repHistorySlotCode, [JSON.stringify(historyWithMarker)]);
-
+      // Slot writes target distinct slots and are independent once the powerup is
+      // attached — batch them instead of awaiting one at a time.
+      const slotWrites: Promise<unknown>[] = [
+        rem.setPowerupProperty(powerupCode, nextRepDateSlotCode, dateRef),
+        rem.setPowerupProperty(powerupCode, prioritySlotCode, [initialPriority.toString()]),
+        rem.setPowerupProperty(powerupCode, repHistorySlotCode, [JSON.stringify(historyWithMarker)]),
+      ];
       // Set originalIncrementalDate only if no dismissed history (truly new Incremental Rem)
+      if (!hasExistingHistory && todayRef) {
+        slotWrites.push(
+          rem.setPowerupProperty(powerupCode, originalIncrementalDateSlotCode, todayRef)
+        );
+      }
+      // First Added: reuse todayRef rather than a second getDailyDocReferenceForDate
+      // call — the redundant, racy lookup the todayRef comment above warns about.
+      // Unconditional on dismissed history: First Added records when this Rem was
+      // first made incremental in this KB, not the start of a new learning session.
+      if (todayRef) {
+        slotWrites.push(rem.setPowerupProperty(powerupCode, firstAddedSlotCode, todayRef));
+      }
+      slotWrites.push(
+        rem.setPowerupProperty(powerupCode, rotationSlotCode, [initialRotation])
+      );
+      // Restore the reading state carried over from a previous dismissal, so a
+      // Rem revived with Opt+X resumes at the page it was left on.
+      if (carriedPdfState) {
+        slotWrites.push(writeRawPdfState(rem, powerupCode, carriedPdfState));
+      }
+
+      await Promise.all(slotWrites);
+
+      // Band sync for the initial priority. Deliberately NOT routed through
+      // setIncRemPriority: the priority slot write above belongs in the parallel
+      // batch, and pulling it out to serialise a helper call would undo that.
+      // Kept awaited rather than fire-and-forget because the priority popup that
+      // follows also syncs on save — a detached sync could resolve after that save
+      // and reinstate the band for the pre-save priority. isBandEligible short-circuits
+      // on a fresh extract (its only tag is the Incremental powerup), so the cost
+      // to the optimised create path is a getTagRems + one isPowerup, not the ten
+      // hasPowerup reads a full sync would cost.
+      try {
+        await syncPriorityBand(plugin, rem);
+      } catch (err) {
+        console.error('[IncRem] initial band sync failed', err);
+      }
+
       if (!hasExistingHistory) {
-        const todayRef = await getDailyDocReferenceForDate(plugin, new Date());
-        if (todayRef) {
-          await rem.setPowerupProperty(powerupCode, originalIncrementalDateSlotCode, todayRef);
-        }
         // Record creation event in incremental history (fire and forget)
         addCreationToIncrementalHistory(plugin, rem._id).catch(console.error);
       }
 
-      const newIncRem = await getIncrementalRemFromRem(plugin, rem);
-      if (!newIncRem) {
+      // Build the cache entry directly from the values we just wrote rather than
+      // reading them all back via getIncrementalRemFromRem (~6-8 extra serial SDK
+      // round-trips on the critical path before the priority popup can open).
+      // nextRepDate/createdAt are stored as the start-of-day timestamp to match
+      // exactly what getIncrementalRemFromRem resolves from the Daily Doc references.
+      const constructedIncRem = {
+        remId: rem._id,
+        nextRepDate: dayjs(nextRepDate).startOf('day').valueOf(),
+        priority: initialPriority,
+        history: historyWithMarker,
+        rotation: initialRotation,
+        createdAt: !hasExistingHistory ? dayjs().startOf('day').valueOf() : undefined,
+      };
+      const parsedIncRem = IncrementalRem.safeParse(constructedIncRem);
+      if (!parsedIncRem.success) {
+        console.error('[initIncrementalRem] Failed to construct IncRem cache entry:', parsedIncRem.error);
         return;
       }
 
-      await updateIncrementalRemCache(plugin, newIncRem);
+      // The in-session IncRem cache write can cost ~750ms (serializing the whole
+      // collection). When the caller defers its tail to the tracker (Create-IncRem →
+      // priority popup flow), skip it here — the deferred tail re-adds this rem to the
+      // cache in the persistent index widget, off the popup's critical path.
+      if (!options?.deferCacheUpdate) {
+        await updateIncrementalRemCache(plugin, parsedIncRem.data);
+      }
 
       // Register in the known_pdf_rems_ / known_html_rems_ synced indexes so
       // the parent selector and bookmark popup can discover this IncRem
-      // instantly (PART 2 of findAllRemsFor*), even when the session cache
+      // (PART 2 of findAllRemsFor*), even when the session cache
       // (allIncrementalRemKey) is not yet loaded (e.g., WebBrowser / Light Mode).
-      try {
-        const sources = await rem.getSources();
-        const allSources = [rem, ...sources];
-        for (const candidate of allSources) {
-          const isPdf = await candidate.hasPowerup(BuiltInPowerupCodes.UploadedFile);
-          if (isPdf) {
-            try {
-              const url = await candidate.getPowerupProperty(BuiltInPowerupCodes.UploadedFile, 'URL');
-              if (typeof url === 'string' && url.toLowerCase().endsWith('.pdf')) {
-                await registerRemsAsPdfKnown(plugin as any, candidate._id, [rem._id]);
-              }
-            } catch {
-              // Skip candidates where URL can't be read
-            }
-            continue;
-          }
-          if (await isHtmlSource(candidate)) {
-            try {
-              await registerRemsAsHtmlKnown(plugin as any, candidate._id, [rem._id]);
-            } catch {
-              // Skip candidates that fail registration
-            }
-          }
-        }
-      } catch (e) {
-        console.error('[initIncrementalRem] Error registering in known host indexes:', e);
-      }
+      //
+      // This only matters for OTHER popups opened later, so it runs fire-and-forget:
+      // keeping it off the critical path lets the caller (e.g. the priority popup)
+      // open without waiting on getSources + per-source powerup probes.
+      void registerInKnownHostIndexes(plugin, rem);
 
       // The targeted updateIncrementalRemCache call above already inserts the new
       // IncRem into the in-session cache, so no global reload trigger is needed.

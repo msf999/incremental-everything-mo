@@ -21,11 +21,14 @@ import {
   registerCoreQueueDisplayCommands,
   registerHideInQueueLegacyCommands,
 } from '../register/queue_display_commands';
-import { enableHideInQueueIntegrationId } from '../lib/consts';
+import { enableHideInQueueIntegrationId, enableFlashcardPrioritisationId, pdfHighlightBordersReloadKey, priorityBandColorsReloadKey } from '../lib/consts';
 import { registerIncrementalRemTracker } from '../register/tracker';
 import { cleanupOrphanedReviewGraphs } from '../lib/priority_review_document/cleanup';
+import { compactAuthoritativeAggregatesIfNeeded } from '../lib/authoritative_aggregates';
 import { registerJumpToRemHelper } from '../register/window';
-import { registerPluginHidingCSS, registerPdfHighlightCSS, registerClozeExtractCSS, registerTagBadgeCSS, registerIgnoreTagCSS } from '../lib/ui_helpers';
+import { registerPluginHidingCSS, registerPdfHighlightCSS, registerClozeExtractCSS, registerTagBadgeCSS, registerIgnoreTagCSS, registerHighlightBandBadgeCSS, registerTableBandBadgeCSS } from '../lib/ui_helpers';
+import { getIESetting } from '../lib/settings';
+import { migrateIESettingsIfNeeded, isIESettingsSeedNeeded } from '../lib/settings_migration';
 
 async function onActivate(plugin: ReactRNPlugin) {
   //Debug
@@ -45,7 +48,18 @@ async function onActivate(plugin: ReactRNPlugin) {
   // newly-created rems. These powerup codes don't exist in the standalone
   // Hide in Queue plugin, so they cannot collide with it.
   await registerCoreQueueDisplayPowerups(plugin);
-  await registerPluginSettings(plugin);
+  // Popup-tier settings are registered with RemNote only while this KB still
+  // needs seeding — the migration reads them through getSetting, which throws
+  // for an unregistered id. Once seeded they vanish from RemNote's panel and
+  // the IE Settings popup owns them.
+  const seedNeeded = await isIESettingsSeedNeeded(plugin);
+  await registerPluginSettings(plugin, { includePopupTier: seedNeeded });
+
+  // Seed the plugin-owned settings store from the registrations that were just
+  // installed. Must run after registerPluginSettings and before any widget can
+  // read a setting, so it is awaited rather than fired and forgotten — it is a
+  // few dozen reads of already-loaded values. No-ops once completed.
+  await migrateIESettingsIfNeeded(plugin);
 
   // Hide-in-Queue legacy powerups (Hide in Queue, Remove from Queue, etc.) and
   // their commands are gated by a setting. They share powerup codes with the
@@ -53,7 +67,7 @@ async function onActivate(plugin: ReactRNPlugin) {
   // to throw "Duplicated powerup" and aborts plugin loading. The user must
   // uninstall the standalone plugin first, then enable this setting.
   const enableHideInQueueIntegration =
-    (await plugin.settings.getSetting<boolean>(enableHideInQueueIntegrationId)) ?? false;
+    await getIESetting(plugin, enableHideInQueueIntegrationId);
   if (enableHideInQueueIntegration) {
     await registerHideInQueueLegacyPowerups(plugin);
   }
@@ -67,11 +81,40 @@ async function onActivate(plugin: ReactRNPlugin) {
   // must not block activation.
   void cleanupOrphanedReviewGraphs(plugin);
 
+  // Fire-and-forget: shrink the authoritative-aggregates key into its compact
+  // form if it is still the legacy array. Needs no card/rem enumeration, so it
+  // works while those APIs are unavailable — and until it runs, that key sits
+  // over RemNote's 900KB per-key ceiling and every write to it is rejected.
+  void compactAuthoritativeAggregatesIfNeeded(plugin);
+
   registerCallbacks(plugin);
   await registerWidgets(plugin);
 
   // Register CSS rules
-  await registerPdfHighlightCSS(plugin);
+  // PDF highlight CSS is (re)registered reactively: the "peek" toggle (command +
+  // highlight-toolbar button) can't call registerCSS from its iframe, so it bumps
+  // pdfHighlightBordersReloadKey (session) instead. This track subscribes to that
+  // key and re-registers here in the index widget. It also runs once on activation
+  // (key undefined) to do the initial registration. registerPdfHighlightCSS reads
+  // the persisted local flag itself to decide whether to draw the marker borders.
+  plugin.track(async (rp) => {
+    await rp.storage.getSession(pdfHighlightBordersReloadKey); // reactive trigger
+    // Also re-runs when the band→percentile colour mapping changes: the PDF
+    // marker tint is emitted inside this stylesheet.
+    await rp.storage.getSession(priorityBandColorsReloadKey);
+    await registerPdfHighlightCSS(plugin);
+  });
+
+  // Band badge colours come from the RELATIVE position of each band in the
+  // priority distribution, which is only known once the caches are warm — well
+  // after activation. This re-registers both badge stylesheets whenever that
+  // mapping should be recomputed (cache load below, or a badge refresh).
+  plugin.track(async (rp) => {
+    await rp.storage.getSession(priorityBandColorsReloadKey); // reactive trigger
+    await registerTableBandBadgeCSS(plugin);
+    await registerHighlightBandBadgeCSS(plugin);
+  });
+
   await registerPluginHidingCSS(plugin);
   await registerClozeExtractCSS(plugin);
   await registerTagBadgeCSS(plugin);
@@ -95,15 +138,30 @@ async function onActivate(plugin: ReactRNPlugin) {
   // Mobile and Web Browser Light Mode Features
   await handleMobileDetectionOnStartup(plugin);
 
-  // Get the performance mode
+  // The card-priority cache, and the KB-wide pretagging pass inside it, are the
+  // heaviest thing the plugin does: phase 2 applies the CardPriority powerup to
+  // every untagged rem that owns a flashcard. Both the opt-in and light mode must
+  // allow it — the opt-in because nothing consumes the cache when prioritisation
+  // is off, light mode because the build itself is what light mode exists to avoid.
   const useLightMode = await shouldUseLightMode(plugin);
-  if (!useLightMode) {
-    // Run the full, expensive cache build
-    loadCardPriorityCache(plugin);
+  const mayBuildCardPriorityCache =
+    !useLightMode && (await getIESetting(plugin, enableFlashcardPrioritisationId));
+
+  if (mayBuildCardPriorityCache) {
+    // Run the full, expensive cache build, then recompute the band colours: the
+    // percentile mapping is meaningless until this cache exists.
+    loadCardPriorityCache(plugin).then(
+      () => plugin.storage.setSession(priorityBandColorsReloadKey, Date.now()),
+      (err) => console.error('CACHE: card priority cache build failed', err)
+    );
 
   } else {
-    // In 'light' mode, just set an empty cache.
-    console.log('CACHE: Light mode enabled. Skipping card priority cache build.');
+    // Empty cache. Readers treat "absent" as "no card priorities known", which is
+    // the correct answer in both cases; the cascade falls back to per-rem
+    // rem.getCards() rather than assuming nothing has cards.
+    console.log(
+      `CACHE: Skipping card priority cache build (${useLightMode ? 'light mode' : 'flashcard prioritisation off'}).`
+    );
     await plugin.storage.setSession(allCardPriorityInfoKey, []);
   }
 }

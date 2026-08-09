@@ -7,10 +7,23 @@ export const originalIncrementalDateSlotCode = 'originalIncDate';
 export const firstAddedSlotCode = 'firstAdded';
 export const rotationSlotCode = 'rotation';
 
+// PDF reading state (page, page range, page history, active PDF) as serialized
+// JSON, replacing four per-(Rem, PDF) synced-key families. Registered on BOTH
+// the Incremental and Dismissed powerups under the same code and shape:
+// dismissing a Rem removes the Incremental powerup, so the state is copied
+// across as an opaque string rather than being lost. See lib/pdf_state.ts.
+export const pdfStateSlotCode = 'pdfState';
+
 // Dismissed Powerup
 export const dismissedPowerupCode = 'dismissed';
 export const dismissedHistorySlotCode = 'dismissedHistory';
 export const dismissedDateSlotCode = 'dismissedDate';
+
+// Marks a "tombstone" rem whose content was removed by the
+// 'Preserve history & remove' command but whose review history was preserved on
+// its Dismissed powerup. Used purely as a CSS hook (data-rem-tags~="preservedhistory")
+// to hide the tombstone in the editor and queue.
+export const preservedHistoryPowerupCode = 'preservedHistory';
 
 // settings
 export const initialIntervalId = 'initial-interval';
@@ -26,9 +39,44 @@ export type IsolatedQueueMode = 'highlights' | 'rems' | 'both' | 'none';
 export const priorityStepSizeId = 'priority-step-size';
 export const enableHideInQueueIntegrationId = 'enable-hide-in-queue-integration';
 
+// Setting ids that used to be written as bare string literals at their call
+// sites. Named here so lib/settings.ts can be the single source of truth for
+// every setting's id, type and default.
+export const priorityEditorDisplayModeId = 'priorityEditorDisplayMode';
+export type PriorityEditorDisplayMode = 'all' | 'incRemOnly' | 'disable';
+// The four below are the *setting* ids. register/settings.ts has same-named
+// local consts holding the registerCSS ids for the stylesheets they toggle
+// ('hide-card-priority-tag' etc.) — hence the SettingId suffix here.
+export const hideCardPriorityTagSettingId = 'hideCardPriorityTag';
+export const showLeftBorderForIncRemsSettingId = 'showLeftBorderForIncRems';
+export const showDismissedIndicatorSettingId = 'showDismissedIndicator';
+export const hideDismissedTagSettingId = 'hideDismissedTag';
+export const performanceModeId = 'performanceMode';
+export const flashcardResponseTimeLimitId = 'flashcard_response_time_limit';
+export const enableMasteryDrillId = 'enable-mastery-drill';
+/** Pre-inversion id, kept only so the migration can convert stored values. */
+export const legacySkipMasteryDrillId = 'skip_mastery_drill';
+export const oldItemThresholdId = 'old_item_threshold';
+export const masteryDrillMinDelayMinutesId = 'mastery_drill_min_delay_minutes';
+export const disableFinalDrillNotificationId = 'disable_final_drill_notification';
+
+// Opt-in gate for the heavy flashcard-prioritisation machinery (KB-wide
+// pretagging, the inheritance cascade and the card-priority cache). Off by
+// default: most users want extracts and scheduling, and should not pay for
+// per-flashcard priorities they never asked for.
+export const enableFlashcardPrioritisationId = 'enable-flashcard-prioritisation';
+
 // FSRS DSR settings
 export const displayFsrsDsrId = 'display-fsrs-dsr';
 export const fsrsWeightsId = 'fsrs-weights';
+
+// --- Plugin-owned settings store (see lib/settings_migration.ts) ---
+/** Synced blob holding the values of every popup-tier setting. */
+export const ieSettingsValuesKey = 'ie_settings_v1';
+/** Seed version that last completed; gates the legacy registrations. */
+export const ieSettingsMigratedKey = 'ie_settings_migrated';
+/** Durable per-setting record of the last migration run. */
+export const ieSettingsMigrationReportKey = 'ie_settings_migration_report';
 
 // storage keys
 export const allIncrementalRemKey = 'all-incremental-rem';
@@ -67,6 +115,32 @@ export const shouldHideIncEverythingKey = 'shouldHideIncEverything';
 // commands
 export const dismissIncRemCommandId = 'dismiss-inc-rem';
 export const nextInQueueCommandId = 'next-in-queue';
+export const togglePdfHighlightBordersCommandId = 'toggle-pdf-highlight-borders';
+
+// Local (per-device) flag controlling whether the pdfextract/incremental marker
+// borders are drawn over PDF-viewer highlights. Default ON (undefined => true).
+// The "peek" toggle (command + highlight-toolbar button) flips this and the CSS
+// is re-registered to match. See registerPdfHighlightCSS in lib/ui_helpers.ts.
+export const pdfHighlightBordersEnabledKey = 'pdf-highlight-borders-enabled';
+
+// Local (per-device) flag for the parent selector's "Filter only headers"
+// checkbox. When on, expanded branches show only rems carrying a heading
+// (H1–H6); the initial IncRem root candidates are never filtered.
+// Default OFF (undefined => false).
+export const parentSelectorHeadingsOnlyKey = 'parent-selector-headings-only';
+
+// Local (per-device) flag for the parent selector's "List headings first"
+// checkbox. When on, heading children are hoisted above the rest of a branch,
+// shallowest level first; when off, children keep their editor order.
+// Default ON (undefined => true).
+export const parentSelectorHeadingsFirstKey = 'parent-selector-headings-first';
+
+// Session key bumped whenever the borders flag is toggled. registerCSS can only be
+// called from the index widget, so the toggle (which may run in the highlight-toolbar
+// iframe) can't re-register the CSS itself. Instead it bumps this key; a plugin.track
+// in the index widget subscribes to it and re-registers. Session storage is the
+// codebase's cross-iframe reactive channel (plugin.track only tracks getSession/getSynced).
+export const pdfHighlightBordersReloadKey = 'pdf-highlight-borders-reload';
 
 // --- Keys for our successful fixes ---
 export const queueLayoutFixId = 'incremental-everything-queue-layout-fix';
@@ -87,19 +161,42 @@ export const seenCardInSessionKey = 'seen-card-in-session-key';
 export const displayPriorityShieldId = 'display-priority-shield';
 export const displayQueueToolbarPriorityId = 'display-queue-toolbar-priority';
 export const autoFocusQueueDashboardId = 'auto-focus-queue-dashboard';
+// Timestamp flag set by the IncRem "Next" paths just before they advance the
+// queue (while their widget sandbox is still alive). A persistent QueueLoadCard
+// listener consumes it to restore the Practiced Queues dashboard — the refocus
+// can't run after removeCurrentCardFromQueue in the widget, which by then has
+// been torn down. See refocus flow in lib/incremental_rem + register/events.
+export const pendingQueueDashboardRefocusKey = 'pending-queue-dashboard-refocus-at';
 export const priorityShieldHistoryKey = 'priority-shield-history-key';
 export const priorityShieldHistoryMenuItemId = 'priority-shield-history-menu-item-id';
 export const documentPriorityShieldHistoryKey = 'document-priority-shield-history-key';
 export const currentSubQueueIdKey = 'current-sub-queue-id-key';
 export const cardPriorityShieldHistoryKey = 'card-priority-shield-history-key';
 export const documentCardPriorityShieldHistoryKey = 'document-card-priority-shield-history-key';
+// Dated backups written by the "Remove All CardPriority Tags" cleanup before it
+// clears this KB's shield partition, plus an index listing them for restore.
+export const cardShieldCleanupBackupPrefix = 'card-shield-cleanup-backup-';
+export const cardShieldCleanupBackupIndexKey = 'card-shield-cleanup-backup-index';
+// Characters kept per side (front / back) in the history jump-lists. The stored
+// `text` field is "front back", so one entry holds at most 2×limit + 1 chars.
+// These lists are searched by substring and shown as one-line previews — they are
+// caches for navigation, not a copy of the card, and they live in synced storage
+// where a 900KB per-key ceiling applies. Keep the writer and the widget backfill
+// on the same constant so they cannot drift apart.
+export const flashcardHistoryTextLimit = 500;
+export const remHistoryTextLimit = 200;
+
+// Restore point of a rem's Incremental history, captured by the debug tools
+// before a hand-edit. One synced key per backed-up rem — lives here (not in
+// debug.tsx) so the synced-key audit can reconstruct the family.
+export const debugHistoryBackupPrefix = 'debug_history_backup_';
 
 // --- Keys for the Weighted Priority Shield ---
+// NOTE: the weighted-shield value is stored INLINE on each main shield-history
+// entry (the `weightedShield` field), and the graph reads it from there. The
+// dedicated *-weighted-shield-history-key stores were never written or read, so
+// they were removed as dead code.
 export const displayWeightedShieldId = 'display-weighted-shield';
-export const weightedShieldHistoryKey = 'weighted-shield-history-key';
-export const documentWeightedShieldHistoryKey = 'document-weighted-shield-history-key';
-export const cardWeightedShieldHistoryKey = 'card-weighted-shield-history-key';
-export const documentCardWeightedShieldHistoryKey = 'document-card-weighted-shield-history-key';
 
 // --- Keys for Open Editor in a new tab/window (PDFs) ---
 export const remnoteEnvironmentId = 'remnote-environment';
@@ -110,9 +207,26 @@ export const noIncRemTimerWidgetId = 'no-inc-rem-timer-widget';
 export const incRemDisabledDeviceKey = 'inc-rem-disabled-device';
 
 export const cardPriorityCacheRefreshKey = 'cardPriorityCacheRefreshKey';
+// Rem IDs whose cards exist but whose parent rem could not be found during the
+// last cache build (orphan-card candidates). Written by Phase 2 of
+// loadCardPriorityCache, read by the 'Update all inherited Card Priorities'
+// cleanup so it can skip re-scanning to find them.
+export const orphanRemIdsKey = 'orphan-rem-ids-key';
 // Pending priority save job: written by priority_light popup before closing,
 // picked up and executed by tracker.ts in the persistent index widget.
+// Setting id AND registerCSS id for the table-cell priority badges.
+export const showPriorityBandsInTablesId = 'showPriorityBandsInTables';
+// Bumped whenever the band→percentile mapping should be recomputed and the band
+// stylesheets re-registered (caches warmed at startup, or a badge refresh). Same
+// pattern as pdfHighlightBordersReloadKey: registerCSS is index-only, so a
+// plugin.track in index.tsx watches this key and re-registers there.
+export const priorityBandColorsReloadKey = 'priority-band-colors-reload';
 export const pendingPrioritySaveKey = 'pendingPrioritySave';
+// Rem ids a priority popup should apply to when opened in batch mode (Opt+P /
+// Ctrl+Opt+P over a multi-rem selection, e.g. several table rows). Written by the
+// command, read by priority.tsx / priority_light.tsx. Distinct from
+// batchPriorityIntervalRemIds, which is the post-extract IncRem-only flow.
+export const batchPriorityTargetRemIdsKey = 'batchPriorityTargetRemIds';
 // Pending card priority removal job: written by the Priority popup before closing,
 // picked up and executed by tracker.ts. Allows instant popup close per fire-and-forget philosophy.
 export const pendingCardPriorityRemovalKey = 'pendingCardPriorityRemoval';
@@ -120,6 +234,14 @@ export const pendingCardPriorityRemovalKey = 'pendingCardPriorityRemoval';
 // picked up by tracker.ts in the persistent index widget. Contains all remIds + the chosen
 // priority and interval so the popup can close instantly and let the tracker do all DB writes.
 export const pendingIntervalBatchSaveKey = 'pendingIntervalBatchSave';
+// Deferred "create IncRem" tail job: written by createRemUnderParent (parent-selector
+// popup) right before it opens the priority popup, picked up by tracker.ts in the
+// persistent index widget. Contains everything the priority popup does NOT need
+// (cache update, pdfextract tag, last-destination memory, bookmark, highlight cleanup)
+// so the popup can appear immediately instead of waiting ~3s for these writes. Running
+// in the index widget also means the writes survive popup teardown and can be wrapped
+// in the plugin_operation_active / incRemBatchActive suppression flags.
+export const pendingIncRemCreateTailKey = 'pendingIncRemCreateTail';
 // Delta queue for quick increase/decrease priority commands.
 // Each keypress APPENDS a delta entry here; the tracker drains them all atomically.
 // This prevents the last-write-wins race that plagued the single-slot pendingPrioritySaveKey approach.
@@ -157,6 +279,12 @@ export const pendingScrollRequestKey = 'pending-scroll-request';
 
 // Priority Review Graph
 export const priorityGraphPowerupCode = 'priority_review_graph';
+// Hidden slot on the graph Rem holding that graph's data as serialized JSON.
+// Replaces the per-graph synced key `priority_review_graph_data_<remId>`: the
+// snapshot belongs to the graph Rem, so storing it there means it is deleted
+// with the Priority Review Document instead of being orphaned in plugin storage
+// (which has no deletion API — orphans were unreclaimable).
+export const priorityGraphDataSlotCode = 'graphData';
 export const GRAPH_DATA_KEY_PREFIX = 'priority_review_graph_data_';
 // Synced index of every graph Rem ID we've written graph data for. Used to find
 // orphaned `GRAPH_DATA_KEY_PREFIX + remId` entries on startup so they can be cleared.
@@ -172,10 +300,24 @@ export const videoExtractStartSlotCode = 'startTime';
 export const videoExtractEndSlotCode = 'endTime';
 
 // IncRem Notes Sidebar (right sidebar widget)
+// Stable rem id published by ExtractViewer while a Rem-type IncRem is shown in
+// the queue, so the notes sidebar can edit it without depending on
+// currentIncrementalRemTypeKey — which the queue clears on every effect-cleanup
+// and so races with the sidebar auto-open. Cleared by ExtractViewer on unmount
+// and (defensively) by the QueueLoadCard listener in register/events.
+export const incremNotesSidebarRemIdKey = 'increm-notes-sidebar-rem-id';
 // Opened programmatically by the Reader 📝 button; reads currentIncRemKey directly.
 export const incremNotesSidebarWidgetId = 'increm_notes_sidebar';
 // Host document ID for highlight IncRems (PDF/HTML source Rem).
 // Set by queue.tsx so the sidebar can discover related IncRems without
 // re-resolving the action item type.
 export const currentHostDocumentIdKey = 'current-host-document-id';
+
+// Source Popup (floating variant) — opened by the `open-source-in-floating`
+// command. openFloatingWidget has no contextData param, so the resolved target
+// is handed off via session storage, and the live widget id is stashed so the
+// QueueLoadCard listener can auto-close it on card advance.
+export const sourceFloatingWidgetId = 'pdf_source_floating';
+export const sourceFloatingTargetKey = 'source-floating-target';
+export const sourceFloatingActiveIdKey = 'source-floating-active-id';
 

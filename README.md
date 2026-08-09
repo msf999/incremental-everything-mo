@@ -32,11 +32,23 @@ A full suite of history and practice tools now built into the right sidebar:
 - **Practiced Queues Dashboard**: real-time session metrics (speed, retention, card age) and a full history of every practice session, with Export/Import backup.
 - **Mastery Drill**: a focused re-practice queue for cards you rated *Forgot* or *Hard* — inspired by SuperMemo's Final Drill. Open with the `Mastery Drill` command or via the Left Sidebar notification.
 
-👉 [Full documentation on the wiki](https://github.com/bjsi/incremental-everything/wiki/History-Queue-Dashboard-and-Mastery-Drill)
+👉 [Full documentation](https://hugomarins.github.io/incremental-everything/History-Queue-Dashboard-and-Mastery-Drill/)
 
 ### 📱 Performance Modes
 - **Light Mode (Default for Mobile/Web)**: Fast, stable, and essential features only. Prevents crashes on phones and tablets.
-- **Full Mode (Desktop Power User)**: Complete feature set with heavy statistical calculations for detailed analytics.
+- **Full Mode (Desktop Power User)**: Complete feature set with heavy cache load on startup (of the priority of all your flashcard rems), enabling real-time statistical calculations for detailed analytics.
+
+### 🧰 More than Incremental Reading: a Toolset for Your KB
+Beyond the core learning loop, Incremental Everything ships **dozens of standalone utilities** that make day-to-day note-taking and knowledge-base organization faster — useful even when you're not reviewing. A few examples:
+
+- **Outline & heading tools**: [Restructure Outline by Headings](https://hugomarins.github.io/incremental-everything/Utilities/#restructure-outline-by-headings) (re-nest a flat or mis-pasted document under its headings), [Apply Heading Levels by Hierarchy (Table of Contents)](https://hugomarins.github.io/incremental-everything/Utilities/#apply-heading-levels-by-hierarchy-table-of-contents), and [Set Next Heading Level](https://hugomarins.github.io/incremental-everything/Utilities/#set-next-heading-level) — all with side-by-side previews and one-click undo.
+- **Queue display control**: [Hide / Remove Parent & Grandparent and more](https://hugomarins.github.io/incremental-everything/Utilities/#queue-display-utilities) to clean up how ancestor Rems appear on your flashcards.
+- **Editing helpers**: [Text Case Converter](https://hugomarins.github.io/incremental-everything/Utilities/#text-case-converter) (Shift+F3 cycling, with English/Portuguese title-case rules) and [Bulletize Inline Selected Text](https://hugomarins.github.io/incremental-everything/Utilities/#bulletize-inline-selected-text) for restoring bullets that PDF highlights flatten.
+- **Navigation & sources**: [Find Rem](https://hugomarins.github.io/incremental-everything/Utilities/#find-rem--reference-or-open) (surfaces Rems RemNote's `[[` search can't) and [Open Source in Popup / Floating Window](https://hugomarins.github.io/incremental-everything/Utilities/#open-source-in-popup) to peek at a PDF/web source without leaving the queue.
+- **Analytics & diagnostics**: the [Study Dashboard](https://hugomarins.github.io/incremental-everything/Study-Dashboard/) for KB-wide learning stats and the [History suite & Practiced Queues Dashboard](https://hugomarins.github.io/incremental-everything/History-Queue-Dashboard-and-Mastery-Drill/) to revisit any document, flashcard, or past session.
+- **Per-item review insight**: drill into a single item's timeline with the [Flashcard Repetition History](https://hugomarins.github.io/incremental-everything/Plugin-Widgets-Reference/#211-flashcard-repetition-history) and [IncRem Repetition History](https://hugomarins.github.io/incremental-everything/Plugin-Widgets-Reference/#212-increm-repetition-history--aggregated-view) popups — the latter with an **aggregated roll-up** of reps, time, and counts across a Rem's whole descendant subtree. Backed by an embedded **FSRS v6** engine that computes per-card Difficulty / Stability / Retrievability, plus a clickable [priority-weighted Shield breakdown](https://hugomarins.github.io/incremental-everything/Prioritization-&-Sorting/#weighted-shield) of how much of your workload you've processed.
+
+👉 See the **[Utilities](https://hugomarins.github.io/incremental-everything/Utilities/)** page for the full list, and the **[Plugin Commands Reference](https://hugomarins.github.io/incremental-everything/Plugin-Commands-Reference/)** for every command.
 
 ## Installation
 
@@ -46,7 +58,9 @@ A full suite of history and practice tools now built into the right sidebar:
 
 This README covers the basics. For the comprehensive guides, please visit the **User's Manual**:
 
-👉 **[Incremental Everything Wiki](https://github.com/bjsi/incremental-everything/wiki)**
+👉 **[Incremental Everything — User's Manual](https://hugomarins.github.io/incremental-everything/)**
+
+*(The documentation moved off the GitHub Wiki in August 2026. The new site is fully searchable, works on mobile, and has light/dark themes — please update your bookmarks.)*
 
 ### 🎥 Videos about the basics
 
@@ -59,7 +73,7 @@ This README covers the basics. For the comprehensive guides, please visit the **
 - **What is Incremental Reading?**: [Incremental Journey - Incremental Reading in Simple Terms](https://youtu.be/V4xEziM8mco)
 
 ### Useful Links
-- **[Changelog](https://github.com/bjsi/incremental-everything/wiki/Changelog)**: See the latest features and updates.
+- **[Changelog](https://hugomarins.github.io/incremental-everything/Changelog/)**: See the latest features and updates.
 - **[Discord](http://bit.ly/RemNoteDiscord)**: Join the community and chat with us (look for the plugin channels).
 
 
@@ -86,7 +100,7 @@ This README covers the basics. For the comprehensive guides, please visit the **
 ### Scheduling
 
 - **Default Scheduler**: Uses an exponential formula — `interval = ⌈Multiplier ^ N⌉` days (multiplier defaults to 1.5). Simple and effective for items needing few reviews.
-- **Beta Scheduler (Saturating Curve)**: An opt-in alternative where intervals start at a configurable *First Review Interval* (default 5 days) and gradually approach a *Max Interval* (default 30 days). Ideal for items needing many reviews (books, chapters). See the [IncRem Scheduler](https://github.com/bjsi/incremental-everything/wiki/IncRem-Scheduler) wiki page for details.
+- **Beta Scheduler (Saturating Curve)**: An opt-in alternative where intervals start at a configurable *First Review Interval* (default 5 days) and gradually approach a *Max Interval* (default 30 days). Ideal for items needing many reviews (books, chapters). See the [IncRem Scheduler](https://hugomarins.github.io/incremental-everything/IncRem-Scheduler/) page for details.
 - You can manually set the next repetition date using the **Reschedule** command (**Ctrl+J**), or RemNote's tables and properties features.
 
 ### 📱 Mobile Support
@@ -127,7 +141,7 @@ The plugin now features **Automatic Light Mode**.
 - The plugin will automatically save your progress and playback rate.
 - You can open the resizable notes section on the left to take notes while you watch.
 
-![Incremental Video](https://raw.githubusercontent.com/wiki/bjsi/incremental-everything/assets/YT-extract-mode.png)
+![Incremental Video](https://hugomarins.github.io/incremental-everything/assets/YT-extract-mode.png)
 
 ### Incremental Mathematics
 
@@ -166,9 +180,11 @@ Previously, reading positions for large PDFs were easily lost.
 
 ➡️ **[Upvote the Feature Request on the RemNote Feedback Site](https://feedback.remnote.com/p/feature-request-programmatic-control-over-pdf-scroll-position-for-plugins?b=Plugin-Requests)**
 
-### Keyboard Shortcut Conflict:
+### Editing a Rem-type Incremental Rem in the Queue
 
-When viewing a regular Rem card in the queue, the editor correctly appears. However, native queue keyboard shortcuts will take precedence over typing in the editor. This appears to be due to a limitation in the current plugin API that prevents a plugin from fully capturing keyboard input within the queue environment. The "Press 'P' to Edit" button has been added as a workaround. You can also use the newly created button "Review in Editor".
+Earlier versions embedded an **editable** editor for regular Rem cards directly in the queue, but native queue keyboard shortcuts took precedence over typing in it — a plugin can't fully capture keyboard input inside the queue (Flashcard) pane, since the editor is a "fake embed" rendered in RemNote's main window while the plugin runs in a sandboxed frame.
+
+  * **The Solution**: The in-queue card for a Rem-type Incremental Rem is now a **read-only preview** (showing the Rem and its descendant subtree), so there is no keyboard conflict and no risk of stray keys rating/advancing the card. Editing is routed to the **Document Notes sidebar**, which opens automatically when the item loads (a separate pane that holds focus correctly) — or click the **"✎ Edit in sidebar →"** button on the card. The **"Press 'P' to Edit"** previewer and the **"Review in Editor"** button remain available as alternatives.
 
 
 ## Development Details

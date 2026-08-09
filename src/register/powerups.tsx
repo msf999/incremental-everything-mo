@@ -12,15 +12,30 @@ import {
   firstAddedSlotCode,
   rotationSlotCode,
   priorityGraphPowerupCode,
+  priorityGraphDataSlotCode,
+  pdfStateSlotCode,
   dismissedPowerupCode,
   dismissedHistorySlotCode,
   dismissedDateSlotCode,
+  preservedHistoryPowerupCode,
   videoExtractPowerupCode,
   videoExtractUrlSlotCode,
   videoExtractStartSlotCode,
   videoExtractEndSlotCode,
 } from '../lib/consts';
 import { initIncrementalRem } from '../lib/incremental_rem';
+import { BAND_COUNT, bandPowerupCode, bandPowerupName } from '../lib/priority_bands';
+// Registration must use the same constants every READER uses. Hardcoding the code
+// or slot codes here lets the definition drift away from the reads, and the failure
+// mode is silent: getPowerupProperty() would simply return nothing for a rem that
+// visibly carries the tag. card_priority/types is a leaf module of plain constants,
+// so importing it here introduces no cycle.
+import {
+  CARD_PRIORITY_CODE,
+  PRIORITY_SLOT,
+  SOURCE_SLOT,
+  LAST_UPDATED_SLOT,
+} from '../lib/card_priority/types';
 
 // Re-export for backwards compatibility
 export { initIncrementalRem };
@@ -58,6 +73,15 @@ export async function registerPluginPowerups(plugin: ReactRNPlugin) {
           hidden: true,
         },
         {
+          // PDF reading state — page, range, page history and active PDF, as
+          // serialized JSON. Machine state, so hidden and programmatic-only.
+          code: pdfStateSlotCode,
+          name: 'Reading State',
+          propertyType: PropertyType.TEXT,
+          hidden: true,
+          onlyProgrammaticModifying: true,
+        },
+        {
           code: originalIncrementalDateSlotCode,
           name: 'Created',
           propertyType: PropertyType.DATE,
@@ -82,24 +106,24 @@ export async function registerPluginPowerups(plugin: ReactRNPlugin) {
   // Create Separate Flashcard Priority Powerup
   await plugin.app.registerPowerup({
     name: 'CardPriority',
-    code: 'cardPriority',
+    code: CARD_PRIORITY_CODE,
     description: 'Priority system for flashcards',
     options: {
       slots: [
         {
-          code: 'priority',
+          code: PRIORITY_SLOT,
           name: 'Priority',
           propertyType: PropertyType.NUMBER,
           propertyLocation: PropertyLocation.BELOW,
         },
         {
-          code: 'prioritySource',
+          code: SOURCE_SLOT,
           name: 'Priority Source',
           propertyType: PropertyType.TEXT,
           hidden: true,
         },
         {
-          code: 'lastUpdated',
+          code: LAST_UPDATED_SLOT,
           name: 'Last Updated',
           propertyType: PropertyType.NUMBER,  // Timestamp
           hidden: true,
@@ -113,7 +137,17 @@ export async function registerPluginPowerups(plugin: ReactRNPlugin) {
     code: priorityGraphPowerupCode,
     description: 'Displays a distribution graph of priorities for items in this document.',
     options: {
-      slots: [] // No special slots needed, we just use the tag as a trigger
+      slots: [
+        {
+          // The graph's own data, as serialized JSON. Hidden and
+          // programmatic-only: it is machine state, not something to edit by hand.
+          code: priorityGraphDataSlotCode,
+          name: 'Graph Data',
+          propertyType: PropertyType.TEXT,
+          hidden: true,
+          onlyProgrammaticModifying: true,
+        },
+      ],
     }
   });
 
@@ -137,8 +171,30 @@ export async function registerPluginPowerups(plugin: ReactRNPlugin) {
           propertyType: PropertyType.DATE,
           hidden: true,
         },
+        {
+          // Mirror of the Incremental powerup's slot, same code and same shape.
+          // Dismissal removes the Incremental powerup, so the reading state is
+          // copied here to survive it and copied back on re-activation.
+          code: pdfStateSlotCode,
+          name: 'Reading State',
+          propertyType: PropertyType.TEXT,
+          hidden: true,
+          onlyProgrammaticModifying: true,
+        },
       ],
     },
+  });
+
+  // Preserved History Powerup - marks a "tombstone" rem whose content was
+  // removed by 'Preserve history & remove' but whose review history was preserved
+  // on its Dismissed powerup. No slots — it exists purely as a CSS hook
+  // (data-rem-tags~="preservedhistory") to hide the tombstone in editor and queue.
+  await plugin.app.registerPowerup({
+    name: 'Preserved History',
+    code: preservedHistoryPowerupCode,
+    description:
+      'Marks a rem whose content was removed but whose review history was preserved. Hidden from the editor and queue.',
+    options: { slots: [] },
   });
 
   // Video Extract Powerup - stores start/end times for YouTube video segments
@@ -169,4 +225,17 @@ export async function registerPluginPowerups(plugin: ReactRNPlugin) {
       ],
     },
   });
+
+  // Priority band powerups — one per band of ten. These exist purely as CSS
+  // hooks: RemNote puts powerup slugs in `data-rem-tags` on the rem span, and
+  // that attribute is the ONLY channel that reaches inside a table cell, where
+  // no plugin widget can render. See lib/priority_bands.ts.
+  for (let band = 0; band < BAND_COUNT; band++) {
+    await plugin.app.registerPowerup({
+      name: bandPowerupName(band),
+      code: bandPowerupCode(band),
+      description: `Priority ${band * 10}–${band * 10 + 9} — used to draw the table-cell priority badge. Managed automatically.`,
+      options: { slots: [] },
+    });
+  }
 }

@@ -7,8 +7,10 @@ import {
   RemId,
 } from '@remnote/plugin-sdk';
 import { shouldUseLightMode } from '../lib/mobileUtils';
+import { getPowerupSlotByCodeSafe } from '../lib/powerup_slot_compat';
 import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import { getIncrementalRemFromRem, initIncrementalRem, IncrementalRem } from '../lib/incremental_rem';
+import { scanBatchTargets } from '../lib/priority_targets';
 import { updateIncrementalRemCache, removeIncrementalRemCache } from '../lib/incremental_rem/cache';
 import {
   getCardPriority,
@@ -34,14 +36,17 @@ import {
   defaultPriorityId,
   defaultCardPriorityId,
   pendingPrioritySaveKey,
-  pendingCardPriorityRemovalKey
+  pendingCardPriorityRemovalKey,
+  batchPriorityTargetRemIdsKey
 } from '../lib/consts';
 import { updateCardPriorityCache, flushLightCacheUpdates } from '../lib/card_priority/cache';
 import { findClosestAncestorWithAnyPriority } from '../lib/priority_inheritance';
 import { getRemCardContent, safeRemTextToString } from '../lib/pdfUtils';
+import { resolveRemTextForBreadcrumb } from '../lib/richTextRemRefs';
 import { PriorityBadge, PrioritySlider, PrioritySliderRef } from '../components';
 import { useAcceleratedKeyboardHandler } from '../lib/keyboard_utils';
 import * as _ from 'remeda';
+import { useIESettingOptional } from '../lib/settings';
 
 type Scope = { remId: string | null; name: string; };
 type ScopeMode = 'all' | 'document';
@@ -90,6 +95,23 @@ function Priority() {
     return ctx;
   }, []);
 
+  // Batch mode: Opt+P over a multi-rem selection (e.g. several table rows).
+  // Sliders and percentile context are seeded from the first rem; saveAndClose
+  // applies the chosen values to every target.
+  const isBatchMode = widgetContext?.contextData?.batchMode === true;
+  const batchRemIds = useRunAsync(async () => {
+    if (!isBatchMode) return null;
+    return await plugin.storage.getSession<string[]>(batchPriorityTargetRemIdsKey);
+  }, [isBatchMode]);
+  const batchCount: number =
+    batchRemIds?.length ?? widgetContext?.contextData?.batchCount ?? 0;
+
+  // Composition of the selection, so the sections below reflect every target.
+  const batchScan = useRunAsync(async () => {
+    if (!isBatchMode || !batchRemIds?.length) return null;
+    return await scanBatchTargets(plugin, batchRemIds);
+  }, [isBatchMode, batchRemIds]);
+
   const rem = useTrackerPlugin(async (plugin) => {
     let remId = widgetContext?.contextData?.remId;
 
@@ -137,8 +159,11 @@ function Priority() {
     []
   );
 
-  const defaultIncPriority = useTrackerPlugin(async (plugin) => await plugin.settings.getSetting<number>(defaultPriorityId) || 10, []);
-  const defaultCardPriority = useTrackerPlugin(async (plugin) => await plugin.settings.getSetting<number>(defaultCardPriorityId) || 50, []);
+  // Optional form: the seeding effects below explicitly wait for these to load
+  // before writing an optimistic priority into state, so that a fresh rem does
+  // not visibly jump from the table default to the user's configured default.
+  const defaultIncPriority = useIESettingOptional(defaultPriorityId);
+  const defaultCardPriority = useIESettingOptional(defaultCardPriorityId);
 
   const remContent = useTrackerPlugin(async (plugin) => {
     if (!rem) return null;
@@ -200,11 +225,10 @@ function Priority() {
     };
   }, [rem?._id]);
 
-  // Replace the separate hasCards, cardInfo hooks with a combined one:
-  // OPTIMIZATION: Check cardPriority powerup first - if it exists, we can skip expensive card checks
-  // since having the powerup is sufficient to show the card section.
-  // For hasCards, we use a three-tier fallback due to SDK inconsistency where rem.getCards() 
-  // sometimes returns [] even when cards exist.
+  // Combined hasCards + cardInfo lookup. Checks the cardPriority powerup first:
+  // its presence is enough to show the card section, so the card check is skipped
+  // entirely. Otherwise the card count from getCardPriority answers it, corrected
+  // by the cache where one exists — see Step 4.
   const cardData = useTrackerPlugin(
     async (plugin) => {
       if (!rem) {
@@ -228,30 +252,37 @@ function Priority() {
         };
       }
 
-      // Step 4: No powerup - need to check for cards using three-tier fallback
-      let hasCards = false;
+      // Step 4: No powerup — does this rem own cards? The answer picks which
+      // section the popup shows (card priority vs inheritance anchor).
+      //
+      // getCardPriority above already paid a rem.getCards(); cardCount is that
+      // same answer, so asking again would be a second round-trip for one number.
+      let hasCards = (cardPriorityInfo?.cardCount || 0) > 0;
 
-      // Tier 1: Try rem.getCards() first (fastest, works most of the time)
-      const directCards = await rem.getCards();
-      if (directCards.length > 0) {
-        hasCards = true;
-      } else {
-        // Tier 2: Check if rem exists in the card priority cache
-        // 🔌 Skip cache check and global registry in light mode to ensure speed
-        if (performanceMode === PERFORMANCE_MODE_LIGHT) {
-          hasCards = false;
-        } else {
-          const cachedCardInfos = await plugin.storage.getSession<CardPriorityInfo[]>(allCardPriorityInfoKey);
-          const cachedInfo = cachedCardInfos?.find(info => info.remId === rem._id);
-
-          if (cachedInfo && cachedInfo.cardCount > 0) {
-            hasCards = true;
-          } else {
-            // Tier 3: Use global registry as final fallback (slowest but most reliable)
-            const allCards = await plugin.card.getAll();
-            const cardsForRem = allCards.filter(card => card.remId === rem._id);
-            hasCards = cardsForRem.length > 0;
-          }
+      // rem.getCards() reports [] for rems whose cards are disabled or sit in a
+      // paused deck. A fully-loaded cache corrects that: since its deferred phase
+      // it holds an entry for every rem that owns cards, which makes it
+      // authoritative in BOTH directions — a miss means no cards and needs no
+      // further probing.
+      //
+      // This replaces a third tier that ran plugin.card.getAll() and filtered the
+      // whole card database down to this one rem. Its conditions read like a rare
+      // fallback but described the most ordinary case there is — a plain rem with
+      // no cards, no powerup and therefore no cache entry — so pressing Opt+P on
+      // one loaded the entire card database to confirm a negative.
+      //
+      // With no cache (light mode, or flashcard prioritisation off) the getCards
+      // answer stands, which is exactly how light mode has always behaved here.
+      if (!hasCards) {
+        const cacheLoaded = await plugin.storage.getSession<boolean>(
+          'card_priority_cache_fully_loaded'
+        );
+        if (cacheLoaded) {
+          const cachedCardInfos =
+            (await plugin.storage.getSession<CardPriorityInfo[]>(allCardPriorityInfoKey)) || [];
+          hasCards = cachedCardInfos.some(
+            (info) => info.remId === rem._id && info.cardCount > 0
+          );
         }
       }
 
@@ -264,7 +295,7 @@ function Priority() {
         hasCardPriorityPowerup: hasPowerup
       };
     },
-    [rem?._id, performanceMode]
+    [rem?._id]
   );
 
   // Then use:
@@ -309,20 +340,36 @@ function Priority() {
 
     // --- FULL MODE LOGIC ---
 
-    // Calculate descendant card count (needed for "Set Card Priority for Inheritance" button)
-    // We use plugin.card.getAll() instead of rem.getCards() due to SDK inconsistency
-    // where rem.getCards() sometimes returns [] even when cards exist.
-    // Note: We cannot use the cardPriority cache here because it only contains tagged rems,
-    // but for inheritance we need to count ALL cards including untagged descendants.
-    const descendants = await rem.getDescendants();
-    const descendantIds = new Set(descendants.map(d => d._id));
-
-    // OPTIMIZATION: Use the set of IDs to filter efficiently, as suggested by RemNote support.
-    // This is already using the optimized approach of fetching all cards once and validiting IDs,
-    // avoiding individual rem fetches for each card.
-    const allCards = await plugin.card.getAll();
-    const cardsInDescendants = allCards.filter(card => descendantIds.has(card.remId));
-    const finalDescendantCardCount = cardsInDescendants.length;
+    // Descendant flashcard count, used ONLY to label the "Set Card Priority for
+    // Inheritance" section and to disable it at zero. Nothing is written from it.
+    //
+    // This used to call plugin.card.getAll() and filter the whole card database by
+    // descendant id — a full-DB load to render a number in a sentence, re-run on
+    // every change to scope/caches while the user waits on the popup.
+    //
+    // The card-priority cache answers it for free: since its deferred phase it
+    // holds an entry per rem that owns cards, tagged or not (the old comment here
+    // predated that phase), and cardCount gives cards rather than rems.
+    //
+    // No cache, no count: -1 means "unknown" and every consumer already renders
+    // the generic "Descendant flashcards" label for it — that is exactly what
+    // Light Mode has always shown. Keying on the cache rather than on the
+    // flashcard-prioritisation setting covers three cases with one condition:
+    // prioritisation off, light mode, and prioritisation on but the cache still
+    // loading — where a count taken from a partial cache would simply be wrong.
+    const cardCacheLoaded = await plugin.storage.getSession<boolean>(
+      'card_priority_cache_fully_loaded'
+    );
+    let finalDescendantCardCount = -1;
+    if (cardCacheLoaded) {
+      const cachedInfos =
+        (await plugin.storage.getSession<CardPriorityInfo[]>(allCardPriorityInfoKey)) || [];
+      const descendantIds = new Set((await rem.getDescendants()).map((d) => d._id));
+      finalDescendantCardCount = cachedInfos.reduce(
+        (n, info) => (descendantIds.has(info.remId) ? n + info.cardCount : n),
+        0
+      );
+    }
 
     // ... (rest of the existing derivedData logic) ...
     const effectiveScopeForCache = originalScopeId || queueSubQueueId;
@@ -361,7 +408,8 @@ function Priority() {
         const folderQueueRems = await scopeRem.allRemInFolderQueue();
         const sources = await scopeRem.getSources();
 
-        const nextRepDateSlotRem = await plugin.powerup.getPowerupSlotByCode(
+        const nextRepDateSlotRem = await getPowerupSlotByCodeSafe(
+          plugin,
           powerupCode,
           nextRepDateSlotCode
         );
@@ -456,7 +504,7 @@ function Priority() {
   }, [cardData?.cardInfo?.source, convertedToManual]);
 
   useEffect(() => {
-    if (isSaving.current) return;
+    if (isSaving.current || isBatchMode) return;
     if (incRemInfo) {
       if (!incIsDirty.current) {
         setIncAbsPriority(incRemInfo.priority);
@@ -476,7 +524,7 @@ function Priority() {
   }, [incRemInfo, defaultIncPriority]);
 
   useEffect(() => {
-    if (isSaving.current) return;
+    if (isSaving.current || isBatchMode) return;
     if (cardInfo) {
       if (!cardIsDirty.current) {
         setCardAbsPriority(cardInfo.priority);
@@ -497,7 +545,7 @@ function Priority() {
 
   // Snap to Inheritance Effect
   useEffect(() => {
-    if (isSaving.current) return;
+    if (isSaving.current || isBatchMode) return;
     // If we have an ancestor priority, and the current card priority is either strictly "default" source 
     // OR we are purely using the default setting (meaning cardInfo might be undefined yet),
     // then snap to the ancestor's priority to show what will be inherited.
@@ -511,6 +559,20 @@ function Priority() {
     }
   }, [ancestorPriorityInfo, cardInfo]);
 
+  // Batch: seed each slider from the mean current priority of its class across
+  // the whole selection. The three effects above are skipped in batch mode
+  // because they read rem #1 only — which left, say, the IncRem slider sitting
+  // at the default whenever the first selected rem was a plain card.
+  useEffect(() => {
+    if (isSaving.current || !isBatchMode || !batchScan) return;
+    if (!incIsDirty.current) {
+      setIncAbsPriority(batchScan.incSeed ?? defaultIncPriority ?? 50);
+    }
+    if (!cardIsDirty.current) {
+      setCardAbsPriority(batchScan.cardSeed ?? defaultCardPriority ?? 50);
+    }
+  }, [isBatchMode, batchScan, defaultIncPriority, defaultCardPriority]);
+
   // This tracker is fast and only runs in 'full' mode, so it's fine.
   useTrackerPlugin(async (plugin) => {
     if (!rem || performanceMode === PERFORMANCE_MODE_LIGHT) return; // 🔌 Skip in light mode
@@ -522,7 +584,7 @@ function Priority() {
     }
     const hierarchy: Scope[] = [{ remId: null, name: 'All KB' }];
     for (const ancestor of ancestors.reverse()) {
-      hierarchy.push({ remId: ancestor._id, name: await safeRemTextToString(plugin, ancestor.text) });
+      hierarchy.push({ remId: ancestor._id, name: await resolveRemTextForBreadcrumb(plugin, ancestor.text) });
     }
     setScopeHierarchy(hierarchy);
   }, [rem?._id, performanceMode]); // 🔌 Add performanceMode
@@ -559,7 +621,7 @@ function Priority() {
       if (scopeRem) {
         setScope({
           remId: scopeRem._id,
-          name: await safeRemTextToString(plugin, scopeRem.text)
+          name: await resolveRemTextForBreadcrumb(plugin, scopeRem.text)
         });
         setScopeMode('document');
       }
@@ -583,9 +645,16 @@ function Priority() {
   // Replaced by synchronous useMemo above to prevent "Blue Flash" flicker.
 
   // Event Handlers
-  const showIncSection = !!incRemInfo; // Converts to boolean - undefined/null become false
+  // In batch mode the sections reflect the WHOLE selection rather than the first
+  // rem, so a mixed set offers both dimensions instead of silently dropping
+  // whichever one rem #1 lacks. tracker.ts routes each value per rem.
+  const showIncSection = isBatchMode
+    ? (batchScan?.incCount ?? 0) > 0
+    : !!incRemInfo; // Converts to boolean - undefined/null become false
   // UPDATED: Only show card section if strictly has cards. If powerup exists but no cards, show Inheritance section.
-  const showCardSection = hasCards === true || (cardInfo && cardInfo.cardCount > 0);
+  const showCardSection = isBatchMode
+    ? (batchScan?.cardCount ?? 0) > 0
+    : hasCards === true || (cardInfo && cardInfo.cardCount > 0);
 
   const saveIncPriority = useCallback(async (priority: number) => {
     if (!rem) return;
@@ -638,9 +707,10 @@ function Priority() {
     // Always triggered regardless of derivedData — that hook may not have resolved yet when
     // the user saves quickly. Cost is just a setSession write; tracker.ts is protected by
     // cascadeRunning serialization and returns instantly for leaf rems with no descendants.
-    if (performanceMode === PERFORMANCE_MODE_FULL) {
-      plugin.storage.setSession('pendingInheritanceCascade', rem._id).catch(console.error);
-    }
+    // Unconditional: the tracker's cascade watcher applies the
+    // flashcard-prioritisation gate, and the cascade no longer needs Full Mode —
+    // without the card-priority cache it resolves has-cards per rem instead.
+    plugin.storage.setSession('pendingInheritanceCascade', rem._id).catch(console.error);
   }, [rem, incRemInfo, plugin, sessionCache, originalScopeId, performanceMode]); // 🔌 Add performanceMode
 
   const saveCardPriority = useCallback(async (priority: number) => {
@@ -712,9 +782,7 @@ function Priority() {
 
     // 🌲 Cascade inherited card priorities to descendants
     // This instructs the tracker to eventually trigger the inheritance cascade.
-    if (performanceMode === PERFORMANCE_MODE_FULL) {
-      plugin.storage.setSession('pendingInheritanceCascade', rem._id).catch(console.error);
-    }
+    plugin.storage.setSession('pendingInheritanceCascade', rem._id).catch(console.error);
 
   }, [rem, plugin, sessionCache, originalScopeId, performanceMode, cardInfo, hasCardPriorityPowerup]); // 🔌 Add performanceMode
 
@@ -745,14 +813,43 @@ function Priority() {
     }).catch(console.error);
   }, [rem, cardInfo, hasCardPriorityPowerup, saveCardPriority, plugin]);
 
+  // Hidden in batch mode: this section exists to set a rem up as an inheritance
+  // anchor, which a bulk edit should never do implicitly (and its state is read
+  // from rem #1 anyway, so it would misdescribe the rest of the selection).
   const showInheritanceSection =
-    (!showIncSection && !showCardSection) ||
-    (showIncSection && !hasCards && cardInfo?.source === 'manual') ||
-    showInheritanceForIncRem;
+    !isBatchMode &&
+    ((!showIncSection && !showCardSection) ||
+      (showIncSection && !hasCards && cardInfo?.source === 'manual') ||
+      showInheritanceForIncRem);
 
   const saveAndClose = useCallback(async (incP: number, cardP: number) => {
     if (!rem) return;
     isSaving.current = true;
+
+    // Batch returns early, before the single-rem optimistic saves below: those
+    // are closed over rem #1 and cannot help rems 2..N, and since the sections
+    // now reflect the whole selection they would write rem #1's cache for a
+    // dimension the user never adjusted. The tracker refreshes both caches for
+    // every rem it writes, rem #1 included.
+    if (isBatchMode && batchRemIds && batchRemIds.length > 1) {
+      // Only dimensions the user actually adjusted are sent, and only if the
+      // selection contains rems they apply to.
+      const sendInc = incIsDirty.current && (batchScan?.incCount ?? 0) > 0;
+      const sendCard = cardIsDirty.current && (batchScan?.cardCount ?? 0) > 0;
+
+      if (sendInc || sendCard) {
+        plugin.storage.setSession(pendingPrioritySaveKey, {
+          remIds: batchRemIds,
+          incPriority: sendInc ? incP : null,
+          cardPriority: sendCard ? cardP : null,
+          cardSource: 'manual',
+          triggerCascade: true,
+        }).catch(console.error);
+      }
+      plugin.storage.setSession(batchPriorityTargetRemIdsKey, null).catch(console.error);
+      plugin.widget.closePopup();
+      return;
+    }
 
     // Define what actually needs writing
     const incChanged = showIncSection && incP !== incRemInfo?.priority;
@@ -782,7 +879,7 @@ function Priority() {
 
     // Close immediately ("Fire and Forget")
     plugin.widget.closePopup();
-  }, [plugin, rem, incRemInfo, cardInfo, hasCardPriorityPowerup, showIncSection, showCardSection, showInheritanceSection, saveIncPriority, saveCardPriority]);
+  }, [plugin, rem, incRemInfo, cardInfo, hasCardPriorityPowerup, showIncSection, showCardSection, showInheritanceSection, saveIncPriority, saveCardPriority, isBatchMode, batchRemIds]);
 
   const handleConfirmAndClose = useCallback(async () => {
     const bothSectionsVisible = showIncSection && (showCardSection || showInheritanceSection);
@@ -1027,7 +1124,7 @@ function Priority() {
       <div className="flex items-center justify-between mb-1">
         <div className="flex flex-col overflow-hidden mr-2">
           <h2 className="text-base font-bold" style={{ color: 'var(--rn-clr-content-primary)' }}>
-            Priority Settings
+            {batchCount > 1 ? `Priority Settings — ${batchCount} rems` : 'Priority Settings'}
           </h2>
           <div className="mt-1 overflow-hidden text-ellipsis whitespace-nowrap" style={{ width: '100%' }} title={remContent ? `${remContent.front}${remContent.back ? ` → ${remContent.back}` : ''}` : ''}>
             {remContent && (
@@ -1036,7 +1133,25 @@ function Priority() {
                 {remContent.back && <span className="opacity-80"> → {remContent.back}</span>}
               </span>
             )}
+            {batchCount > 1 && (
+              <span className="text-xs opacity-60"> and {batchCount - 1} more</span>
+            )}
           </div>
+          {batchCount > 1 && (
+            <div className="mt-1 text-[10px] opacity-60 leading-snug">
+              Only sliders you adjust are applied
+              {batchScan && <> · {batchScan.incCount} IncRem{batchScan.incCount === 1 ? '' : 's'}, {batchScan.cardCount} with cards</>}
+              {!!batchScan?.skippedCount && <> · {batchScan.skippedCount} skipped</>}
+              {/* Sliders open on the class average; say so when the targets disagree,
+                  rather than letting an average read as everyone's current value. */}
+              {batchScan?.incSpread?.mixed && (
+                <> · IncRem mixed {batchScan.incSpread.min}–{batchScan.incSpread.max} (avg {batchScan.incSeed})</>
+              )}
+              {batchScan?.cardSpread?.mixed && (
+                <> · Cards mixed {batchScan.cardSpread.min}–{batchScan.cardSpread.max} (avg {batchScan.cardSeed})</>
+              )}
+            </div>
+          )}
         </div>
         <button
           onClick={() => plugin.widget.closePopup()}

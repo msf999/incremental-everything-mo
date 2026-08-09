@@ -9,11 +9,13 @@ import {
   betaMaxIntervalId,
 } from './consts';
 import { IncrementalRep } from './incremental_rem';
+import { repCountsForScheduling } from './incremental_rem/types';
 import * as _ from 'remeda';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { getIncrementalRemFromRem } from './incremental_rem';
 import { getDailyDocReferenceForDate } from './utils';
+import { getIESetting } from './settings';
 dayjs.extend(relativeTime);
 
 function removeResponsesBeforeEarlyResponses(history: IncrementalRep[]) {
@@ -57,7 +59,12 @@ function removeResponsesBeforeEarlyResponses(history: IncrementalRep[]) {
  * - 'rescheduledInEditor': Reschedule from editor (no review confirmed)
  * - 'manualDateReset': Manual date change (no review)
  * - 'madeIncremental', 'dismissed': Session markers
- * 
+ * - 'importedRep': Review imported from a removed flashcard — counts for stats
+ *   but never for this rem's own scheduling.
+ *
+ * The exact predicate lives in repCountsForScheduling (types.ts) so it can't
+ * drift from the Study Dashboard's stats predicate.
+ *
  * @param history Full cleansed history array (after early-response filtering)
  * @returns Only the events that count for interval after the last 'madeIncremental' marker
  */
@@ -76,16 +83,7 @@ function getRepsSinceLastMadeIncremental(history: IncrementalRep[]): Incremental
     ? history.slice(lastSessionStartIndex + 1)
     : history;
 
-  // Filter to only events that count for interval calculation
-  // - undefined or 'rep': Normal review
-  // - 'rescheduledInQueue': Reschedule during queue review (review happened)
-  // - 'executeRepetition': Execute repetition command (review happened)
-  return entriesAfterSessionStart.filter(entry =>
-    entry.eventType === undefined ||
-    entry.eventType === 'rep' ||
-    entry.eventType === 'rescheduledInQueue' ||
-    entry.eventType === 'executeRepetition'
-  );
+  return entriesAfterSessionStart.filter(entry => repCountsForScheduling(entry.eventType));
 }
 
 export function timeWhenCardAppearsInQueueFromScheduled(
@@ -106,16 +104,16 @@ export function timeWhenCardAppearsInQueueFromScheduled(
 }
 
 export const getMultiplier = async (plugin: RNPlugin) => {
-  const multiplier = (await plugin.settings.getSetting<number>(multiplierId)) || 1.5;
+  const multiplier = await getIESetting(plugin, multiplierId);
   return multiplier;
 };
 
 export const getBetaSchedulerSettings = async (plugin: RNPlugin) => {
-  const enabled = await plugin.settings.getSetting<boolean>(betaSchedulerEnabledId);
+  const enabled = await getIESetting(plugin, betaSchedulerEnabledId);
   const firstReviewInterval =
-    (await plugin.settings.getSetting<number>(betaFirstReviewIntervalId)) || 5;
+    await getIESetting(plugin, betaFirstReviewIntervalId);
   const maxInterval =
-    (await plugin.settings.getSetting<number>(betaMaxIntervalId)) || 30;
+    await getIESetting(plugin, betaMaxIntervalId);
   return { enabled: !!enabled, firstReviewInterval, maxInterval };
 };
 
@@ -191,7 +189,14 @@ export async function getNextSpacingDateForRem(
       interval: newInterval,
       wasEarly: wasEarly,
       daysEarlyOrLate: daysEarlyOrLate,
-      priority: incrementalRemInfo.priority, // Record priority at time of rep
+      // Record priority at time of rep — but only when it is a real value.
+      // `prioritySource: 'fallback'` means neither the slot nor the existing
+      // history could supply one, so the number is a placeholder. Stamping it
+      // here would turn an unreadable slot into a permanent wrong priority, and
+      // would overwrite the very history entries the value can be recovered from.
+      ...(incrementalRemInfo.prioritySource === 'fallback'
+        ? {}
+        : { priority: incrementalRemInfo.priority }),
       // reviewTimeSeconds will be added by reviewRem()
     },
   ];
@@ -219,11 +224,21 @@ export async function updateSRSDataForRem(
     return;
   }
 
+  // Stamp the authoritative scheduling date onto the most-recent history entry. The
+  // Daily Doc reference above stays the source of truth on read (so manual date edits
+  // win), but some daily-doc rems expose an empty 'Date' property and don't round-trip;
+  // this gives the read a reliable fallback without adding a user-visible slot.
+  const stampedHistory = newHistory.length > 0
+    ? newHistory.map((entry, i) =>
+        i === newHistory.length - 1 ? { ...entry, nextRepMs: newNextRepDate } : entry
+      )
+    : newHistory;
+
   // Set flag to indicate plugin is making the update (prevents manual date reset detection)
   await plugin.storage.setSession('plugin_updating_srs_data', true);
 
   await rem?.setPowerupProperty(powerupCode, nextRepDateSlotCode, dateReference);
-  await rem?.setPowerupProperty(powerupCode, repHistorySlotCode, [JSON.stringify(newHistory)]);
+  await rem?.setPowerupProperty(powerupCode, repHistorySlotCode, [JSON.stringify(stampedHistory)]);
 
   // Clear flag after a delay longer than the GlobalRemChanged debounce (1000ms)
   // to prevent false-positive manual date reset detection

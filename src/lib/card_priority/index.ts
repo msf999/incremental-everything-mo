@@ -2,9 +2,12 @@ import { Card, PluginRem, RNPlugin, RemId } from '@remnote/plugin-sdk';
 import { getIncrementalRemFromRem } from '../incremental_rem';
 import { buildComprehensiveScope } from '../scope_helpers';
 import { findClosestAncestorWithAnyPriority } from '../priority_inheritance';
+import { syncPriorityBand } from '../priority_bands';
 import dayjs from 'dayjs';
 import {
   allCardPriorityInfoKey,
+  defaultCardPriorityId,
+  enableFlashcardPrioritisationId,
 } from '../consts';
 import {
   CardPriorityInfo,
@@ -15,6 +18,34 @@ import {
   LAST_UPDATED_SLOT,
 } from './types';
 import * as _ from 'remeda';
+import { getIESetting } from '../settings';
+
+/**
+ * Whether a CardPriority tag may be written, given the source being recorded.
+ *
+ * The rule, enforced centrally in setCardPriority so no writer can miss it:
+ *
+ * - `manual` — always. The user set this priority deliberately, on one rem.
+ * - `incremental` — always. The rem is (or descends from) an Incremental Rem
+ *   whose priority it adopts; this is what Dismiss records, and the anchor it
+ *   leaves behind is what preserves the priority once the IncRem is gone.
+ * - `inherited` / `default` — only while flashcard prioritisation is on. These
+ *   are the bulk-index writes: derivable at any time by walking ancestors, and
+ *   materialising them KB-wide is precisely the cost the opt-in exists to avoid.
+ *
+ * Nothing is lost by refusing the last two. getCardPriority resolves an
+ * untagged rem's value through findClosestAncestorWithPriority on every read, so
+ * inheritance keeps working; what is skipped is only the physical tag that makes
+ * it queryable in bulk (taggedRem -> cache -> shield, percentiles, Priority
+ * Review Documents).
+ */
+export async function mayWriteCardPrioritySource(
+  plugin: RNPlugin,
+  source: PrioritySource
+): Promise<boolean> {
+  if (source === 'manual' || source === 'incremental') return true;
+  return await getIESetting(plugin, enableFlashcardPrioritisationId);
+}
 
 /**
  * Find the closest ancestor with priority (either Incremental or CardPriority)
@@ -106,7 +137,7 @@ export async function getCardPriority(
       };
     }
 
-    const defaultPriority = (await plugin.settings.getSetting<number>('defaultCardPriority')) || 50;
+    const defaultPriority = await getIESetting(plugin, defaultCardPriorityId);
     return {
       remId: rem._id,
       priority: defaultPriority,
@@ -143,7 +174,7 @@ export async function getCardPriorityValue(
   }
 
   // Default
-  return (await plugin.settings.getSetting<number>('defaultCardPriority')) || 50;
+  return await getIESetting(plugin, defaultCardPriorityId);
 }
 
 /**
@@ -156,6 +187,17 @@ export async function setCardPriority(
   source: PrioritySource,
   knownHasPowerup: boolean = false
 ): Promise<void> {
+  // Single enforcement point for the source rule — see mayWriteCardPrioritySource.
+  // Refusing here rather than at each call site means a new writer cannot forget,
+  // and the derivable sources ('inherited'/'default') never materialise a tag
+  // while flashcard prioritisation is off.
+  if (!(await mayWriteCardPrioritySource(plugin, source))) {
+    console.debug(
+      `[CardPriority] skipped '${source}' write on ${rem._id} — flashcard prioritisation is off`
+    );
+    return;
+  }
+
   const hasPowerup = knownHasPowerup || (await rem.hasPowerup(CARD_PRIORITY_CODE));
   if (!hasPowerup) {
     await rem.addPowerup(CARD_PRIORITY_CODE);
@@ -167,6 +209,17 @@ export async function setCardPriority(
     rem.setPowerupProperty(CARD_PRIORITY_CODE, SOURCE_SLOT, [source]),
     rem.setPowerupProperty(CARD_PRIORITY_CODE, LAST_UPDATED_SLOT, [Date.now().toString()])
   ]);
+
+  // Keep the table-cell badge in step. Static import: a dynamic import() here
+  // emits a chunk the RemNote index sandbox cannot evaluate ("Cannot use
+  // 'import.meta' outside a module"). priority_bands only pulls constants from
+  // card_priority/types, so there is no cycle to dodge. syncPriorityBand writes
+  // nothing when the band is already correct, so this cannot loop.
+  try {
+    await syncPriorityBand(plugin, rem);
+  } catch (err) {
+    console.error('[CardPriority] band sync failed', err);
+  }
 }
 
 /**
@@ -214,7 +267,7 @@ export async function autoAssignCardPriority(plugin: RNPlugin, rem: PluginRem): 
     return existingPriority.priority;
   }
 
-  const defaultPriority = (await plugin.settings.getSetting<number>('defaultCardPriority')) || 50;
+  const defaultPriority = await getIESetting(plugin, defaultCardPriorityId);
   // Skip write if already up-to-date (prevents infinite GlobalRemChanged loop).
   // Untagged rems with matching default priority intentionally stay untagged: the widget
   // falls back to getCardPriority() and the deferred batch still pushes them into the
@@ -254,7 +307,7 @@ export async function calculateNewPriority(
     return { priority: existingPriority.priority, source: 'inherited' };
   }
 
-  const defaultPriority = (await plugin.settings.getSetting<number>('defaultCardPriority')) || 50;
+  const defaultPriority = await getIESetting(plugin, defaultCardPriorityId);
   return { priority: defaultPriority, source: 'default' };
 }
 
@@ -370,8 +423,27 @@ export async function getDueCardsWithPriorities(
 }
 
 /**
- * FALLBACK: Slow version for when cache doesn't exist
- * Also optimized to avoid rem.getCards() - uses plugin.card.getAll() instead
+ * Cache-less path for gathering due cards with their priorities.
+ *
+ * NOT merely a degraded fallback: it is the ONLY path on mobile and in the web
+ * browser, where Light Mode never builds the card-priority cache yet users still
+ * rely on card priorities. Priority Review Documents there depend on this.
+ *
+ * It needs KB-wide data — due-card counts for every rem in scope, where the scope
+ * can be the whole knowledge base — so plugin.card.getAll() is the right call
+ * here, unlike the per-rem questions elsewhere that were answered with it. It
+ * runs once per user-initiated document build, not on any interactive path.
+ *
+ * The one case it must not serve is flashcard prioritisation being switched off.
+ * The cache is then empty by design, so cache-emptiness alone would route every
+ * such build straight into a full card-database load — to build a flashcard
+ * section for a user who opted out, whose autoAssignCardPriority writes the
+ * source rule would refuse anyway. Flashcards in Priority Review Documents are
+ * listed in that setting's own description as part of what it enables.
+ *
+ * Guarded here, at the owner of the getAll, rather than at the caller: six
+ * cascade triggers taught us that per-call-site gating is the kind that gets
+ * missed when a seventh caller appears.
  */
 async function getDueCardsWithPrioritiesSlow(
   plugin: RNPlugin,
@@ -386,6 +458,14 @@ async function getDueCardsWithPrioritiesSlow(
     source: PrioritySource;
   }>
 > {
+  if (!(await getIESetting(plugin, enableFlashcardPrioritisationId))) {
+    console.log(
+      '[getDueCardsWithPrioritiesSlow] Skipped — flashcard prioritisation is off, so no card ' +
+        'database load. Incremental Rems are unaffected.'
+    );
+    return [];
+  }
+
   console.log(`[getDueCardsWithPrioritiesSlow] Starting fallback gathering...`);
 
   const results: Array<{
@@ -463,20 +543,84 @@ export async function recalculateTreeInheritance(
   plugin: RNPlugin,
   rootRem: PluginRem
 ): Promise<number> {
-  let updatedCount = 0;
-  const descendants = await rootRem.getDescendants();
+  return recalculateTreeInheritanceBatch(plugin, [rootRem]);
+}
 
-  // Authoritative set of rems that actually own flashcards. We use the global
-  // card index instead of per-rem rem.getCards() because rem.getCards() returns
-  // [] for rems whose cards are disabled or sit inside a paused deck, whereas
-  // plugin.card.getAll() returns every card regardless of state (see wiki:
-  // Priority-Review-Document → Card-State Reference). Built once for the walk.
-  const allCards = (await plugin.card.getAll()) || [];
-  const remIdsWithCards = new Set<string>();
-  for (const c of allCards) {
-    if (c.remId) remIdsWithCards.add(c.remId);
+/**
+ * Batch form of recalculateTreeInheritance: cascades from MANY roots in a single pass.
+ *
+ * Why this exists: bulk flows — batch card priority over a tag, batch IncRem
+ * priority, interval batch save — produce one cascade root per modified rem
+ * (hundreds of them). Running them one at a time repeated the whole setup per
+ * root; a 625-rem batch cost ~17 minutes of background cascades, nearly all of it
+ * repeated plugin.card.getAll() calls back when this function used one.
+ *
+ * Here the has-cards index and the defaultCardPriority setting are resolved ONCE,
+ * and the union of all roots' descendants is deduplicated before the walk —
+ * overlapping subtrees (common when the selection is a tag's members) are visited
+ * a single time.
+ *
+ * @param onProgress optional callback invoked as descendant batches complete, so
+ *   long-running bulk cascades can report progress instead of going silent.
+ */
+export async function recalculateTreeInheritanceBatch(
+  plugin: RNPlugin,
+  rootRems: PluginRem[],
+  onProgress?: (done: number, total: number) => void
+): Promise<number> {
+  if (rootRems.length === 0) return 0;
+
+  // Union of every root's descendants, deduplicated by rem id. Roots frequently
+  // share subtrees (or are each other's descendants) in bulk operations, and
+  // walking a rem twice is pure waste — the second pass finds the value already
+  // correct and does nothing.
+  const descendantsById = new Map<string, PluginRem>();
+  for (const rootRem of rootRems) {
+    const descendants = await rootRem.getDescendants();
+    for (const d of descendants) {
+      if (!descendantsById.has(d._id)) descendantsById.set(d._id, d);
+    }
+  }
+  const descendants = [...descendantsById.values()];
+
+  // Fast path: roots with no descendants at all (e.g. freshly-created leaf
+  // extracts) have nothing to cascade into, so skip the has-cards work below.
+  // This used to be the difference between a new-IncRem save costing seconds and
+  // costing nothing, back when that work was a full plugin.card.getAll().
+  if (descendants.length === 0) {
+    return 0;
   }
 
+  // Which descendants own flashcards. This used to call plugin.card.getAll() and
+  // reduce the whole card database to a set of rem ids — a ~29s cost per cascade
+  // on a large library, paid on the interactive editing path, to answer a
+  // question about a handful of rems.
+  //
+  // Preferred source: the card-priority cache, which is itself built from one
+  // getAll() at startup and therefore carries identical semantics (disabled
+  // cards and paused decks included). Costs one session read.
+  //
+  // The cache is absent in Light Mode and incomplete until its deferred phase
+  // finishes; the loop below then falls back to per-rem rem.getCards(). That
+  // under-reports rems whose cards are all disabled or in a paused deck, and the
+  // error direction is the safe one: fewer rems are tagged, never more, so it
+  // cannot recreate the rogue-tag bug the guard below exists to prevent. Such
+  // rems are excluded from due counts anyway (getCardPriority maps a null
+  // nextRepetitionTime to Infinity), so they reach neither the shield nor a
+  // Priority Review Document — a stale tag on them changes nothing visible.
+  const cacheLoaded = await plugin.storage.getSession<boolean>('card_priority_cache_fully_loaded');
+  const cachedInfos = cacheLoaded
+    ? (await plugin.storage.getSession<CardPriorityInfo[]>(allCardPriorityInfoKey)) || []
+    : [];
+  const remIdsWithCards: Set<string> | null = cacheLoaded
+    ? new Set(cachedInfos.filter((i) => i.cardCount > 0).map((i) => i.remId))
+    : null;
+
+  // Hoisted out of the per-descendant loop: this is a constant for the whole walk.
+  const defaultPriority = await getIESetting(plugin, defaultCardPriorityId);
+  const { updateCardPriorityCache } = await import('./cache');
+
+  let updatedCount = 0;
   const batchSize = 50;
   for (let i = 0; i < descendants.length; i += batchSize) {
     const batch = descendants.slice(i, i + batchSize);
@@ -496,25 +640,39 @@ export async function recalculateTreeInheritance(
       // dynamically via findClosestAncestorWithPriority() and need no physical
       // tag; card-less tagged rems are rogue artifacts the sanitizer removes —
       // we must not perpetuate them here.
-      const hasCards = remIdsWithCards.has(descendant._id);
-      if (!hasCards) return;
+      //
+      // Fallback path fetches the cards to answer "has cards", then hands them to
+      // getCardPriority as `preloadedCards` so they are not fetched twice — the
+      // old code paid getAll() *and* a rem.getCards() inside getCardPriority for
+      // every descendant it touched.
+      let preloadedCards: Card[] | undefined;
+      if (remIdsWithCards) {
+        if (!remIdsWithCards.has(descendant._id)) return;
+      } else {
+        preloadedCards = await descendant.getCards();
+        if (preloadedCards.length === 0) return;
+      }
 
-      const cardInfo = await getCardPriority(plugin, descendant);
+      const cardInfo = await getCardPriority(
+        plugin,
+        descendant,
+        preloadedCards ? { preloadedCards } : undefined
+      );
       if (!cardInfo || (cardInfo.source !== 'manual' && cardInfo.source !== 'incremental')) {
         const closerAncestor = await findClosestAncestorWithPriority(plugin, descendant);
-        const targetPriority = closerAncestor ? closerAncestor.priority : ((await plugin.settings.getSetting<number>('defaultCardPriority')) || 50);
+        const targetPriority = closerAncestor ? closerAncestor.priority : defaultPriority;
         const targetSource = closerAncestor ? 'inherited' : 'default';
 
         if (!cardInfo || cardInfo.priority !== targetPriority || cardInfo.source !== targetSource) {
           await setCardPriority(plugin, descendant, targetPriority, targetSource);
           // We let the caller flush the cache updates
-          // Import updateCardPriorityCache locally to avoid circular dependencies if necessary
-          const { updateCardPriorityCache } = await import('./cache');
           await updateCardPriorityCache(plugin, descendant._id);
           updatedCount++;
         }
       }
     }));
+
+    onProgress?.(Math.min(i + batchSize, descendants.length), descendants.length);
   }
   return updatedCount;
 }

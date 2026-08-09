@@ -7,7 +7,8 @@ import {
 } from '@remnote/plugin-sdk';
 import React, { useState, useEffect } from 'react';
 import {
-  getPageRangeKey,
+  setIncrementalPageRange,
+  clearIncrementalPageRange,
   getPageHistory,
   getAllIncrementsForPDF,
   getInstantRemsForPDF,
@@ -29,7 +30,7 @@ import { powerupCode, prioritySlotCode, allIncrementalRemKey } from '../lib/cons
 import { calculateRelativePercentile, formatDuration } from '../lib/utils';
 import { PdfRemItem, EditingState } from '../components';
 import { IncrementalRem } from '../lib/incremental_rem';
-import { getIncrementalRemFromRem, initIncrementalRem } from '../lib/incremental_rem';
+import { getIncrementalRemFromRem, initIncrementalRem, setIncRemPriority } from '../lib/incremental_rem';
 import { updateIncrementalRemCache } from '../lib/incremental_rem/cache';
 
 function PageRangeWidget() {
@@ -122,7 +123,7 @@ function PageRangeWidget() {
 
     const rem = await plugin.rem.findOne(remId);
     if (rem) {
-      await rem.setPowerupProperty(powerupCode, prioritySlotCode, [priority.toString()]);
+      await setIncRemPriority(plugin, rem, priority);
 
       // Update the incremental rem cache for other widgets
       const incRemInfo = await getIncrementalRemFromRem(plugin, rem);
@@ -283,17 +284,15 @@ function PageRangeWidget() {
     if (!contextData?.pdfRemId || editingState.type !== 'range') return;
 
     const { start, end } = editingState;
-    const rangeKey = getPageRangeKey(remId, contextData.pdfRemId);
-
     if (start > 1 || end > 0) {
-      await plugin.storage.setSynced(rangeKey, { start, end });
+      await setIncrementalPageRange(plugin, remId, contextData.pdfRemId, start, end);
       // Patch the range for this rem in the local list in-place
       setRelatedRems(prev => prev.map(r =>
         r.remId === remId ? { ...r, range: { start, end } } : r
       ));
       await plugin.app.toast(`Saved page range: ${start}-${end || '∞'}`);
     } else {
-      await plugin.storage.setSynced(rangeKey, null);
+      await clearIncrementalPageRange(plugin, remId, contextData.pdfRemId);
       setRelatedRems(prev => prev.map(r =>
         r.remId === remId ? { ...r, range: null } : r
       ));
@@ -506,14 +505,11 @@ function PageRangeWidget() {
 
     try {
       const { incrementalRemId, pdfRemId } = contextData;
-      const rangeKey = getPageRangeKey(incrementalRemId, pdfRemId);
-
       if (pageRangeStart > 1 || pageRangeEnd > 0) {
-        const range = { start: pageRangeStart, end: pageRangeEnd };
-        await plugin.storage.setSynced(rangeKey, range);
+        await setIncrementalPageRange(plugin, incrementalRemId, pdfRemId, pageRangeStart, pageRangeEnd);
         await plugin.app.toast(`Saved page range: ${pageRangeStart}-${pageRangeEnd || '∞'}`);
       } else {
-        await plugin.storage.setSynced(rangeKey, null);
+        await clearIncrementalPageRange(plugin, incrementalRemId, pdfRemId);
         await plugin.app.toast('Cleared page range');
       }
 

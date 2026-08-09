@@ -1,5 +1,7 @@
-import { renderWidget, usePlugin, useRunAsync, WidgetLocation, RemType, SelectionType } from '@remnote/plugin-sdk';
+import { renderWidget, usePlugin, useRunAsync, WidgetLocation, RemType, SelectionType, RICH_TEXT_FORMATTING } from '@remnote/plugin-sdk';
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { resolveRemTextForBreadcrumb } from '../lib/richTextRemRefs';
+import { sanitizeRichTextForSetText } from '../lib/richTextSanitize';
 
 // ---------------------------------------------------------------------------
 // Find & Insert Reference
@@ -15,6 +17,13 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 // distinctive token reliably returns the rem), unions the results, keeps only
 // rems whose name contains all tokens, and floats exact-name matches to the
 // top. Then it inserts a reference at the cursor via editor.insertRichText.
+//
+// Aliases: RemNote's built-in `[[` search also matches a rem by its aliases
+// (the Aliases built-in powerup). We do too — when a result's primary name
+// doesn't contain every typed token, we consult `rem.getAliases()` and match
+// against each alias. A match is surfaced with the alias text, and picking it
+// inserts a reference whose `aliasId` points at the matched alias, so the
+// reference renders the alias text (exactly like RemNote's own behaviour).
 // ---------------------------------------------------------------------------
 
 const normalize = (s: string) => s.normalize('NFC').trim().toLowerCase();
@@ -65,6 +74,14 @@ function clozeIdAtOffset(rt: any, offset: number): string | undefined {
 const fold = (s: string) =>
   s.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
 
+// Treat "Figure", "Fig" and "Fig." (any capitalisation) as the same word, so
+// typing "fig 4.3" matches a rem named "Figure 4.3" and vice-versa. Collapse a
+// standalone "fig"/"fig." token to the canonical "figure" (and swallow a
+// trailing dot) everywhere matching/scoring reads folded text. `\bfig\b` won't
+// touch the "fig" inside "figure" — there's no word boundary between "g" and
+// "u" — so already-canonical text is left alone.
+const canonFig = (s: string) => s.replace(/\bfig\b\.?/g, 'figure');
+
 interface Candidate {
   id: string;
   name: string;
@@ -74,6 +91,11 @@ interface Candidate {
   score: number; // lower is better
   backText: string;
   breadcrumb: string;
+  // Set when the rem matched via one of its aliases rather than its primary
+  // name. `aliasText` is what we display and insert; `aliasId` stamps the
+  // reference so it renders the alias text and links back to this rem.
+  aliasId?: string;
+  aliasText?: string;
 }
 
 function ReferenceFinder() {
@@ -83,6 +105,17 @@ function ReferenceFinder() {
     []
   );
   const floatingWidgetId = ctx?.floatingWidgetId;
+  const widgetInstanceId = (ctx as any)?.widgetInstanceId as string | undefined;
+
+  // The picker starts hidden while we measure the viewport and (if needed) flip
+  // to the left of the caret, so the user never sees it jump. Revealed once
+  // positioning settles — or immediately if measurement can't run.
+  const [positioned, setPositioned] = useState(false);
+  const positionedRef = useRef(false);
+  // Max height for the results list, capped to the space available on whichever
+  // side (below/above the caret) we open on, so a long list scrolls instead of
+  // spilling off-screen. Set during positioning; 320 is the default cap.
+  const [listMaxHeight, setListMaxHeight] = useState(320);
 
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Candidate[]>([]);
@@ -91,10 +124,51 @@ function ReferenceFinder() {
   const [searching, setSearching] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const reqIdRef = useRef(0);
+  // The rem the picker was triggered from, captured by the command before focus
+  // moved into this widget. Excluded from results (a rem can't reference itself).
+  const sourceRemIdRef = useRef<string>('');
+
+  // Round outer edge / kill the filled square behind our corners. renderWidget
+  // mounts us inside the iframe on a container that carries RemNote's default
+  // (square, themed) background — our rounded panel then reveals that fill at the
+  // corners ("squared outside, rounded inside"; a light square even in dark mode
+  // is the un-themed canvas showing through). Make the document AND every
+  // wrapper element transparent, excluding our own panel (marked data-rf-panel)
+  // and its descendants so they keep their backgrounds.
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.textContent = `
+      html, body {
+        background: transparent !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        color-scheme: light dark;
+      }
+      body *:not([data-rf-panel]):not([data-rf-panel] *) {
+        background-color: transparent !important;
+      }
+    `;
+    document.head.appendChild(style);
+    return () => { style.remove(); };
+  }, []);
+
+  // Focus once we're actually visible — a visibility:hidden input can't take
+  // focus, so focusing before the position settles would be a no-op. Select any
+  // seeded query text so it can be overwritten immediately.
+  useEffect(() => {
+    if (!positioned) return;
+    const el = inputRef.current;
+    if (!el) return;
+    el.focus();
+    if (el.value) el.select();
+  }, [positioned]);
 
   useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
+    (async () => {
+      const src = await plugin.storage.getSession<string>('reference-finder-source-rem');
+      sourceRemIdRef.current = typeof src === 'string' ? src : '';
+    })();
+  }, [plugin]);
 
   // Seed the box with selected text handed off by the command (if any), then
   // select it so the user can immediately overwrite or refine it.
@@ -117,6 +191,114 @@ function ReferenceFinder() {
       .catch(() => {/* best-effort; arrows/Enter still work inside the input */});
   }, [floatingWidgetId, plugin]);
 
+  // Keep the picker on-screen. The command opens us with our LEFT edge at the
+  // caret and our top just below it; near the right or bottom edge of the window
+  // that pushes our panel off-screen and RemNote doesn't clamp it. Neither the
+  // command sandbox nor this widget iframe can read the host window size from the
+  // DOM (innerWidth is the iframe's own size and cross-origin reads throw). The
+  // one host-coordinate signal we DO get is plugin.widget.getDimensions, so we
+  // measure geometrically:
+  //   1. read where we were placed (left edge = the caret).
+  //   2. briefly anchor our RIGHT + BOTTOM edges to the viewport and read back —
+  //      rect.right / rect.bottom are then the true viewport width / height.
+  //   3. flip LEFT of the caret if we'd overflow the right edge; flip ABOVE the
+  //      caret if the fully-expanded panel wouldn't fit below (mirrors RemNote's
+  //      selection search, which opens upward once the anchor passes mid-screen).
+  // All of this runs while the panel is hidden, so there's no visible jump.
+  useEffect(() => {
+    if (!floatingWidgetId || !widgetInstanceId || positionedRef.current) return;
+    let cancelled = false;
+    const reveal = () => {
+      if (cancelled || positionedRef.current) return;
+      positionedRef.current = true;
+      setPositioned(true);
+    };
+    (async () => {
+      const MARGIN = 8;
+      const GAP = 6; // matches the caret offset the command opens us with
+      // Non-list chrome (header + input + footer + paddings/gaps). Subtracted
+      // from the space on the chosen side to size the scrollable results list.
+      const CHROME = 130;
+      const LIST_CAP = 320; // never grow the list beyond this even with room
+      // getDimensions is typed for a number but getWidgetContext hands back a
+      // string id; coerce, and fall back to the raw value if it isn't numeric.
+      const numId = Number(widgetInstanceId);
+      const instId: any = Number.isFinite(numId) ? numId : widgetInstanceId;
+      // The caret rect handed over by the command (host coordinates) — lets us
+      // flip above precisely. Falls back to values derived from our placement.
+      let caret: { top: number; bottom: number; left: number; right: number } | null = null;
+      try { caret = (await plugin.storage.getSession('reference-finder-caret')) ?? null; } catch { /* ignore */ }
+      // Original placement; captured up front so we can restore it if a later
+      // step throws mid-measurement.
+      let orig: { top: number; left: number } | undefined;
+      try {
+        const placed = await plugin.widget.getDimensions(instId);
+        if (cancelled) return;
+        const anchorLeft = placed.left;
+        const width = placed.width || 680;
+        // The command opened us at top = caret.bottom + GAP.
+        const caretBottom = caret?.bottom ?? (placed.top - GAP);
+        const caretTop = caret?.top ?? (caretBottom - 24);
+        orig = { top: Math.round(placed.top), left: Math.round(anchorLeft) };
+
+        // Measure the viewport by pinning our right+bottom edges to it, then
+        // reading back: rect.right / rect.bottom equal the true viewport size.
+        await plugin.window.setFloatingWidgetPosition(floatingWidgetId, { right: 0, bottom: 0 });
+        await new Promise((r) => setTimeout(r, 16)); // let the host relayout
+        const pinned = await plugin.widget.getDimensions(instId);
+        if (cancelled) return;
+        const viewportWidth = pinned.right;
+        const viewportHeight = pinned.bottom;
+
+        // Horizontal: flip to the left of the caret if we'd overflow the right.
+        let left = anchorLeft;
+        if (viewportWidth > 0 && anchorLeft + width > viewportWidth - MARGIN) {
+          left = Math.max(MARGIN, Math.min(anchorLeft - width, viewportWidth - width - MARGIN));
+        }
+
+        // Vertical: open below the caret, but flip above once the caret passes
+        // the vertical midpoint (more room above than below) — mirrors RemNote's
+        // selection search, which opens upward even just below mid-screen. When
+        // flipping we anchor our BOTTOM just above the caret so the list grows up.
+        const spaceBelow = viewportHeight - caretBottom;
+        const spaceAbove = caretTop;
+        const flipUp = viewportHeight > 0 && spaceAbove > spaceBelow;
+        const vertical = flipUp
+          ? { bottom: Math.max(MARGIN, Math.round(viewportHeight - caretTop + GAP)) }
+          : { top: Math.round(caretBottom) + GAP };
+
+        // Cap the results list to the room available on the chosen side so a long
+        // list scrolls instead of running off-screen.
+        if (viewportHeight > 0) {
+          const sideSpace = flipUp ? spaceAbove : spaceBelow;
+          const listMax = Math.max(120, Math.min(LIST_CAP, Math.round(sideSpace - CHROME - MARGIN - GAP)));
+          if (!cancelled) setListMaxHeight(listMax);
+        }
+
+        await plugin.window.setFloatingWidgetPosition(floatingWidgetId, { left: Math.round(left), ...vertical });
+      } catch (e) {
+        // Something failed after we may have pinned to the right edge — restore
+        // the original placement so we never reveal stuck off to the side.
+        console.warn('[reference-finder] viewport measurement failed:', e);
+        if (!cancelled && orig) {
+          try { await plugin.window.setFloatingWidgetPosition(floatingWidgetId, orig); }
+          catch { /* best-effort */ }
+        }
+      } finally {
+        reveal();
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [floatingWidgetId, widgetInstanceId, plugin]);
+
+  // Safety net: never leave the picker invisible if measurement stalls.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (!positionedRef.current) { positionedRef.current = true; setPositioned(true); }
+    }, 1000);
+    return () => clearTimeout(t);
+  }, []);
+
   // Build a breadcrumb so the user can tell which document a rem lives in
   // (mirrors RemNote's reference-search breadcrumb). Shows the root plus the 3
   // closest ancestors, collapsing any middle gap with "…".
@@ -128,7 +310,8 @@ function ReferenceFinder() {
         let depth = 0;
         // Walk all the way to the root (cap guards against cycles/very deep trees).
         while (cur && depth < 20) {
-          const t = (await plugin.richText.toString(cur.text ?? [])).trim();
+          const raw = (await resolveRemTextForBreadcrumb(plugin, cur.text)).trim();
+          const t = raw === 'Untitled' ? '' : raw; // treat empty ancestors as skippable
           if (t) names.push(t.length > 24 ? t.slice(0, 24) + '…' : t);
           cur = await cur.getParentRem();
           depth++;
@@ -149,7 +332,7 @@ function ReferenceFinder() {
     async (raw: string) => {
       const reqId = ++reqIdRef.current;
       const q = normalize(raw);
-      const qf = fold(raw);
+      const qf = canonFig(fold(raw));
       if (q.length < 2) {
         setResults([]);
         return;
@@ -159,10 +342,20 @@ function ReferenceFinder() {
         const tokens = q.split(/\s+/).filter((t) => t.length >= 2);
         // Folded tokens drive matching so accents/special chars are ignored.
         const foldedTokens = qf.split(/\s+/).filter((t) => t.length >= 2);
+        // Seed the backend search with the alternate figure spelling too, so
+        // RemNote's index returns "Figure 4.3" when the user typed "fig" (and
+        // vice-versa) rather than relying only on the distinctive numeric token.
+        const searchTokens = Array.from(
+          new Set(
+            tokens.flatMap((t) =>
+              /^fig\.?$/.test(t) ? [t, 'figure'] : t === 'figure' ? [t, 'fig'] : [t]
+            )
+          )
+        );
         // Search the full query plus each token (longest first, capped to 4) so
         // a buried exact-name rem is retrieved via its most distinctive token.
         const queries = Array.from(
-          new Set<string>([raw.trim(), ...[...tokens].sort((a, b) => b.length - a.length).slice(0, 4)])
+          new Set<string>([raw.trim(), ...[...searchTokens].sort((a, b) => b.length - a.length).slice(0, 4)])
         );
 
         const seen = new Map<string, any>();
@@ -172,6 +365,7 @@ function ReferenceFinder() {
             numResults: 50,
           });
           for (const r of res) {
+            if (r._id === sourceRemIdRef.current) continue; // never suggest the rem itself
             if (!seen.has(r._id)) seen.set(r._id, r);
           }
         }
@@ -180,25 +374,62 @@ function ReferenceFinder() {
         // Phase 1 — resolve name/type/ranking, filter to rems containing all
         // tokens, and score. (backText + breadcrumb are resolved later, only
         // for the rems we'll actually show, to keep per-keystroke cost low.)
-        type Scored = { r: any; id: string; name: string; normName: string; type: number; times: number; score: number };
+        type Scored = {
+          r: any; id: string; name: string; normName: string; type: number; times: number;
+          score: number; aliasId?: string; aliasText?: string;
+          matchFold: string; // folded text the match was made on (alias or name)
+        };
         const scored: Scored[] = [];
         for (const r of seen.values()) {
-          const name = await plugin.richText.toString(r.text ?? []);
-          const foldName = fold(name);
-          // Accent-insensitive: every typed token must appear in the folded name.
-          if (!foldedTokens.every((t) => foldName.includes(t))) continue;
+          // resolveRemTextForBreadcrumb never throws on malformed `.text` (it
+          // reads nodes directly, so a rem whose rich text the SDK's validator
+          // rejects can't reject the whole search promise). It also collapses a
+          // pin reference to a compact 📌 instead of expanding the (often long)
+          // referenced rem's text — so pin text doesn't pollute the match/name.
+          const nameRaw = await resolveRemTextForBreadcrumb(plugin, r.text);
+          const name = nameRaw === 'Untitled' ? '' : nameRaw;
+          const foldName = canonFig(fold(name));
           const type = await r.getType().catch(() => 0);
           if (conceptsOnly && type !== RemType.CONCEPT) continue;
+
+          // Accent-insensitive: every typed token must appear in the folded name…
+          let aliasId: string | undefined;
+          let aliasText: string | undefined;
+          let matchFold = foldName;
+          if (!foldedTokens.every((t) => foldName.includes(t))) {
+            // …or in one of the rem's aliases. RemNote indexes aliases into the
+            // owning rem, so an alias-text search returns THIS rem (with a
+            // non-matching primary name); consult its aliases to confirm and
+            // capture which alias to reference. Only the non-matching results
+            // pay this extra lookup, so per-keystroke cost stays low.
+            let matched: { id: string; text: string; fold: string } | undefined;
+            try {
+              for (const a of await r.getAliases()) {
+                const atRaw = (await resolveRemTextForBreadcrumb(plugin, a.text)).trim();
+                const at = atRaw === 'Untitled' ? '' : atRaw;
+                const fa = canonFig(fold(at));
+                if (at && foldedTokens.every((t) => fa.includes(t))) {
+                  matched = { id: a._id, text: at, fold: fa };
+                  break;
+                }
+              }
+            } catch { /* ignore */ }
+            if (!matched) continue;
+            aliasId = matched.id;
+            aliasText = matched.text;
+            matchFold = matched.fold;
+          }
           const times = await r.timesSelectedInSearch().catch(() => 0);
 
           // Lower score = better. Exact match → start-with → contains; then
           // concepts before other types; then by selection count and brevity.
-          // Compared on folded text so accents don't change the ranking.
+          // Scored on the matched folded text (alias or name) so an exact alias
+          // ranks like an exact name, and accents don't change the ranking.
           let score = 3;
-          if (foldName === qf) score = 0;
-          else if (foldName.startsWith(qf)) score = 1;
-          else if (foldName.includes(qf)) score = 2;
-          scored.push({ r, id: r._id, name, normName: normalize(name), type, times, score });
+          if (matchFold === qf) score = 0;
+          else if (matchFold.startsWith(qf)) score = 1;
+          else if (matchFold.includes(qf)) score = 2;
+          scored.push({ r, id: r._id, name, normName: normalize(name), type, times, score, aliasId, aliasText, matchFold });
         }
 
         scored.sort((a, b) => {
@@ -207,7 +438,7 @@ function ReferenceFinder() {
           const bc = b.type === RemType.CONCEPT ? 0 : 1;
           if (ac !== bc) return ac - bc;
           if (a.times !== b.times) return b.times - a.times;
-          return a.name.length - b.name.length;
+          return a.matchFold.length - b.matchFold.length;
         });
 
         // Phase 2 — enrich the top results with backText + a shortened
@@ -217,12 +448,16 @@ function ReferenceFinder() {
         for (const s of top) {
           let backText = '';
           try {
-            if (s.r.backText?.length) backText = (await plugin.richText.toString(s.r.backText)).trim();
+            if (s.r.backText?.length) {
+              const bt = (await resolveRemTextForBreadcrumb(plugin, s.r.backText)).trim();
+              backText = bt === 'Untitled' ? '' : bt; // don't show the empty-sentinel
+            }
           } catch { /* ignore */ }
           const breadcrumb = await buildBreadcrumb(s.r);
           candidates.push({
             id: s.id, name: s.name, normName: s.normName, type: s.type,
             times: s.times, score: s.score, backText, breadcrumb,
+            aliasId: s.aliasId, aliasText: s.aliasText,
           });
         }
 
@@ -247,19 +482,20 @@ function ReferenceFinder() {
   }, [floatingWidgetId, plugin]);
 
   const pick = useCallback(
-    async (cand: Candidate | undefined) => {
+    async (cand: Candidate | undefined, mode: 'ref' | 'pin' | 'textPin' = 'ref') => {
       if (!cand) return;
-      console.log('[reference-finder] pick →', cand.id, JSON.stringify(cand.name));
 
       // Insert WHILE the widget is still open: RemNote keeps the underlying
       // editor as the "active editor" even though DOM focus is in this iframe.
       // insertRichText silently no-ops if there is no active editor, so we
       // first check getSelection() to decide between insert and clipboard.
       let inserted = false;
+      let sawSelection = false;
+      let insertErr: any = null;
       try {
         const sel = await plugin.editor.getSelection();
-        console.log('[reference-finder] active editor selection:', sel);
         if (sel) {
+          sawSelection = true;
           // Cloze-awareness: if the insertion point sits inside a cloze, stamp
           // that cloze's id onto the reference so it stays INSIDE the cloze
           // instead of breaking it. Prefer the selected span's cId; fall back
@@ -278,24 +514,131 @@ function ReferenceFinder() {
               clozeId = clozeIdAtOffset(rem?.text, offset);
             }
           } catch { /* best-effort cloze detection */ }
-          console.log('[reference-finder] cloze id at insertion point:', clozeId);
 
           // If text is selected, replace it with the reference (mimics RemNote's
           // [[ ]] behaviour where the selected text becomes the link).
           if (hasTextRange) {
             await plugin.editor.delete();
-            console.log('[reference-finder] deleted selected text before inserting');
           }
-          const ref: any = { i: 'q', _id: cand.id };
-          if (clozeId) ref[CLOZE_KEY] = clozeId;
-          await plugin.editor.insertRichText([ref]);
-          inserted = true;
-          console.log('[reference-finder] insertRichText OK', clozeId ? '(inside cloze)' : '');
+          // Build the rich text to insert:
+          //  • 'ref'     — a normal reference (renders the referenced text).
+          //  • 'pin'     — a pinned reference: just the link chip, WITHOUT the
+          //                text (RemNote's "Edit or Add Alias → clear text" trick).
+          //  • 'textPin' — the rem's text spelled out, then a pin chip after it
+          //                (mirrors RemNote's paste option "Text with Pin").
+          const makeRef = (pin: boolean): any => {
+            const r: any = { i: 'q', _id: cand.id };
+            // Matched via an alias → reference the owning rem but render the alias
+            // text (RemNote's own alias-reference shape: _id + aliasId).
+            if (cand.aliasId) r.aliasId = cand.aliasId;
+            if (pin) r.pin = true;
+            if (clozeId) r[CLOZE_KEY] = clozeId;
+            return r;
+          };
+          let toInsert: any[];
+          if (mode === 'textPin') {
+            // "Text with Pin" (mirrors RemNote's paste option): splice in the
+            // SOURCE rem's own rich text — keeping formatting, images, etc. —
+            // then a pin chip. Two twists that match the plugin's Opt+Z cloze
+            // workflow:
+            //  • the source's cloze spans are NOT re-clozed (that would make
+            //    "clozes out of clozes"); instead they're MARKED like Opt+Z —
+            //    yellow highlight (h:3) + reference font colour (tc:1) — so they
+            //    still read as clozes without being functional ones.
+            //  • if the source is a front/back card, the back is brought along
+            //    too, joined with a practice-direction arrow instead of RemNote's
+            //    card delimiter.
+            const HL = RICH_TEXT_FORMATTING.HIGHLIGHT;
+            const TC = RICH_TEXT_FORMATTING.TEXT_COLOR;
+            const stripHints = (n: any) => {
+              delete n[RICH_TEXT_FORMATTING.CLOZE_HINT];
+              delete n[RICH_TEXT_FORMATTING.CARD_HINT_FRONT];
+              delete n[RICH_TEXT_FORMATTING.CARD_HINT_BACK];
+              delete n[RICH_TEXT_FORMATTING.MULTILINE_CARD_HINT];
+              delete n[RICH_TEXT_FORMATTING.HIDDEN_CLOZE];
+              delete n[RICH_TEXT_FORMATTING.REVEALED_CLOZE];
+            };
+            let srcRem: any;
+            try { srcRem = await plugin.rem.findOne(cand.aliasId || cand.id); } catch { /* ignore */ }
+            const frontRt: any[] = Array.isArray(srcRem?.text) ? srcRem.text : [];
+            const backRt: any[] = Array.isArray(srcRem?.backText) ? srcRem.backText : [];
+            // Arrow reflects the card's practice direction, like the Opt+Z command.
+            let arrowChar = '⇔';
+            try {
+              if (backRt.length && srcRem) {
+                const dir = await srcRem.getPracticeDirection();
+                arrowChar = dir === 'forward' ? '⇒' : dir === 'backward' ? '⇐' : '⇔';
+              }
+            } catch { /* keep default */ }
+            // Convert a section's rich text: cloze spans → marked (not clozed);
+            // card-delimiter nodes ('s') → the arrow; everything else preserved.
+            const processSection = (rt: any[]): any[] => {
+              const out: any[] = [];
+              for (const item of rt) {
+                const isStr = typeof item === 'string';
+                if (!isStr && (item as any)?.i === 's') {
+                  out.push({ i: 'm', text: ' ' + arrowChar + ' ' });
+                  continue;
+                }
+                const node: any = isStr ? { i: 'm', text: item } : { ...(item as any) };
+                const hadCloze = CLOZE_KEY in node;
+                delete node[CLOZE_KEY];
+                stripHints(node);
+                if (hadCloze) { node[HL] = 3; node[TC] = 1; out.push(node); }
+                else out.push(isStr ? (item as string) : node);
+              }
+              return out;
+            };
+            const sourceParts: any[] = [...processSection(frontRt)];
+            if (backRt.length) {
+              // Only add a separator arrow if the front didn't already carry a
+              // card delimiter (which processSection just turned into one).
+              const hasDelim = frontRt.some((it: any) => it && typeof it !== 'string' && it.i === 's');
+              if (!hasDelim) sourceParts.push({ i: 'm', text: ' ' + arrowChar + ' ' });
+              sourceParts.push(...processSection(backRt));
+            }
+            if (!sourceParts.length) {
+              const displayText = (cand.aliasText || cand.name || '').trim();
+              if (displayText) sourceParts.push(displayText);
+            }
+            // Normalize the source nodes so insertRichText's cross-sandbox
+            // validator accepts them — most importantly images, whose out-of-range
+            // `percent` (e.g. 68.08) otherwise makes the whole insert throw. Same
+            // sanitization setText needs. The pin is appended AFTER, so its cloze
+            // id isn't touched by the sanitizer.
+            const sanitizedSource = sanitizeRichTextForSetText(sourceParts as any);
+            toInsert = [...(sanitizedSource as any[]), ' ', makeRef(true)];
+          } else {
+            toInsert = [makeRef(mode === 'pin')];
+          }
+          try {
+            await plugin.editor.insertRichText(toInsert);
+            inserted = true;
+          } catch (insErr) {
+            // insertRichText can reject some node types inline (images/audio/latex
+            // etc.). For text+pin, don't lose everything — retry with only text and
+            // rem-reference nodes so the user still gets the text and the pin.
+            console.error('[reference-finder] insertRichText threw on full payload:', insErr);
+            if (mode === 'textPin') {
+              const INSERTABLE = new Set(['m', 'q']);
+              const filtered = toInsert.filter((n) => typeof n === 'string' || INSERTABLE.has(n?.i));
+              const dropped = toInsert.length - filtered.length;
+              console.warn(`[reference-finder] text+pin retry without ${dropped} non-insertable node(s)`, filtered);
+              await plugin.editor.insertRichText(filtered);
+              inserted = true;
+              if (dropped > 0) {
+                await plugin.app.toast(`Inserted text + pin — but ${dropped} embedded element(s) (e.g. image) can't be inserted inline; open the rem to view them.`);
+              }
+            } else {
+              throw insErr;
+            }
+          }
         } else {
           console.warn('[reference-finder] no active editor selection — will use clipboard fallback');
         }
       } catch (e) {
-        console.error('[reference-finder] insertRichText threw:', e);
+        insertErr = e;
+        console.error('[reference-finder] pick insertion failed:', e);
       }
 
       if (!inserted) {
@@ -303,8 +646,10 @@ function ReferenceFinder() {
         try {
           const rem = await plugin.rem.findOne(cand.id);
           await rem?.copyReferenceToClipboard();
-          await plugin.app.toast('No editor caret found — reference copied to clipboard. Paste it (⌘/Ctrl+V).');
-          console.log('[reference-finder] copied reference to clipboard as fallback');
+          const reason = !sawSelection
+            ? 'No editor caret found'
+            : `Couldn't insert (${insertErr?.message ?? insertErr ?? 'unknown error'})`;
+          await plugin.app.toast(`${reason} — reference copied to clipboard. Paste it (⌘/Ctrl+V).`);
         } catch (e2) {
           await plugin.app.toast('Could not insert or copy the reference. Check the console.');
           console.error('[reference-finder] clipboard fallback failed:', e2);
@@ -323,7 +668,6 @@ function ReferenceFinder() {
   const open = useCallback(
     async (cand: Candidate | undefined) => {
       if (!cand) return;
-      console.log('[reference-finder] open in new pane →', cand.id, JSON.stringify(cand.name));
       try {
         const tree = await plugin.window.getCurrentWindowTree();
         const toRemIdTree = (node: any): any =>
@@ -367,9 +711,12 @@ function ReferenceFinder() {
       setSelected((s) => Math.max(s - 1, 0));
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      // Shift+Enter opens the rem in a new pane instead of inserting a reference.
+      // Shift+Enter opens the rem in a new pane; Ctrl/Cmd+Enter inserts a PIN
+      // (reference without its text); Opt/Alt+Enter inserts the text followed by
+      // a pin ("Text with Pin"); plain Enter inserts a normal reference.
       if (e.shiftKey) open(results[selected]);
-      else pick(results[selected]);
+      else if (e.altKey) pick(results[selected], 'textPin');
+      else pick(results[selected], e.ctrlKey || e.metaKey ? 'pin' : 'ref');
     } else if (e.key === 'Escape') {
       e.preventDefault();
       close();
@@ -380,15 +727,25 @@ function ReferenceFinder() {
 
   return (
     <div
+      data-rf-panel
       style={{
         fontFamily: 'system-ui, -apple-system, sans-serif',
         color: 'var(--rn-clr-content-primary)',
         backgroundColor: 'var(--rn-clr-background-primary)',
-        border: '1px solid var(--rn-clr-border)',
-        borderRadius: '8px',
-        boxShadow: '0 8px 30px rgba(0,0,0,0.25)',
+        // Conspicuous border: a solid 2px frame in RemNote's opaque border color
+        // (with a concrete grey fallback so it stays visible even if the variable
+        // is missing — an undefined var with no fallback drops the whole
+        // declaration), plus a soft drop shadow to lift the panel off the page.
+        // (No box-shadow "ring": on a light background it doubled the corner edge
+        // and read as a faint halo just outside the rounded border.)
+        border: '2px solid var(--rn-clr-border-opaque, #9ca3af)',
+        borderRadius: '10px',
+        boxShadow: '0 10px 32px rgba(0,0,0,0.28)',
         padding: '12px',
         boxSizing: 'border-box',
+        // Hidden (but fully laid out, so getDimensions still measures our real
+        // width) until the viewport-flip logic settles our position.
+        visibility: positioned ? 'visible' : 'hidden',
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
@@ -404,7 +761,7 @@ function ReferenceFinder() {
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={onKeyDown}
-        placeholder="Type a rem name (e.g. Navegação Interior)…"
+        placeholder="Type a rem name"
         style={{
           width: '100%',
           padding: '8px 10px',
@@ -416,10 +773,10 @@ function ReferenceFinder() {
           color: 'var(--rn-clr-content-primary)',
         }}
       />
-      <div style={{ marginTop: '8px', maxHeight: '320px', overflowY: 'auto' }}>
+      <div style={{ marginTop: '8px', maxHeight: `${listMaxHeight}px`, overflowY: 'auto' }}>
         {query.trim().length < 2 ? (
           <div style={{ fontSize: '12px', color: 'var(--rn-clr-content-tertiary)', padding: '6px 2px' }}>
-            Type at least 2 characters. Searches each word separately and floats exact-name matches up, so it finds rems the normal search can't. Enter inserts a reference; Shift+Enter / Shift+click opens the rem in a new pane.
+            Type at least 2 characters. Searches each word separately and floats exact-name matches up, so it finds rems the normal search can't — including matches by a rem's alias (shown with an ALIAS tag; the inserted reference renders the alias text). Enter inserts a reference; Ctrl/Cmd+Enter inserts a pin (no text); Opt/Alt+Enter inserts the text then a pin; Shift+Enter / Shift+click opens the rem in a new pane.
           </div>
         ) : results.length === 0 ? (
           <div style={{ fontSize: '12px', color: 'var(--rn-clr-content-tertiary)', padding: '6px 2px' }}>
@@ -430,8 +787,10 @@ function ReferenceFinder() {
             <div
               key={r.id}
               onMouseEnter={() => setSelected(i)}
-              title="Click to insert a reference · Shift+click to open in a new pane"
-              onClick={(e) => (e.shiftKey ? open(r) : pick(r))}
+              title="Click: insert reference · Ctrl/Cmd+click: insert pin (no text) · Opt/Alt+click: text then pin · Shift+click: open in new pane"
+              onClick={(e) =>
+                e.shiftKey ? open(r) : e.altKey ? pick(r, 'textPin') : pick(r, e.ctrlKey || e.metaKey ? 'pin' : 'ref')
+              }
               style={{
                 display: 'flex',
                 alignItems: 'flex-start',
@@ -460,12 +819,28 @@ function ReferenceFinder() {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <span style={{ fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                    {r.name || '(empty)'}
+                    {(r.aliasText || r.name) || '(empty)'}
                   </span>
+                  {r.aliasText && (
+                    <span style={{ flexShrink: 0, fontSize: '9px', color: '#2563eb', fontWeight: 700 }}>ALIAS</span>
+                  )}
                   {r.score === 0 && (
                     <span style={{ flexShrink: 0, fontSize: '9px', color: '#16a34a', fontWeight: 700 }}>EXACT</span>
                   )}
                 </div>
+                {r.aliasText && (
+                  <div
+                    style={{
+                      fontSize: '11px',
+                      color: 'var(--rn-clr-content-secondary)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    ↳ {r.name || '(empty)'}
+                  </div>
+                )}
                 {r.backText && (
                   <div
                     style={{
@@ -497,8 +872,33 @@ function ReferenceFinder() {
           ))
         )}
       </div>
-      <div style={{ marginTop: '6px', fontSize: '10px', color: 'var(--rn-clr-content-tertiary)' }}>
-        ↑/↓ navigate · Enter insert reference · Shift+Enter / Shift+click open in new pane · Esc close
+      <div
+        style={{
+          marginTop: '8px',
+          paddingTop: '6px',
+          borderTop: '1px solid var(--rn-clr-border)',
+          fontSize: '10px',
+          color: 'var(--rn-clr-content-tertiary)',
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          columnGap: '12px',
+          rowGap: '3px',
+        }}
+      >
+        {[
+          { keys: '↑/↓', label: 'navigate' },
+          { keys: 'Enter', label: 'reference' },
+          { keys: 'Ctrl/Cmd+Enter', label: 'pin (no text)' },
+          { keys: 'Opt/Alt+Enter', label: 'text + pin' },
+          { keys: 'Shift+Enter', label: 'open in new pane' },
+          { keys: 'Esc', label: 'close' },
+        ].map((s) => (
+          <span key={s.keys} style={{ whiteSpace: 'nowrap' }}>
+            <strong style={{ color: 'var(--rn-clr-content-secondary)', fontWeight: 600 }}>{s.keys}</strong>{' '}
+            {s.label}
+          </span>
+        ))}
       </div>
     </div>
   );
