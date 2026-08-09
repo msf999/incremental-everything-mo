@@ -38,7 +38,7 @@ When working on this repository, follow these rules in order:
 |---|---|
 | **Upstream repo** | `https://github.com/bjsi/incremental-everything` (via `hugomarins` fork) |
 | **Our fork** | `https://github.com/msf999/incremental-everything-mo` |
-| **Last synced upstream commit** | `be390d5` — _Merge pull request #288 from hugomarins/main_ |
+| **Last synced upstream commit** | `5f8ccdd` — _Merge pull request #306 from hugomarins/main_ (synced 2026-08-10) |
 | **Our first custom commit** | `88839e1` — _feat: add Rotation and First Added properties, make Open Editor advance queue_ |
 | **Branch** | `main` |
 
@@ -58,11 +58,13 @@ All custom changes are **additive** unless noted otherwise. No upstream logic wa
 | `unlisted` | `false` | `true` | Prevents public listing of our private fork |
 | `author` | `Jamesb and Hugomarins (cont. Jonathangimeno)` | `Jamesb, Hugomarins and Jonathangimeno` | Minor attribution wording (cosmetic) |
 
-**Merge rule:** Always keep our values for the four fields above (`id`, `name`, `repoUrl`, `unlisted`; `author` is cosmetic). Accept all other manifest changes from upstream — including the upstream `version` bump and the `supportUrl` / `projectUrl` / `changeLogUrl` fields (these point to the upstream repo/wiki, which is fine for a fork that tracks upstream features).
+**Merge rule:** Always keep our values for the four fields above (`id`, `name`, `repoUrl`, `unlisted`; `author` is cosmetic). Accept all other manifest changes from upstream — including the upstream `version` and the `supportUrl` / `projectUrl` / `changeLogUrl` fields (these now point at upstream's MkDocs site `hugomarins.github.io/incremental-everything`, which is fine for a fork that tracks upstream features).
+
+**Version scheme:** upstream reset its numbering `0.2.294 → 1.0.x` during the `5f8ccdd` sync; we adopted it (fork was `0.2.277` → now `1.0.35`). The rule is unchanged — accept upstream's `version`, and bump the patch for fork-local releases on top of it (next fork-only fix = `1.0.36`).
 
 ### 2. `src/lib/consts.ts`
 
-**What changed:** Added two new export constants after `originalIncrementalDateSlotCode`:
+**What changed:** Added two new export constants immediately after `originalIncrementalDateSlotCode` (since the `5f8ccdd` sync, upstream's `pdfStateSlotCode` block also sits in that region — ours follow it):
 
 ```
 firstAddedSlotCode = 'firstAdded'
@@ -71,7 +73,7 @@ rotationSlotCode  = 'rotation'
 
 Also added the `queueBackNavKey` session-flag constant (one-shot back-navigation flag consumed by the due-on-encounter auto-skip; see Deviation 8).
 
-**Merge rule:** Pure additions at the end of the constants blocks. No conflict expected unless upstream adds identically named constants.
+**Merge rule:** Pure additions at the end of the constants blocks. Upstream has no colliding identifiers or slot-code strings, but it does insert its own constants directly around ours (`pdfStateSlotCode` after `originalIncrementalDateSlotCode`; ~15 new setting IDs near `queueBackNavKey`), so expect *context* conflicts here even though the names never clash — keep both sides.
 
 ### 3. `src/register/powerups.tsx`
 
@@ -88,7 +90,9 @@ Also added the `queueBackNavKey` session-flag constant (one-shot back-navigation
 
 **What changed:** Added `open-incremental-editor` macro bound to `Ctrl+G` that replicates the AnswerButtons "Open Editor" behavior from the keyboard. External `http(s)` tabs open **only** when the visible title ends with **`(OpenLink)`** (case-sensitive; see `open_editor_link_tag.ts`). If `(OpenLink)` **and** at least one extracted URL: open those URL tab(s) only and **do not** open the Rem document. If the title does **not** end with `(OpenLink)`: advance first, then open the Rem in-app editor (`openRemAsPage` for `pdf-note`, otherwise `plugin.window.openRem`).
 
-**Merge rule:** Retain the `open-incremental-editor` command registration, `remTitleEndsWithOpenLinkTag`, and the guarded URL-opening + skip-doc logic.
+**Merge rule:** Retain the `open-incremental-editor` command registration, `remTitleEndsWithOpenLinkTag`, and the guarded URL-opening + skip-doc logic — plus the fork's two added import lines (`remTitleEndsWithOpenLinkTag` + `extractExternalHttpUrlsFromRem` from `open_editor_link_tag`, `determineIncRemType` from `incRemHelpers`), which a broad accept-upstream pass on the heavily-rewritten import block will otherwise drop.
+
+**PDF reading position (since `5f8ccdd`):** both this command and `runNextInQueueAction` record the current PDF page via **`getIncrementalReadingPosition(plugin, remId, pdfRemId)`** (backed by upstream's new `pdfState` powerup slot). The legacy `getCurrentPageKey` + `plugin.storage.getSynced` pair is **still re-exported by `pdfUtils.ts`, so stale calls compile silently** while reading a key nobody writes any more — detection is a grep plus the page-resume smoke test, never `tsc`.
 
 **Also added (queue keyboard shortcuts):** Extracted upstream's `nextInQueueCommandId` ("Next Item in Queue", `cmd+right`) action into a shared `runNextInQueueAction` closure, and registered two fork-only commands (both registered like `open-incremental-editor` so they're rebindable in RemNote → Settings → Shortcuts):
 
@@ -99,9 +103,9 @@ Also added the `queueBackNavKey` session-flag constant (one-shot back-navigation
 
 ### 4. `src/lib/incremental_rem/types.ts`
 
-**What changed:** Added `rotation: z.string().optional()` to the `IncrementalRem` Zod schema. Upstream also added optional `createdAt` (ms) for when the Rem was first made Incremental; both fields are kept.
+**What changed:** Added `rotation: z.string().optional()` to the `IncrementalRem` Zod schema. Upstream's schema has since grown around it — `createdAt` (ms), `prioritySource`, and per-rep `nextRepMs` / `notes` / `context` — and all are kept.
 
-**Merge rule:** Preserve both `rotation` and `createdAt` when merging schema changes.
+**Merge rule:** Preserve `rotation` alongside upstream's growing schema (`createdAt`, `prioritySource`, and the rep fields). ⚠️ **Zod strips unknown keys**: if `rotation` is dropped from this schema it disappears everywhere at runtime — reads, cache, scheduling — with **no compile error**. This is the single highest-value line in the fork to get right during a merge.
 
 ### 5. `src/lib/incremental_rem/index.ts`
 
@@ -110,13 +114,13 @@ This file has the most custom code. All additions are in clearly separated block
 | Region | What Changed |
 |---|---|
 | **Imports** | Added `firstAddedSlotCode`, `rotationSlotCode` from consts; added `import parseDuration from 'parse-duration'`. Also imports `addCreationToIncrementalHistory` from `history_utils` (with upstream). |
-| **`getIncrementalRemFromRem()`** | After priority reading, reads `rotation` into `rawData`; also reads `createdAt` from `originalIncrementalDateSlotCode` (upstream) into `rawData`. |
-| **New helpers (before `initIncrementalRem`)** | Added `getRotationIntervalMs()`, `getRotationIntervalDays()`, `getInitialRotation()`, and `rescheduleWithoutReview()`. These are standalone functions — no upstream code was modified. |
-| **`initIncrementalRem()`** | After `setPowerupProperty(prioritySlotCode, ...)`, added two blocks: (a) set `firstAddedSlotCode` to today's daily doc ref, (b) inherit rotation from closest ancestor via `getInitialRotation()` and set as text. When setting `originalIncrementalDateSlotCode`, also calls `addCreationToIncrementalHistory` (upstream). |
-| **`handleNextRepetitionClick()` / `handleNextRepetitionManualOffset()`** | Use manual in-memory `IncrementalRem` patch + `updateIncrementalRemCache` from review result / constructed state (upstream) instead of re-fetching from the Rem after write. |
-| **`updateReviewRemData()`** | Branching `nextRepDateToUse`: explicit overrides, then rotation interval (`getRotationIntervalMs`), then normal scheduler. Returns `{ ...nextSpacing, newNextRepDate: nextRepDateToUse, newHistory }` so callers patch the cache with the **persisted** next date (required when rotation overrides the scheduler). |
+| **`getIncrementalRemFromRem()`** | Upstream rewrote this function (powerup-presence gate as the only `null` path, 3-tier priority resolution with `prioritySource`, 3-tier `nextRepDate` resolution). Our addition is now a rotation slot read placed **immediately after the priority clamp** (`priority = Math.min(100, Math.max(0, priority))`), plus a `rotation` key in the 7-key `rawData` literal. `createdAt` is now resolved by upstream's own `resolveDailyDocSlot` + `madeIncremental` marker fallback — our old createdAt block was superseded and removed. |
+| **New helpers (before `initIncrementalRem`)** | Added `MS_PER_DAY`, `getRotationIntervalMs()`, `getRotationIntervalDays()`, `getInitialRotation()`, and `rescheduleWithoutReview()`. Freestanding — upstream has no functions by these names. |
+| **`initIncrementalRem()`** | Upstream batches its slot writes into a `slotWrites: Promise<unknown>[]` array + `Promise.all`. Our two writes are entries in that array: (a) `firstAddedSlotCode` set to upstream's existing **`todayRef`** — deliberately *not* a second `getDailyDocReferenceForDate` call, which upstream documents as a `getDailyDoc` race — guarded only on `todayRef` truthiness (unconditional on `hasExistingHistory`, unlike upstream's own `originalIncDate` write); (b) `rotationSlotCode` set from `getInitialRotation()`, which is resolved **before** the array so the value is also in scope for the cache entry. Upstream replaced its closing re-read with a hand-built `constructedIncRem` + `safeParse` — **`rotation: initialRotation` must be in that literal**, or the cache entry silently loses rotation until the next full read. |
+| **`handleNextRepetitionClick()` / `handleNextRepetitionManualOffset()`** | Use manual in-memory `IncrementalRem` patch + `updateIncrementalRemCache` from review result / constructed state (upstream) instead of re-fetching from the Rem after write. Upstream's `requestQueueDashboardRefocus` (before `removeCurrentCardFromQueue`) and `stampNoteAndContext` / `manualEntry` coexist with it. |
+| **`updateReviewRemData()`** | Branching `nextRepDateToUse`: explicit overrides, then rotation interval (`getRotationIntervalMs`), then normal scheduler. Returns `{ ...nextSpacing, newNextRepDate: nextRepDateToUse, newHistory }` so callers patch the cache with the **persisted** next date (required when rotation overrides the scheduler). Upstream's `stampNoteAndContext` block sits immediately **before** our branch. ⚠️ Upstream adds **no** `requestQueueDashboardRefocus` here — do not add one: this function is also called by the Review-in-Editor path, which deliberately leaves the queue. |
 
-**Merge rule:** If upstream modifies `getIncrementalRemFromRem`, `initIncrementalRem`, or `updateReviewRemData`, carefully re-apply our additions into the updated function bodies. Our helpers (`getRotationIntervalMs`, `getRotationIntervalDays`, `getInitialRotation`, `rescheduleWithoutReview`) are freestanding and should not conflict.
+**Merge rule:** If upstream modifies `getIncrementalRemFromRem`, `initIncrementalRem`, or `updateReviewRemData`, carefully re-apply our additions into the updated function bodies — the anchors above are the current ones and upstream has rewritten all three at least once. Our helpers are freestanding and should not conflict. Our re-applied blocks never write `prioritySlotCode`, so none of them needs routing through upstream's `setIncRemPriority` band-sync chokepoint.
 
 ### 6. `src/widgets/answer_buttons.tsx`
 
@@ -130,11 +134,14 @@ This file has grown into the most heavily customised widget. All changes are add
 | **`openEditorAction` helper** | Extracted editor-opening logic into a reusable async function. It now always opens in-app (`openRemAsPage` for `pdf-note`, otherwise `plugin.window.openRem`) on both mobile and desktop. |
 | **Open Editor button** | Converted from `Button` to `SplitButton`. Scheduling runs **before** navigation so the widget is not destroyed before the review is recorded. Dropdown items: "Saturday (Xd)", "Monday (Xd)" — each records a review with the chosen offset then opens the editor in-app. The sublabel now mirrors Next (`<NextRepTime />`) and shows `invalid rotation` in amber when parsing fails. Styled with a custom green theme for visual distinction. |
 | **Skip button** | Converted from `Button` to `SplitButton`. Main click calls `plugin.queue.removeCurrentCardFromQueue()` (advances queue without recording a review). Dropdown items: "Saturday (Xd)", "Monday (Xd)" — each reschedules to the chosen date without recording a review via `rescheduleWithoutReview`. |
-| **Unified layout (Accordion)** | Removed all `!isMobile` conditional rendering guards. Consolidated the top row into a minimalist 6-button layout: Previous, Next, Open Editor, Skip, Dismiss, and `⚙️ Options`. Built a dynamic `showAdvancedOptions` local state variable. Clicking `⚙️ Options` opens a visually clean secondary row positioned underneath to host the power-user buttons: Reschedule, Change Priority, Review with Timer, Scroll to Highlight, **Scroll to Bookmark** (PDF: last page-history entry with `highlightId`; upstream feature merged into this row), URL clipping, and Help. |
+| **Unified layout (Accordion)** | Removed all `!isMobile` conditional rendering guards. Consolidated the top row into a minimalist 6-button layout: Previous, Next, Open Editor, Skip, Dismiss, and `⚙️ Options`. Built a dynamic `showAdvancedOptions` local state variable. Clicking `⚙️ Options` opens a visually clean secondary row positioned underneath to host the power-user buttons: Reschedule, Change Priority, Review with Timer, Scroll to Highlight, **Scroll to Bookmark** (PDF: last page-history entry with `highlightId`; upstream feature merged into this row), URL clipping, and Help. **(Post `5f8ccdd`)** upstream's new **📝 Review Note** toggle and **🔖 Read point** button were folded into this row too, restyled to the row's `Button` + single-label convention. |
+| **Upstream hooks + note input (post `5f8ccdd`)** | Upstream's `remReadPointInfo` tracker and the note state (`noteOpen` / `noteText` + prefill `useEffect`) live in the **hooks section above the early returns** — moving them down beside `hasInvalidRotation` would break the Rules of Hooks and crash the widget. The note **input row** renders **outside** the accordion (upstream's position, after the `showAdvancedOptions` block): its prefill effect auto-opens when a note is parked, and the accordion defaults closed, so inside it a parked note would be invisible. `readerBookmarkIsLatest` (non-hook) drives the ` • latest` badge on our Scroll-to-Bookmark button. |
 | **Link Auto-Open (guarded)** | Added `externalUrls` via `useTrackerPlugin` (extract from `rem.text`, `rem.backText`, Link powerup). `openExternalLinkTabsWhenOpenLinkTagged()` runs **first** on Open Editor clicks (sync `window.open` while the gesture is valid) but **only** when the title ends with **`(OpenLink)`**. If the title does **not** end with `(OpenLink)`, only the Rem document opens — external URLs are not opened in new tabs. |
 | **Title `(OpenLink)` → external tabs, no Rem doc** | `remTitleEndsWithOpenLinkTag` (`open_editor_link_tag.ts`) **and** non-empty `externalUrls`: `performOpenEditorFlow` skips `openEditorAction` so only external URL(s) open (one tab per URL). If the title has `(OpenLink)` but no URL was extracted, the Rem document still opens. Saturday/Monday dropdown paths use the same rules. |
 
-**Merge rule:** If upstream modifies the answer buttons layout, the Next button component, the Open Editor button, or the Skip area, re-apply our changes: (0) Previous button via `goBackToPreviousCard()`, (1) SplitButton with Saturday/Monday dropdown on Next, Open Editor, and Skip, (2) Open Editor uses in-app `openEditorAction` on all platforms and runs after scheduling, (3) `hasInvalidRotation` warning on Next + Open Editor, (4) `rescheduleWithoutReview` for Skip dropdown items, (5) accordion-style toggle logic for the power-user button array (`showAdvancedOptions` state block), (6) inject `openExternalLinkTabsWhenOpenLinkTagged()` at the start of Open Editor click handlers (URLs only when `(OpenLink)`), (7) skip `openEditorAction` when the title ends with `(OpenLink)` and `externalUrls` is non-empty; (8) Next/Skip button tooltips advertise the `Opt+T` / `Opt+B` queue shortcuts (see Deviation 3.1).
+**Merge rule:** If upstream modifies the answer buttons layout, the Next button component, the Open Editor button, or the Skip area, re-apply our changes: (0) Previous button via `goBackToPreviousCard()`, (1) SplitButton with Saturday/Monday dropdown on Next, Open Editor, and Skip, (2) Open Editor uses in-app `openEditorAction` on all platforms and runs after scheduling, (3) `hasInvalidRotation` warning on Next + Open Editor, (4) `rescheduleWithoutReview` for Skip dropdown items, (5) accordion-style toggle logic for the power-user button array (`showAdvancedOptions` state block), (6) inject `openExternalLinkTabsWhenOpenLinkTagged()` at the start of Open Editor click handlers (URLs only when `(OpenLink)`), (7) skip `openEditorAction` when the title ends with `(OpenLink)` and `externalUrls` is non-empty; (8) Next/Skip button tooltips advertise the `Opt+T` / `Opt+B` queue shortcuts (see Deviation 3.1); (9) new upstream buttons go in the accordion but their **hooks stay above the early returns**; (10) `handleNextClick`'s PDF branch uses `getIncrementalReadingPosition` (see Deviation 3.1's PDF note).
+
+**Deliberately dropped (post `5f8ccdd`):** upstream's edit to its "Open Editor in New Tab" button (`plugin.settings.getSetting(remnoteEnvironmentId)` → `getIESetting`, which only picks `beta.` vs `www.remnote.com` for a browser-tab URL). The fork replaced that button with the in-app `openEditorAction`, which builds no URL — verified UI-only, nothing to port. Re-check this if upstream ever puts functional logic in that handler. Note the container's `onClick` **must** keep upstream's `closest('input, textarea')` bail-out, or the note input cannot be typed into (our stricter guard is on `onMouseDown`, a different handler).
 
 ### 6.1. `src/lib/open_editor_link_tag.ts` *(new file)*
 
@@ -164,7 +171,7 @@ This file has grown into the most heavily customised widget. All changes are add
 
 **Back-navigation exception:** As its very first step, the async effect reads and consumes a one-shot session flag `queueBackNavKey` (consts) — set by the **Previous** button in `answer_buttons.tsx` right before `goBackToPreviousCard()`. If set, the effect clears it and returns *without* the due check, so a just-reviewed (now future-dated) item revisited via Previous is shown instead of auto-skipped. The flag is also reset in `resetQueueSession` (`session_helpers.ts`). (Known minor edge: if Previous lands on a non-plugin card, the flag is consumed by the next IncRem instead — rare, bounded to one item per session.)
 
-**Merge rule:** Keep the due-check `useEffect`. It **must** stay keyed on `ctx.remId` only (not reactive on rem data) — otherwise it reacts to the future `nextRepDate` the user writes when reviewing the *current* item and skips the wrong card. Keep the `queueBackNavKey` consume-first early-out and the Previous-button hand-off together (they're a pair). If upstream restructures `QueueComponent`, re-add the effect alongside the existing auto-advance effects.
+**Merge rule:** Keep the due-check `useEffect`. Its dep array is `[ctx?.remId, plugin]` (`plugin` is a stable ref); what matters is that it **must not** contain a reactive tracker value or the item's `nextRepDate` — otherwise it reacts to the future `nextRepDate` the user writes when reviewing the *current* item and skips the wrong card. Keep the `queueBackNavKey` consume-first early-out and the Previous-button hand-off together (they're a pair). If upstream restructures `QueueComponent`, re-add the effect alongside the existing auto-advance effects. **(Post `5f8ccdd`)** upstream added a hybrid Reader↔Outline feature (`useIESettingOptional(isolatedQueueModeId)`, `outlineView` state + reset effect) at the top of the component; it does not overlap this effect, which still follows the `hasIncrementalPowerup` effect.
 
 ### 9. Queue counter priority distribution (`session_helpers.ts`, `ui_helpers.ts`, `events.ts`, `callbacks.ts`)
 
@@ -183,7 +190,7 @@ This file has grown into the most heavily customised widget. All changes are add
 
 - `src/register/callbacks.ts` — the authoritative live-queue selector. The `_.sortBy(allIncrementalRem, …)` in `GetNextCard` passes **two projections as separate arguments**: `_.sortBy(allIncrementalRem, primaryKey, (incRem) => incRem.nextRepDate)`. The primary projection is unchanged (scope index in `in-order` mode, else `priority`); in `in-order` mode the scope index is unique per rem, so the `nextRepDate` tiebreak never engages there. **⚠️ remeda gotcha:** `_` is **remeda** (`import * as _ from 'remeda'`), not lodash — `sortBy` takes projections as *separate args*, **not** a lodash array of iteratees; `_.sortBy(arr, [fn1, fn2])` makes remeda read the array as a `[projection, order]` pair and throw `TypeError: comparator is not a function`, crashing `GetNextCard` so **no IncRems appear in the queue** (the `9e2a2bb` bug; fixed in the `0.2.277` Fix below). **(Post `be390d5` merge)** the old uniform random-swap block that ran after the sort was replaced by upstream's `applyPriorityWeightedLottery(filtered, sortingRandomness, weightK)` (skipped in `in-order` mode). Our tiebreak still sets the base order the lottery runs on top of.
 - `src/components/IncRemTable.tsx` — the **"Queue Order"** sort (the `sortBy === 'queueOrder'` branch) sorts `a.priority - b.priority || a.nextRepDate - b.nextRepDate` before the randomness step, so the table preview mirrors the live queue. The separate user-selectable "priority" **column** sort is intentionally left unchanged. **(Post `be390d5`)** upstream did **not** touch this file, so its randomness step still uses the old uniform swaps rather than the new lottery — a minor preview-vs-live divergence; aligning it to `applyPriorityWeightedLottery` is an optional follow-up.
-- `src/lib/sorting.ts` — `applySortingCriteria` (used by Priority Review Documents for both IncRems and cards) sorts `a.priority - b.priority || ((a as any).nextRepDate ?? 0) - ((b as any).nextRepDate ?? 0)`. The `?? 0` guard keeps flashcards (no `nextRepDate`) in their prior stable order while IncRems get most-overdue-first. **(Post `be390d5`)** the result is then passed to upstream's `applyPriorityWeightedLottery(sorted, randomness, weightK)` (it replaced the old uniform-swap loop). **`DEFAULT_RANDOMNESS` adopted upstream's new `0.1`** (was `0`), so the tiebreak is the deterministic base order but ~10% of slots get the priority-weighted lottery on top — it is **no longer strict by default** (set randomness to 0 to make it strict).
+- `src/lib/sorting.ts` — `applySortingCriteria` (used by Priority Review Documents for both IncRems and cards) sorts `a.priority - b.priority || ((a as any).nextRepDate ?? 0) - ((b as any).nextRepDate ?? 0)`. The `?? 0` guard keeps flashcards (no `nextRepDate`) in their prior stable order while IncRems get most-overdue-first. **(Post `be390d5`)** the result is then passed to upstream's `applyPriorityWeightedLottery(sorted, randomness, weightK)` (it replaced the old uniform-swap loop). **`DEFAULT_RANDOMNESS` follows upstream** — `0` → `0.1` (be390d5 sync) → **`0.2`** (`5f8ccdd` sync), so the tiebreak is the deterministic base order but ~20% of slots get the priority-weighted lottery on top — it is **no longer strict by default** (set randomness to 0 to make it strict).
 
 **Note:** `callbacks.ts` was already fork-touched for the queue counter (Deviation 9), but the **sort itself** was upstream code. `IncRemTable.tsx` and `sorting.ts` were previously pure-upstream files; this is their first fork deviation.
 
@@ -202,16 +209,19 @@ This file has grown into the most heavily customised widget. All changes are add
 
 | Field | Value |
 |---|---|
-| **Base (last synced)** | `be390d5` — _Merge PR #288_ (synced 2026-06-15) |
-| **Target (upstream HEAD)** | `be390d5` — **caught up, no pending delta** |
-| **Our HEAD** | `abe9852` on `main` (post-merge fix `d534bc6` = v0.2.277 + docs) |
+| **Base (last synced)** | `5f8ccdd` — _Merge PR #306_ (synced 2026-08-10) |
+| **Target (upstream HEAD)** | `5f8ccdd` — **caught up, no pending delta** |
+| **Our HEAD** | `44027fa` (merge commit) on `merge/upstream-5f8ccdd`; pending in-app verification before `main` fast-forwards |
 | **Delta size** | none pending (next sync: `git fetch upstream` then re-run the runbook) |
 
 **Last sync's themes** (for reference; the next delta will differ — re-recon at Step 3):
-Card Memory Analytics + FSRS Calibration views; period filtering across analytics/dashboard;
-per-card weighted-shield bucketing; monthly catch-up shield; scope-engine rewrite + debug tooling;
-rogue-CardPriority cleanup; the new ReferenceFinder widget; the Bulletize command; and the headline
-**priority-weighted lottery** replacing uniform random swaps in sorting (`sorting.ts`/`callbacks.ts`).
+the settings-architecture rewrite (native RemNote settings → a plugin-owned typed store + "IE Settings"
+popup: `getIESetting` / `useIESetting` / `useIESettingOptional`, 12 setting IDs deregistered, Mastery Drill
+flipped to opt-in); priority bands + PDF highlight badges; powerup-slot damage recovery for RemNote's
+storage overhaul (raw slot scan/dump/repair); listify + heading assignment; **PDF state consolidated into
+`pdf_state.ts` behind a `pdfState` powerup slot** (the `getCurrentPageKey` → `getIncrementalReadingPosition`
+migration); history notes/edit/import; read points + hybrid Reader↔Outline queue view; synced-storage
+shrink; and a MkDocs documentation site. Upstream also reset its version numbering to `1.0.x`.
 
 > The exact per-file conflict set is confirmed at execution time in **Step 3** (GitHub omits the
 > inline file list for a diff this large, so it must be enumerated locally after `git fetch`).
@@ -225,7 +235,7 @@ Only files the fork has modified can conflict. Reference: the "Current Deviation
 | File | Risk | What to preserve |
 |---|---|---|
 | `public/manifest.json` | reconcile | Keep fork `id` + `name` + `repoUrl` + `unlisted: true` (Deviation 1); accept upstream `version`. |
-| `src/register/commands.ts` | **HIGH** | `open-incremental-editor` (`Ctrl+G`) + `(OpenLink)` URL/skip-doc logic. |
+| `src/register/commands.ts` | **HIGH** | `open-incremental-editor` (`Ctrl+G`) + `(OpenLink)` URL/skip-doc logic; `runNextInQueueAction` + `next-in-queue-alt` (`opt+t`) + `skip-in-queue` (`opt+b`); the two fork import lines; PDF position via `getIncrementalReadingPosition`. |
 | `src/widgets/answer_buttons.tsx` | **HIGH** | 6-button layout, `SplitButton`s, green in-app Open Editor flow, `(OpenLink)` trackers, rotation warning, Skip `rescheduleWithoutReview`. |
 | `src/lib/incremental_rem/index.ts` | **HIGH** | rotation read, helpers, First-Added/inherited-rotation init, `updateReviewRemData` `newNextRepDate` return. |
 | `src/lib/incremental_rem/types.ts` | low | Keep both `rotation` and upstream `createdAt`. |
@@ -296,10 +306,19 @@ git diff --stat 7e0bc0d..upstream/main -- \
 
 #### Step 5 — Verify
 - `npm install` — pick up `parse-duration` + any new upstream deps; regenerate the lock.
-- `npm run build` (production webpack) **must compile**. Pre-existing `tsc` errors are acceptable
-  only if unchanged. Optionally `npm run dev` for a dev-compile sanity check.
+- `npm run build` (production webpack) **must compile** — it also runs `remnote-plugin validate` and
+  rebuilds `dist/` + `PluginZip.zip`. Optionally `npm run dev` for a dev-compile sanity check.
+- `npx tsc --noEmit` — **current baseline: 13 errors** (was 17 before the `5f8ccdd` sync; upstream fixed 4
+  in `fsrs.ts`). After a big sync the count legitimately changes, so compare *error sets*, not counts:
+  capture pre- and post-merge output, diff them, and assert **zero new errors in the deviation files**.
+  A new error inside a fork-custom region means a bad resolution — fix it before landing.
+- **Toolchain note:** Node is installed via `nvm` at `~/.nvm/versions/node/v16.15.1` (the `.nvmrc` version)
+  and is **not** on the default non-interactive `PATH`; prefix commands with
+  `export PATH="$HOME/.nvm/versions/node/v16.15.1/bin:$PATH"`.
 - Smoke-test (if running end-to-end): rotation scheduling + amber invalid-rotation warning,
-  `(OpenLink)` Open Editor tab policy, `SplitButton` dropdowns, 6-button queue layout, `Ctrl+G`.
+  `(OpenLink)` Open Editor tab policy, `SplitButton` dropdowns, 6-button queue layout, `Ctrl+G`,
+  First Added set on a new IncRem, PDF page-resume via `opt+t` and `Ctrl+G` (the only check that
+  catches a missed `getCurrentPageKey` swap), `opt+b` skip, and Previous-after-review not auto-skipping.
 
 #### Step 6 — Land + record
 - Commit the merge; fast-forward `main` to `merge/upstream-2955e9a` (or open a PR).
@@ -723,3 +742,23 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 - `.gitignore` — removed the dead `FORK_TRACKING.md` entry.
 
 **Notes:** Verification (line-level diff + independent multi-agent review) confirmed no content loss. Two pre-existing inconsistencies were fixed while merging: (1) AI System Instructions rule 4 and the runbook conflict-map `manifest.json` row still said to keep only `repoUrl`/`unlisted` — updated to the four-field set (`id`, `name`, `repoUrl`, `unlisted`) that Deviation 1 has required since the 2026-06-01 drift correction; (2) the runbook's conflict map and Step 3 recon path list predated Deviations 8–10 — added the seven files from those deviations (`callbacks.ts`, `events.ts`, `sorting.ts`, `session_helpers.ts`, `ui_helpers.ts`, `queue.tsx`, `IncRemTable.tsx`). Also refreshed the stale "Our HEAD" row (`65578e9` → `abe9852`), broadened the runbook's worked-example disclaimer to cover sync-specific prose (not just hashes), and added a missing `---` separator between the two 2026-04-14 changelog entries. A follow-up code audit the same day verified all 168 technical claims in "Upstream Sync Status" + "Current Deviations" against the actual code, git state, and a fresh `npm run build` + `tsc` run (17-error baseline confirmed); the only drift found was the two backup-branch "retained" notes (branches since deleted), corrected in place.
+
+---
+
+### 2026-08-10 — Merge (upstream sync to `5f8ccdd`)
+
+**Upstream commit(s):** `be390d5` to `5f8ccdd` (PR #289 through #306; 216 commits)
+**Conflicts resolved:** `.gitignore`, `public/manifest.json`, `src/lib/incremental_rem/index.ts`, `src/widgets/answer_buttons.tsx`, `src/widgets/queue.tsx` (only 5 of 360 changed files)
+**Custom code preserved:** Yes — adapted (three re-anchorings, see Notes)
+**Compilation verified:** Yes — production `webpack` build + manifest `validate` + zip all pass. `tsc` **17 → 13** errors: **zero new**, and upstream fixed 4 in `fsrs.ts`. Verified by diffing the pre/post error *sets* and asserting no new errors in the 16 deviation files. 18/18 fork-integrity checks passed.
+**Files touched:**
+- `public/manifest.json` — kept fork `id`/`name`/`repoUrl`/`unlisted`; adopted upstream `version` **1.0.35** (upstream reset `0.2.294` → `1.0.x`; user decision) and the new MkDocs-site `projectUrl`/`changeLogUrl`.
+- `src/lib/incremental_rem/index.ts` — took upstream's rewritten `getIncrementalRemFromRem`; re-inserted the rotation read after the priority clamp + `rotation` in the 7-key `rawData`. Our old `createdAt` block was superseded by upstream's `resolveDailyDocSlot` + `madeIncremental` fallback and removed. **Re-anchored** the First Added + inherited-Rotation writes into upstream's batched `slotWrites` and added `rotation` to `constructedIncRem`.
+- `src/widgets/answer_buttons.tsx` — fork layout won wholesale; merged imports; folded upstream's 📝 Review Note and 🔖 Read point buttons into the ⚙️ Options accordion (their hooks stay above the early returns); note input renders outside the accordion; ported the ` • latest` bookmark badge.
+- `src/register/commands.ts` — auto-merged, then **ported** upstream's `getCurrentPageKey` → `getIncrementalReadingPosition` migration into `runNextInQueueAction`.
+- `src/widgets/queue.tsx` — import union; Deviation-8 effect auto-merged intact.
+- `src/lib/sorting.ts` — adopted upstream `DEFAULT_RANDOMNESS 0.1 → 0.2` (user decision); Dev-10 tiebreak intact.
+- Auto-merged correctly with fork code intact: `consts.ts`, `types.ts`, `powerups.tsx`, `ui_helpers.ts`, `callbacks.ts`, `events.ts`. Untouched upstream: `NextRepTime.tsx`, `session_helpers.ts`, `IncRemTable.tsx`, `package.json`/lock, and both fork-only files.
+- Plus ~350 upstream-only files (settings-store rewrite, priority bands, slot-repair tooling, `pdf_state.ts`, read points, history notes/import, MkDocs site).
+
+**Notes:** Small conflict surface (5 files) for a 216-commit, +35k-line delta. Three things auto-merged into *compiling but wrong* code and were fixed by hand — the reason this sync's plan pre-resolved them: **(1)** `constructedIncRem` kept upstream's literal, silently dropping `rotation` from the cache entry of every newly created IncRem (Zod strips unknown keys — no compile error); **(2)** the fork's First Added write kept its own `getDailyDocReferenceForDate` call, the redundant/racy second lookup upstream introduced `todayRef` to avoid; **(3)** `runNextInQueueAction` kept `getCurrentPageKey`, which upstream still re-exports — here it happened to break loudly because the merged import line no longer provides it, but in general that trap is silent. Also corrected during planning: the fork's container `onClick` needed upstream's `closest('input, textarea')` bail-out (our stricter guard is on `onMouseDown`), without which the new review-note input cannot be typed into. Upstream's edit to the "Open Editor in New Tab" button was deliberately dropped after reading it in full — a one-line `getIESetting` migration for a beta/www browser URL, with no counterpart in the fork's in-app `openEditorAction`. Merge performed on `merge/upstream-5f8ccdd`; backup branch `backup/pre-merge-5f8ccdd` retained at `f469c72` until verified in-app. **In-app smoke tests still pending** — `main` has not been fast-forwarded and nothing has been pushed.
