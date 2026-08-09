@@ -1,6 +1,8 @@
-# Fork Tracking: incremental-everything-mo
+# incremental-everything-mo — Fork Tracking & Upstream Merge Guide
 
-> **Purpose:** This document is the single source of truth for all custom modifications made to this fork. It is designed to be read and updated by an AI assistant when merging upstream changes or making new edits.
+> **Purpose:** This document is the single source of truth for all custom modifications made to this fork **and** the runbook for syncing it with upstream. It is designed to be read and updated by an AI assistant when merging upstream changes or making new edits.
+>
+> **Provenance:** Merged 2026-08-09 from the former `FORK_TRACKING.md` (record: AI instructions, sync status, deviations, logging protocol, changelog) and `UPSTREAM_MERGE_PLAN.md` (forward-looking runbook), both now deleted. References to those filenames in older changelog entries refer to this document.
 
 ---
 
@@ -14,9 +16,11 @@ When working on this repository, follow these rules in order:
 2. **Identify the upstream base.** The last known upstream commit is recorded in the "Upstream Sync Status" section below. Compare against it to understand what is new upstream.
 3. **Never overwrite custom code blindly.** If an upstream change touches a file listed in "Current Deviations," perform a manual three-way inspection: read the upstream diff, read our custom code, and reconcile intentionally.
 
+> For the step-by-step merge procedure (safety branches, conflict recon, verify, land), follow the "Upstream Merge Runbook" section below.
+
 ### During a Merge
 
-4. **Preserve `manifest.json` overrides.** Our fork uses a different `repoUrl` and sets `unlisted: true`. Any upstream change to `manifest.json` must keep these two fields as-is.
+4. **Preserve `manifest.json` overrides.** Our fork uses a different `id` (**critical** — must differ or our fork collides with the official plugin), a different `name` and `repoUrl`, and sets `unlisted: true`. Any upstream change to `manifest.json` must keep these four fields as-is (see Deviation 1).
 5. **Preserve additive custom code.** Our changes are designed to be additive (new constants, new slots, new helper functions, new branches in existing functions). Upstream refactors that rename or move the functions we hook into require manual adaptation -- do not auto-resolve.
 6. **Test compilation.** After resolving conflicts, run `npm run dev` and confirm webpack compiles successfully before committing.
 
@@ -65,7 +69,9 @@ firstAddedSlotCode = 'firstAdded'
 rotationSlotCode  = 'rotation'
 ```
 
-**Merge rule:** Pure addition at the end of the powerup constants block. No conflict expected unless upstream adds identically named constants.
+Also added the `queueBackNavKey` session-flag constant (one-shot back-navigation flag consumed by the due-on-encounter auto-skip; see Deviation 8).
+
+**Merge rule:** Pure additions at the end of the constants blocks. No conflict expected unless upstream adds identically named constants.
 
 ### 3. `src/register/powerups.tsx`
 
@@ -182,6 +188,131 @@ This file has grown into the most heavily customised widget. All changes are add
 **Note:** `callbacks.ts` was already fork-touched for the queue counter (Deviation 9), but the **sort itself** was upstream code. `IncRemTable.tsx` and `sorting.ts` were previously pure-upstream files; this is their first fork deviation.
 
 **Merge rule:** If upstream modifies any of these three sorts, re-apply `nextRepDate` **ascending** as the secondary key. In `callbacks.ts` use **remeda's multi-projection form** (projections as separate args) — **never** a lodash array of iteratees (`_.sortBy(arr, [fn1, fn2])` crashes; see the remeda gotcha above). `IncRemTable.tsx` and `sorting.ts` use native `Array.prototype.sort` with a comparator (`a - b || …`), which is unaffected. In the generic `applySortingCriteria` keep the `?? 0` guard so cards (which lack `nextRepDate`) are unaffected, and keep the tiebreak in the `sort` line that feeds `applyPriorityWeightedLottery` (do not revert to the old uniform swaps). Do **not** add the tiebreak to the percentile-only sorts (utils percentile helpers, `inc_rem_main_view.tsx`, `inc_rem_list.tsx`, shield/card-priority caches) or to the IncRemTable "priority" column sort — those are intentionally out of scope.
+
+---
+
+## Upstream Merge Runbook
+
+> **Purpose:** Forward-looking runbook for merging upstream changes into this fork.
+> This is a **plan**, not a record. The historical record of what was actually merged and
+> how conflicts were resolved lives in the "Changelog" section below and is updated
+> **only after** a merge completes (per the "Logging Protocol"). Do **not** log results in this runbook.
+
+### Current pending sync
+
+| Field | Value |
+|---|---|
+| **Base (last synced)** | `be390d5` — _Merge PR #288_ (synced 2026-06-15) |
+| **Target (upstream HEAD)** | `be390d5` — **caught up, no pending delta** |
+| **Our HEAD** | `abe9852` on `main` (post-merge fix `d534bc6` = v0.2.277 + docs) |
+| **Delta size** | none pending (next sync: `git fetch upstream` then re-run the runbook) |
+
+**Last sync's themes** (for reference; the next delta will differ — re-recon at Step 3):
+Card Memory Analytics + FSRS Calibration views; period filtering across analytics/dashboard;
+per-card weighted-shield bucketing; monthly catch-up shield; scope-engine rewrite + debug tooling;
+rogue-CardPriority cleanup; the new ReferenceFinder widget; the Bulletize command; and the headline
+**priority-weighted lottery** replacing uniform random swaps in sorting (`sorting.ts`/`callbacks.ts`).
+
+> The exact per-file conflict set is confirmed at execution time in **Step 3** (GitHub omits the
+> inline file list for a diff this large, so it must be enumerated locally after `git fetch`).
+
+---
+
+### Conflict map (our deviation files)
+
+Only files the fork has modified can conflict. Reference: the "Current Deviations" section above.
+
+| File | Risk | What to preserve |
+|---|---|---|
+| `public/manifest.json` | reconcile | Keep fork `id` + `name` + `repoUrl` + `unlisted: true` (Deviation 1); accept upstream `version`. |
+| `src/register/commands.ts` | **HIGH** | `open-incremental-editor` (`Ctrl+G`) + `(OpenLink)` URL/skip-doc logic. |
+| `src/widgets/answer_buttons.tsx` | **HIGH** | 6-button layout, `SplitButton`s, green in-app Open Editor flow, `(OpenLink)` trackers, rotation warning, Skip `rescheduleWithoutReview`. |
+| `src/lib/incremental_rem/index.ts` | **HIGH** | rotation read, helpers, First-Added/inherited-rotation init, `updateReviewRemData` `newNextRepDate` return. |
+| `src/lib/incremental_rem/types.ts` | low | Keep both `rotation` and upstream `createdAt`. |
+| `src/lib/consts.ts` | low | `firstAddedSlotCode`, `rotationSlotCode`, `queueBackNavKey` (Deviation 8). |
+| `src/register/powerups.tsx` | low | First Added (DATE) + Rotation (TEXT) slots. |
+| `src/components/NextRepTime.tsx` | low | rotation-aware display branch. |
+| `package.json` / `package-lock.json` | low | Keep `parse-duration`; regenerate lock via `npm install`. |
+| `src/register/callbacks.ts` | **HIGH** | Deviations 9+10: queue-counter buckets in `GetNextCard`; remeda **multi-projection** `sortBy` tiebreak (never the lodash array-of-iteratees form); lottery ordering. |
+| `src/lib/sorting.ts` | reconcile | Deviation 10: `nextRepDate` tiebreak (`?? 0` guard) in the `sort` feeding `applyPriorityWeightedLottery` — conflicted in the `be390d5` merge. |
+| `src/lib/session_helpers.ts` | reconcile | Deviations 8+9: `calculateDueIncRemStats` rename + `getDueIncRemPriorityBuckets`; `queueBackNavKey` reset in `resetQueueSession`. |
+| `src/widgets/queue.tsx` | reconcile | Deviation 8: due-on-encounter auto-skip effect (keyed on `ctx.remId` only) + `queueBackNavKey` consume-first early-out. |
+| `src/lib/ui_helpers.ts` | low | Deviation 9: `registerQueueCounter` optional `priorityBuckets` arg. |
+| `src/register/events.ts` | low | Deviation 9: QueueEnter passes count + buckets to `registerQueueCounter`. |
+| `src/components/IncRemTable.tsx` | low | Deviation 10: "Queue Order" `nextRepDate` tiebreak. |
+| `src/lib/open_editor_link_tag.ts` | none | Fork-only new file — cannot conflict. |
+| `src/components/buttons/SplitButton.tsx` | none | Fork-only new file — cannot conflict. |
+
+---
+
+### Runbook
+
+> _The concrete hashes (`2955e9a`, `7e0bc0d`, `86028a9`) **and** the sync-specific prose in the steps below (e.g. Step 4's per-file upstream themes, Step 6's "last synced `2955e9a`") are worked examples from the 2026-06-01 sync. Substitute the current base / target / HEAD values when re-running, re-derive the per-file notes from the actual delta at Step 3, and never regress "Upstream Sync Status" to an older hash._
+
+#### Step 1 — Pre-flight (read-only)
+- `git status` — confirm a clean working tree.
+- Re-read the "Current Deviations" (conflict map) + "AI System Instructions" sections above.
+- `git fetch upstream` — advance `upstream/main` to `2955e9a`; verify with
+  `git rev-parse upstream/main`.
+
+#### Step 2 — Safety net
+- `git branch backup/pre-merge-2955e9a` — rollback anchor at `86028a9`.
+- `git switch -c merge/upstream-2955e9a` — merge off `main` so `main` stays clean until verified.
+
+#### Step 3 — Recon the real conflict surface
+Enumerate which of our deviation files upstream actually touched:
+
+```sh
+git diff --stat 7e0bc0d..upstream/main -- \
+  public/manifest.json src/lib/consts.ts src/register/powerups.tsx \
+  src/register/commands.ts src/lib/incremental_rem/types.ts \
+  src/lib/incremental_rem/index.ts src/widgets/answer_buttons.tsx \
+  src/components/NextRepTime.tsx src/register/callbacks.ts src/register/events.ts \
+  src/lib/sorting.ts src/lib/session_helpers.ts src/lib/ui_helpers.ts \
+  src/widgets/queue.tsx src/components/IncRemTable.tsx \
+  package.json package-lock.json
+```
+
+- Per high-risk file: `git log --oneline 7e0bc0d..upstream/main -- <path>` for context.
+- Total churn / new files: `git diff --stat 7e0bc0d..upstream/main | tail -1` and
+  `git diff --name-status 7e0bc0d..upstream/main | grep '^A'`.
+
+#### Step 4 — Merge (merge-commit style, matching prior protocol)
+- `git merge upstream/main`. Expect conflicts in the deviation files above.
+- Resolve via **three-way inspection** (upstream diff vs. our custom block vs. reconciled result),
+  using the Conflict-map column as the checklist. Detailed re-apply notes:
+  - **commands.ts** — upstream added `quickCodes` to all commands + renamed the extraction command;
+    re-apply our `Ctrl+G` registration and `(OpenLink)` URL/skip-doc logic on top.
+  - **answer_buttons.tsx** — upstream priority-shield/overdue, card-cluster, `CardPriorityDisplay`
+    changes; re-apply the 6-button layout (Previous/Next/Open Editor/Skip/Dismiss/⚙️ Options accordion),
+    `SplitButton`s + Saturday/Monday dropdowns, green in-app Open Editor (`Promise.allSettled` ordering),
+    `(OpenLink)` trackers, `hasInvalidRotation` warning, `rescheduleWithoutReview` for Skip, and the
+    "Scroll to Bookmark" placement in the advanced row.
+  - **incremental_rem/index.ts** — upstream inheritance-cascade/ancestral-lookup changes; re-apply the
+    rotation read in `getIncrementalRemFromRem`, the freestanding helpers (`getRotationIntervalMs/Days`,
+    `getInitialRotation`, `rescheduleWithoutReview`), the First-Added + inherited-rotation init blocks,
+    and the `updateReviewRemData` branching that returns `newNextRepDate: nextRepDateToUse`.
+- If upstream **renamed or moved** a function we hook into, adapt manually — never auto-resolve.
+
+#### Step 5 — Verify
+- `npm install` — pick up `parse-duration` + any new upstream deps; regenerate the lock.
+- `npm run build` (production webpack) **must compile**. Pre-existing `tsc` errors are acceptable
+  only if unchanged. Optionally `npm run dev` for a dev-compile sanity check.
+- Smoke-test (if running end-to-end): rotation scheduling + amber invalid-rotation warning,
+  `(OpenLink)` Open Editor tab policy, `SplitButton` dropdowns, 6-button queue layout, `Ctrl+G`.
+
+#### Step 6 — Land + record
+- Commit the merge; fast-forward `main` to `merge/upstream-2955e9a` (or open a PR).
+- **Now** update this document per the "Logging Protocol" section below:
+  - "Upstream Sync Status" → last synced `2955e9a`.
+  - "Current Deviations" → adjust any file/region notes that upstream refactors forced.
+  - "Changelog" → append a **Merge** entry (`7e0bc0d`→`2955e9a`, conflicts list, custom code
+    preserved/adapted, compilation verified, files touched, notes).
+- Delete `backup/pre-merge-2955e9a` once satisfied.
+
+#### Rollback
+- Mid-merge: `git merge --abort`.
+- Post-merge (before pushing): `git reset --hard backup/pre-merge-2955e9a`.
 
 ---
 
@@ -346,6 +477,8 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 
 **Notes:** **Superseded in behavior** by **2026-04-16 — Fix / Edit (Open Editor / Ctrl+G: `(OpenLink)` suffix and tab policy)**. URL extraction and where it is invoked evolved; see Current Deviations and that entry for when external tabs open today.
 
+---
+
 ### 2026-04-14 — Fix (Open Editor blocked by popup blockers)
 
 **Upstream commit(s):** N/A (local fix)
@@ -489,7 +622,7 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 - Auto-merged cleanly (our additions sat in separate regions): `src/lib/consts.ts`, `src/lib/incremental_rem/index.ts`, `src/register/powerups.tsx`. Untouched upstream (no conflict): `src/lib/incremental_rem/types.ts`, `src/components/NextRepTime.tsx`, `package.json`/lock, and both fork-only new files (`open_editor_link_tag.ts`, `SplitButton.tsx`).
 - Plus ~100 upstream-only files: Study Dashboard, Outline Restructure (preview/undo), Mastery Drill, Rem History widget + global open-Rem listener, wide Weighted Shield popup, Text Case converter, cloze auto-priority, queue-display powerups/commands, `quickCodes` across commands, `createExtract` + `getActivePdfForIncRem` refactors; removed 3 legacy toolbar widgets (`create_inc_rem_toolbar`, `pdf_bookmark_toolbar`, `toggle_incremental_toolbar`).
 
-**Notes:** Large delta (~6 weeks). Only 3 files conflicted; resolutions were additive except the single `findPDFinRem` → `getActivePdfForIncRem` migration forced by an upstream API replacement. Merge performed on branch `merge/upstream-2955e9a`; backup branch `backup/pre-merge-2955e9a` retained at `86028a9` until verified in-app. The forward-looking runbook is in `UPSTREAM_MERGE_PLAN.md` (kept as the reusable procedure for future syncs).
+**Notes:** Large delta (~6 weeks). Only 3 files conflicted; resolutions were additive except the single `findPDFinRem` → `getActivePdfForIncRem` migration forced by an upstream API replacement. Merge performed on branch `merge/upstream-2955e9a`; backup branch `backup/pre-merge-2955e9a` (at `86028a9`) was kept until the merge was verified in-app and has since been deleted. The forward-looking runbook is in the "Upstream Merge Runbook" section of this document (originally kept in `UPSTREAM_MERGE_PLAN.md` as the reusable procedure for future syncs).
 
 ---
 
@@ -559,7 +692,7 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 - All other fork-customized files untouched upstream: `answer_buttons.tsx`, `incremental_rem/*`, `queue.tsx`, `session_helpers.ts`, `ui_helpers.ts`, `NextRepTime.tsx`, `IncRemTable.tsx`, `powerups.tsx`, `open_editor_link_tag.ts`, `SplitButton.tsx`, `package.json`.
 - Plus ~40 upstream-only files: Card Memory Analytics + FSRS Calibration views, period filtering, monthly catch-up shield, scope-engine rewrite + debug tooling, rogue-CardPriority cleanup, the new ReferenceFinder widget (`opt+shift+f`), and the Bulletize command (`opt+shift+8`).
 
-**Notes:** Small conflict surface (2 files) despite a 45-commit / ~6,500-line delta — most upstream work landed in new files or regions disjoint from the fork. The headline behavioral change is upstream's **priority-weighted lottery** replacing uniform random swaps (steeper bias toward high-priority items, `W = e^(−k·p/100)`, k=ln10); see Deviation 10. Merge performed on branch `merge/upstream-be390d5`; backup branch `backup/pre-merge-be390d5` retained at `9e2a2bb` until verified in-app. Optional follow-up: align `IncRemTable.tsx` "Queue Order" randomness to the lottery so the preview matches the live queue.
+**Notes:** Small conflict surface (2 files) despite a 45-commit / ~6,500-line delta — most upstream work landed in new files or regions disjoint from the fork. The headline behavioral change is upstream's **priority-weighted lottery** replacing uniform random swaps (steeper bias toward high-priority items, `W = e^(−k·p/100)`, k=ln10); see Deviation 10. Merge performed on branch `merge/upstream-be390d5`; backup branch `backup/pre-merge-be390d5` (at `9e2a2bb`) was kept until the merge was verified in-app and has since been deleted; the pre-merge state remains reachable at commit `9e2a2bb` on `main`. Optional follow-up: align `IncRemTable.tsx` "Queue Order" randomness to the lottery so the preview matches the live queue.
 
 ---
 
@@ -575,3 +708,18 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 - `FORK_TRACKING.md` — corrected Deviation 10's `callbacks.ts` description + merge rule (remeda gotcha), the 2026-06-15 Edit entry's inaccurate "Compilation verified" line, the merge entry's `tsc` baseline note (retracted the "21 baseline" claim), and added this entry.
 
 **Root cause:** `_` in `callbacks.ts` is **remeda** (`import * as _ from 'remeda'`). The `9e2a2bb` tiebreak commit wrote the sort using **lodash's** array-of-iteratees syntax `_.sortBy(arr, [fn1, fn2])`; remeda instead expects projections as separate args, reads the array as a `[projection, order]` pair (`order = fn2`), and throws `TypeError: comparator is not a function` from `_purryOrderRules`, crashing `GetNextCard` so no IncRems were injected. The `be390d5` merge auto-merged that broken line through unchanged, so this branch inherited the bug until this Fix. `IncRemTable.tsx` and `sorting.ts` are unaffected (native `Array.sort`).
+
+---
+
+### 2026-08-09 — Edit (Docs: merged `FORK_TRACKING.md` + `UPSTREAM_MERGE_PLAN.md` into `CLAUDE.md`)
+
+**Upstream commit(s):** N/A (docs-only)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes (no code changes)
+**Compilation verified:** N/A (docs-only)
+**Files touched:**
+- `CLAUDE.md` — new; verbatim merge of the two docs. The runbook was embedded as the "Upstream Merge Runbook" section between "Current Deviations" and "Logging Protocol", its headings demoted one level, and all cross-file references rewritten as section references.
+- `FORK_TRACKING.md`, `UPSTREAM_MERGE_PLAN.md` — deleted after verification.
+- `.gitignore` — removed the dead `FORK_TRACKING.md` entry.
+
+**Notes:** Verification (line-level diff + independent multi-agent review) confirmed no content loss. Two pre-existing inconsistencies were fixed while merging: (1) AI System Instructions rule 4 and the runbook conflict-map `manifest.json` row still said to keep only `repoUrl`/`unlisted` — updated to the four-field set (`id`, `name`, `repoUrl`, `unlisted`) that Deviation 1 has required since the 2026-06-01 drift correction; (2) the runbook's conflict map and Step 3 recon path list predated Deviations 8–10 — added the seven files from those deviations (`callbacks.ts`, `events.ts`, `sorting.ts`, `session_helpers.ts`, `ui_helpers.ts`, `queue.tsx`, `IncRemTable.tsx`). Also refreshed the stale "Our HEAD" row (`65578e9` → `abe9852`), broadened the runbook's worked-example disclaimer to cover sync-specific prose (not just hashes), and added a missing `---` separator between the two 2026-04-14 changelog entries. A follow-up code audit the same day verified all 168 technical claims in "Upstream Sync Status" + "Current Deviations" against the actual code, git state, and a fresh `npm run build` + `tsc` run (17-error baseline confirmed); the only drift found was the two backup-branch "retained" notes (branches since deleted), corrected in place.
