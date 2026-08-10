@@ -196,6 +196,19 @@ This file has grown into the most heavily customised widget. All changes are add
 
 **Merge rule:** If upstream modifies any of these three sorts, re-apply `nextRepDate` **ascending** as the secondary key. In `callbacks.ts` use **remeda's multi-projection form** (projections as separate args) — **never** a lodash array of iteratees (`_.sortBy(arr, [fn1, fn2])` crashes; see the remeda gotcha above). `IncRemTable.tsx` and `sorting.ts` use native `Array.prototype.sort` with a comparator (`a - b || …`), which is unaffected. In the generic `applySortingCriteria` keep the `?? 0` guard so cards (which lack `nextRepDate`) are unaffected, and keep the tiebreak in the `sort` line that feeds `applyPriorityWeightedLottery` (do not revert to the old uniform swaps). Do **not** add the tiebreak to the percentile-only sorts (utils percentile helpers, `inc_rem_main_view.tsx`, `inc_rem_list.tsx`, shield/card-priority caches) or to the IncRemTable "priority" column sort — those are intentionally out of scope.
 
+### 11. Outline-first queue, no auto-opened sidebar (`queue.tsx`, `ExtractViewer.tsx`)
+
+**What changed:** two related fork edits so a queue item is always shown **as the Rem, in the queue body** — never as the source document, and never pushed into the right sidebar.
+
+- `src/components/ExtractViewer.tsx` — upstream's mount effect force-opened the notes sidebar on every render (`plugin.window.openWidgetInRightSidebar(incremNotesSidebarWidgetId)`), which fired for **every** rem-type queue card. That single line is removed. The `incremNotesSidebarRemIdKey` session write around it is **kept**, so the sidebar still resolves the right Rem when opened deliberately via the `✎ Edit in sidebar` button or the Reader's 📝 button.
+- `src/widgets/queue.tsx` — upstream offers its Reader↔Outline toggle only when a read point exists on a descendant, and defaults to the Reader. We offer it for **every** `pdf` / `html` card and default to the **outline** (`ExtractViewer` on the IncRem itself): `offerOutlineToggle` is now a plain type check (`'pdf' || 'html'`) and `outlineView` initialises/resets to `true`. The render branch renders `null` (not the Reader) while `incRemRem` resolves, to avoid a one-frame PDF flash. The `📄 Read document` button still switches to the Reader per card.
+
+**Deliberately excluded:** `pdf-highlight` / `html-highlight` types. They already avoid the document via `IsolatedCardViewer` (which shows the highlight text), and their `← Back to isolated view` button occupies the same top-right slot as this toggle.
+
+**Known trade-offs of the outline default** (accepted, not bugs): the queue no longer hosts the reader's **page controls / page-range popup**, so PDF reading position can't be *changed* from the queue — `capturePdfPageHistoryIfNeeded` still runs and records the persisted position each rep. `✨ Scroll to Highlight` and `🔖 Scroll to Bookmark` still render but are no-ops with no reader pane mounted. In-queue highlighting and the multi-PDF switcher are unavailable. All degrade silently — none throw. Press `📄 Read document` for any of them.
+
+**Merge rule:** If upstream restructures `QueueComponent`'s render branch or `ExtractViewer`'s mount effects, re-apply both edits. Watch specifically for upstream re-adding an `openWidgetInRightSidebar` call in `ExtractViewer` (or anywhere that runs per queue card) — that is the regression to look for. Keep the `incremNotesSidebarRemIdKey` write. If upstream ever adds a real setting for the queue body view, prefer adopting it over this hard-coded default.
+
 ---
 
 ## Upstream Merge Runbook
@@ -762,3 +775,19 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 - Plus ~350 upstream-only files (settings-store rewrite, priority bands, slot-repair tooling, `pdf_state.ts`, read points, history notes/import, MkDocs site).
 
 **Notes:** Small conflict surface (5 files) for a 216-commit, +35k-line delta. Three things auto-merged into *compiling but wrong* code and were fixed by hand — the reason this sync's plan pre-resolved them: **(1)** `constructedIncRem` kept upstream's literal, silently dropping `rotation` from the cache entry of every newly created IncRem (Zod strips unknown keys — no compile error); **(2)** the fork's First Added write kept its own `getDailyDocReferenceForDate` call, the redundant/racy second lookup upstream introduced `todayRef` to avoid; **(3)** `runNextInQueueAction` kept `getCurrentPageKey`, which upstream still re-exports — here it happened to break loudly because the merged import line no longer provides it, but in general that trap is silent. Also corrected during planning: the fork's container `onClick` needed upstream's `closest('input, textarea')` bail-out (our stricter guard is on `onMouseDown`), without which the new review-note input cannot be typed into. Upstream's edit to the "Open Editor in New Tab" button was deliberately dropped after reading it in full — a one-line `getIESetting` migration for a beta/www browser URL, with no counterpart in the fork's in-app `openEditorAction`. Merge performed on `merge/upstream-5f8ccdd`; backup branch `backup/pre-merge-5f8ccdd` retained at `f469c72` until verified in-app. **In-app smoke tests still pending** — `main` has not been fast-forwarded and nothing has been pushed.
+
+---
+
+### 2026-08-10 — Edit (Outline-first queue; no auto-opened notes sidebar)
+
+**Upstream commit(s):** N/A (local behaviour change, layered on merge `44027fa`)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`npx tsc --noEmit` = 13 errors, unchanged baseline, none in the edited files; production `webpack` build + validate + zip pass)
+**Files touched:**
+- `src/components/ExtractViewer.tsx` — removed upstream's unconditional `openWidgetInRightSidebar` call from the mount effect; kept the `incremNotesSidebarRemIdKey` session write so the sidebar still targets the right Rem when opened on purpose.
+- `src/widgets/queue.tsx` — `offerOutlineToggle` is now a plain `'pdf' | 'html'` type check (was: only when a read point existed on a descendant); `outlineView` defaults and resets to `true`; the render branch yields `null` instead of the Reader while `incRemRem` resolves; dropped the now-unused `getRemReadPoint` import.
+- `public/manifest.json` — version `1.0.35` → `1.0.36`.
+- `CLAUDE.md` — added Deviation 11 and this entry.
+
+**Notes:** Two complaints, one theme — queue items should be the *Rem*, in the *queue body*. (1) Upstream commit `033a8c8` added a sidebar auto-open to `ExtractViewer`, which the queue renders for every rem-type card, so the right sidebar popped open on essentially every item; there was no setting to disable it, hence the code edit. (2) An IncRem with a PDF attached rendered the PDF reader; now it renders its own outline, with the Reader one click away via `📄 Read document`. Note upstream's queue body is **read-only** (`ReadOnlyRemTree`) — before `033a8c8` it was an editable `DocumentViewer`, which upstream replaced because it loses a focus fight inside the Flashcard pane (collapsing selections and sometimes rating the card). Restoring inline editing would mean reintroducing that; the `✎ Edit in sidebar` button is the deliberate alternative. See Deviation 11 for the accepted trade-offs (no in-queue page controls; Scroll-to-Highlight/Bookmark become no-ops in outline mode).

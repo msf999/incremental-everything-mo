@@ -483,9 +483,14 @@ export function ExtractViewer({ rem, plugin }: ExtractViewerProps) {
   // and cleared on unmount. The sidebar additionally only honors it when it
   // matches the current IncRem id, so a stale value (if an unmount-clear is
   // skipped during sandbox teardown) is ignored rather than mis-shown.
+  //
+  // FORK DEVIATION: upstream also force-opened the notes sidebar here on every
+  // mount. We publish the id but never open the pane — the queue item belongs in
+  // the queue body, and an unrequested sidebar on every card is disruptive. The
+  // sidebar is still one click away via the '✎ Edit in sidebar' button below (and
+  // the Reader's 📝 button), both of which rely on the key we still set here.
   useEffect(() => {
     plugin.storage.setSession(incremNotesSidebarRemIdKey, rem._id);
-    plugin.window.openWidgetInRightSidebar(incremNotesSidebarWidgetId).catch(() => {});
     return () => {
       plugin.storage.setSession(incremNotesSidebarRemIdKey, undefined);
     };

@@ -26,7 +26,6 @@ import {
 } from '../lib/consts';
 import { setCurrentIncrementalRem } from '../lib/incremental_rem';
 import { safeRemTextToString } from '../lib/pdfUtils';
-import { getRemReadPoint } from '../lib/remReadPoint';
 import { startIncRemEngagement, endIncRemEngagement } from '../lib/queue_session';
 import { isIncRemDue } from '../lib/shield_history';
 import { useIESettingOptional } from '../lib/settings';
@@ -83,19 +82,20 @@ export function QueueComponent() {
     async (rp) => (ctx?.remId ? await rp.rem.findOne(ctx.remId) : null),
     [ctx?.remId]
   );
-  const offerOutlineToggle = useTrackerPlugin(
-    async (rp) => {
-      if (!ctx?.remId) return false;
-      const t = remAndType?.type;
-      if (t !== 'pdf' && t !== 'html') return false; // full-document reading types only
-      const entry = await getRemReadPoint(rp, ctx.remId);
-      return !!entry?.highlightId;
-    },
-    [ctx?.remId, remAndType?.type]
-  ) ?? false;
-  // false = Reader (default), true = Outline (ExtractViewer). Reset on card change.
-  const [outlineView, setOutlineView] = useState(false);
-  useEffect(() => { setOutlineView(false); }, [ctx?.remId]);
+  // FORK DEVIATION (outline-first queue): upstream offers this toggle only when a
+  // read point has been set on a descendant, and defaults to the Reader — so an
+  // IncRem with a PDF attached shows the PDF, not the Rem. We want the Rem itself
+  // in the queue body for every reading-type item, so the toggle is offered for
+  // all pdf/html cards and the outline is the default. The Reader is still one
+  // click away via '📄 Read document'. Highlight types are excluded deliberately:
+  // they are already handled by IsolatedCardViewer (which shows the highlight
+  // text, not the document) and their '← Back to isolated view' button occupies
+  // the same top-right slot as this toggle.
+  const outlineCapableType = remAndType?.type === 'pdf' || remAndType?.type === 'html';
+  const offerOutlineToggle = outlineCapableType;
+  // true = Outline (ExtractViewer, our default), false = Reader. Reset on card change.
+  const [outlineView, setOutlineView] = useState(true);
+  useEffect(() => { setOutlineView(true); }, [ctx?.remId]);
 
   // This hook signals the component's state.
   useEffect(() => {
@@ -412,8 +412,10 @@ export function QueueComponent() {
           remAndType.type === 'html-highlight' ? (
           // Hybrid toggle: flip a PDF/HTML reading card to its outline (read-only
           // ExtractViewer on the IncRem) when the user has chosen the outline view.
-          offerOutlineToggle && outlineView && incRemRem ? (
-            <ExtractViewer rem={incRemRem} plugin={plugin} />
+          offerOutlineToggle && outlineView ? (
+            // Render nothing until the IncRem resolves rather than falling through
+            // to the Reader — otherwise the PDF flashes for a frame on every card.
+            incRemRem ? <ExtractViewer rem={incRemRem} plugin={plugin} /> : null
           ) : (
             <Reader actionItem={remAndType} queueIncRemId={ctx?.remId} />
           )
