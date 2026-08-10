@@ -267,40 +267,6 @@ function ReadOnlyRemTree({
 export function ExtractViewer({ rem, plugin }: ExtractViewerProps) {
   if (!rem) return null;
 
-  // --- AVAILABLE HEIGHT (queue pane) ---
-  // The SDK cannot express "fill the pane": WidgetOptions.dimensions.height is
-  // `number | 'auto'` and the docs state percentages apply to width only. With
-  // 'auto' RemNote sizes the iframe to our content, so a CSS percentage is
-  // circular and 100vh is the *window*, not the pane. The sanctioned way out is
-  // plugin.widget.getDimensions(widgetInstanceId), which reports the rect the
-  // host actually gave this widget. We start at 100vh (deliberately tall) and
-  // then pin to the measured height, re-measuring so a pane drag is followed.
-  const [paneHeight, setPaneHeight] = useState<number | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    const measure = async () => {
-      try {
-        const ctx: any = await plugin.widget.getWidgetContext();
-        const instanceId = ctx?.widgetInstanceId;
-        if (instanceId == null) return;
-        const rect = await plugin.widget.getDimensions(instanceId as any);
-        // Ignore nonsense/zero rects (widget not laid out yet) so we never pin
-        // the card to a collapsed height and get stuck there.
-        if (!cancelled && rect && rect.height > 80) {
-          setPaneHeight((prev) => (prev != null && Math.abs(prev - rect.height) < 2 ? prev : rect.height));
-        }
-      } catch {
-        // Older hosts may not expose getDimensions — the 100vh fallback stands.
-      }
-    };
-    measure();
-    const interval = setInterval(measure, 1000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [plugin]);
-
   // --- STATE 1: DEFERRED METADATA (Statistics) ---
   const [metadata, setMetadata] = useState<Metadata | null>(null);
 
@@ -578,27 +544,30 @@ export function ExtractViewer({ rem, plugin }: ExtractViewerProps) {
     <div
       className="extract-viewer"
       style={{
-        // Measured pane height when available (see paneHeight above), else 100vh.
-        // Never a percentage: with dimensions.height 'auto' the iframe is sized to
-        // our content, so a percentage resolves against nothing and collapses.
-        height: paneHeight != null ? `${paneHeight}px` : '100vh',
+        // FORK DEVIATION — layout restored from the pre-merge fork. A flat grid
+        // directly on the widget root: header / document / footer. Upstream wrapped
+        // the body in an extra "card" (border + radius + shadow + grey chrome),
+        // which both looked like a box pasted into the queue and put another
+        // layout layer between the root and the document. The document row is a
+        // grid `1fr`, which is a definite height — DocumentViewer is an overlay
+        // with no intrinsic height, so it needs one to fill.
+        //
+        // Height is 100vh, NOT a percentage: the widget is registered with
+        // dimensions.height 'auto' (widgets.ts) and the SDK docs state percentages
+        // apply to width only, so RemNote sizes the iframe from our content and a
+        // percentage has nothing to resolve against.
+        height: '100vh',
         width: '100%',
         boxSizing: 'border-box',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'stretch',
-        // Top padding keeps the card below the queue's absolute top-right buttons
-        // ("Back to isolated view" / "Read document", both at top:12), so it can
-        // never sit under the breadcrumb. The rest is just breathing room.
-        padding: '48px 12px 12px',
+        display: 'grid',
+        gridTemplateRows: readPoint ? 'auto auto 1fr auto' : 'auto 1fr auto',
         overflow: 'hidden',
       }}
       onClick={(e) => {
-        // FORK DEVIATION (restored from pre-merge): with an editable DocumentViewer
-        // inside the queue's Flashcard pane, clicking chrome (breadcrumb, footer,
-        // empty space) leaves focus in a no-man's-land where neither the RemNote
-        // editor nor the parent window handles keystrokes — and stray keys can
-        // reach the card. Redirect such clicks into the editable area.
+        // With an editable DocumentViewer inside the queue's Flashcard pane,
+        // clicking chrome (breadcrumb, footer, empty space) leaves focus in a
+        // no-man's-land where neither the editor nor the parent window handles
+        // keystrokes — and stray keys can reach the card. Redirect into the editor.
         const target = e.target as HTMLElement;
         if (!target.closest('.document-viewer-section, a, button, [role="button"], input, select, textarea, [contenteditable]')) {
           const editable = (e.currentTarget as HTMLElement)
@@ -607,151 +576,101 @@ export function ExtractViewer({ rem, plugin }: ExtractViewerProps) {
         }
       }}
     >
-      {/* Card frame (modelled on IsolatedCardViewer): header (wrapping
-          breadcrumb), scrollable read-only content, and a footer with stats +
-          the "Edit in sidebar" button. */}
+      {/* Breadcrumb — ancestor trail, click to open. */}
       <div
+        className="breadcrumb-section"
         style={{
-          // No maxWidth: the card follows the queue pane's width so a wider pane
-          // gives the document more room (it used to cap at 1000px).
-          width: '100%',
-          flex: 1,
-          minHeight: 0,
+          padding: '6px 12px',
+          minHeight: 28,
           display: 'flex',
-          flexDirection: 'column',
-          backgroundColor: 'var(--rn-clr-background-secondary, #ffffff)',
-          border: '1px solid var(--rn-clr-border-primary, #e2e8f0)',
-          borderRadius: 12,
-          boxShadow: '0 4px 20px rgba(0,0,0,0.10)',
+          alignItems: 'center',
           overflow: 'hidden',
+          opacity: isContextLoading ? 0 : 1,
         }}
       >
-        {/* Header — breadcrumb wraps onto multiple lines instead of scrolling. */}
-        <div
-          style={{
-            flexShrink: 0,
-            padding: '10px 16px',
-            borderBottom: '1px solid var(--rn-clr-border-primary, #e2e8f0)',
-            opacity: isContextLoading ? 0 : 1,
-          }}
-        >
-          {!isContextLoading && ancestors.length > 0 && (
-            <div style={{ fontSize: 12, lineHeight: 1.4, color: 'var(--rn-clr-content-tertiary, #64748b)', wordBreak: 'break-word' }}>
-              {ancestors.map((ancestor, index) => (
-                <span key={ancestor.id}>
-                  <span
-                    onClick={() => handleAncestorClick(ancestor.id)}
-                    className="hover:underline"
-                    title={ancestor.fullText}
-                    style={{ cursor: 'pointer' }}
-                  >
-                    {ancestor.fullText}
-                  </span>
-                  {index < ancestors.length - 1 && <span style={{ margin: '0 4px' }}>›</span>}
+        {!isContextLoading && ancestors.length > 0 && (
+          <div style={{ fontSize: 12, lineHeight: 1.4, color: 'var(--rn-clr-content-tertiary, #64748b)', wordBreak: 'break-word' }}>
+            {ancestors.map((ancestor, index) => (
+              <span key={ancestor.id}>
+                <span
+                  onClick={() => handleAncestorClick(ancestor.id)}
+                  className="hover:underline"
+                  title={ancestor.fullText}
+                  style={{ cursor: 'pointer' }}
+                >
+                  {ancestor.fullText}
                 </span>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Read-point banner — shown when a read point is set. Surfaces the
-            bookmarked rem's text and a button to re-center it; also the graceful
-            fallback when the read point sits deeper than the preview caps (and so
-            isn't rendered/emphasized in the tree below). */}
-        {readPoint && (
-          <div
-            style={{
-              flexShrink: 0,
-              padding: '8px 16px',
-              borderBottom: '1px solid var(--rn-clr-border-primary, #e2e8f0)',
-              backgroundColor: 'var(--rn-clr-blue-light, #dbeafe)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 12,
-            }}
-          >
-            <div
-              style={{ fontSize: 12, color: 'var(--rn-clr-blue, #2563eb)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-              title={readPoint.text}
-            >
-              🔖 Read point: <span style={{ fontWeight: 600 }}>{readPoint.text}</span>
-            </div>
+                {index < ancestors.length - 1 && <span style={{ margin: '0 4px' }}>›</span>}
+              </span>
+            ))}
           </div>
         )}
+      </div>
 
-        {/* Content — FORK DEVIATION: RemNote's own DocumentViewer, i.e. the Rem
-            rendered exactly as it appears in the editor (real formatting, powerup
-            properties, collapsing, and inline editing). Upstream replaced this
-            with a hand-drawn read-only tree (ReadOnlyRemTree) that re-implements
-            rendering and therefore loses formatting and properties, and boxes the
-            root with a green "🎯 Target Incremental Rem" badge. We render the
-            document instead; see the container's onClick for the focus handling
-            this requires inside the Flashcard pane. */}
+      {/* Read-point banner — only when a read point is set (adds a grid row). */}
+      {readPoint && (
         <div
-          className="document-viewer-section"
           style={{
-            // flex:1 + minHeight:0 makes this row absorb the leftover height, and
-            // height:'100%' hands the DocumentViewer a definite box to fill — the
-            // overlay has no intrinsic height, so without it the document collapses.
-            flex: 1,
-            minHeight: 0,
-            height: '100%',
+            padding: '4px 12px',
+            fontSize: 12,
+            color: 'var(--rn-clr-blue, #2563eb)',
             overflow: 'hidden',
-            backgroundColor: 'var(--rn-clr-background-primary, #ffffff)',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
           }}
+          title={readPoint.text}
         >
-          <DocumentViewer width={'100%'} height={'100%'} documentId={rem._id} />
+          🔖 Read point: <span style={{ fontWeight: 600 }}>{readPoint.text}</span>
         </div>
+      )}
 
-        {/* Footer — status + statistics, and the Edit-in-sidebar action. */}
-        <div
+      {/* The Rem itself, rendered by RemNote's own document editor. */}
+      <div className="document-viewer-section" style={{ minHeight: 0, overflow: 'hidden' }}>
+        <DocumentViewer width={'100%'} height={'100%'} documentId={rem._id} />
+      </div>
+
+      {/* Footer — stats + open-in-sidebar. */}
+      <div
+        style={{
+          padding: '6px 12px',
+          borderTop: '1px solid var(--rn-clr-border-primary, #e2e8f0)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          opacity: isMetadataLoading ? 0.7 : 1,
+        }}
+      >
+        <div style={{ fontSize: 11, color: 'var(--rn-clr-content-tertiary, #64748b)', display: 'flex', flexWrap: 'wrap', gap: 12, minWidth: 0 }}>
+          <span>{isContextLoading ? 'Loading…' : (hasDocumentPowerup ? 'Document' : 'Extract')} • Incremental Rem</span>
+          {isMetadataLoading ? (
+            <span>Calculating statistics…</span>
+          ) : (
+            <>
+              <span>{childrenCount} direct {childrenCount === 1 ? 'child' : 'children'} ({incrementalChildrenCount} incremental)</span>
+              <span>{descendantsCount} {descendantsCount === 1 ? 'descendant' : 'descendants'} ({incrementalDescendantsCount} incremental)</span>
+              <span>{flashcardCount} {flashcardCount === 1 ? 'flashcard' : 'flashcards'}</span>
+            </>
+          )}
+        </div>
+        <button
+          onClick={openNotesSidebar}
+          title="Open this Rem in the notes sidebar (handy for editing alongside the source, or when the queue pane is cramped)"
           style={{
             flexShrink: 0,
-            borderTop: '1px solid var(--rn-clr-border-primary, #e2e8f0)',
-            padding: '8px 16px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 12,
-            backgroundColor: 'var(--rn-clr-background-secondary, #f8fafc)',
-            opacity: isMetadataLoading ? 0.7 : 1,
+            padding: '4px 10px',
+            borderRadius: 6,
+            border: '1px solid var(--rn-clr-blue, #3b82f6)',
+            backgroundColor: 'transparent',
+            color: 'var(--rn-clr-blue, #3b82f6)',
+            cursor: 'pointer',
+            fontSize: 12,
+            fontWeight: 600,
+            whiteSpace: 'nowrap',
           }}
         >
-          <div style={{ fontSize: 11, color: 'var(--rn-clr-content-tertiary, #64748b)', display: 'flex', flexWrap: 'wrap', gap: 12, minWidth: 0 }}>
-            <span>{isContextLoading ? 'Loading…' : (hasDocumentPowerup ? 'Document' : 'Extract')} • Incremental Rem</span>
-            {isMetadataLoading ? (
-              <span>Calculating statistics…</span>
-            ) : (
-              <>
-                <span>{childrenCount} direct {childrenCount === 1 ? 'child' : 'children'} ({incrementalChildrenCount} incremental)</span>
-                <span>{descendantsCount} {descendantsCount === 1 ? 'descendant' : 'descendants'} ({incrementalDescendantsCount} incremental)</span>
-                <span>{flashcardCount} {flashcardCount === 1 ? 'flashcard' : 'flashcards'}</span>
-              </>
-            )}
-          </div>
-          <button
-            onClick={openNotesSidebar}
-            title="Open this Rem in the notes sidebar (handy for editing alongside the source, or when the queue pane is cramped)"
-            style={{
-              flexShrink: 0,
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '6px 12px',
-              borderRadius: 6,
-              border: '1px solid var(--rn-clr-blue, #3b82f6)',
-              backgroundColor: 'var(--rn-clr-background-primary, #ffffff)',
-              color: 'var(--rn-clr-blue, #3b82f6)',
-              cursor: 'pointer',
-              fontSize: 12,
-              fontWeight: 600,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            ✎ Edit in sidebar →
-          </button>
-        </div>
+          ✎ Edit in sidebar →
+        </button>
       </div>
     </div>
   );
