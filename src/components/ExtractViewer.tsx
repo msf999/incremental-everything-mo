@@ -267,6 +267,40 @@ function ReadOnlyRemTree({
 export function ExtractViewer({ rem, plugin }: ExtractViewerProps) {
   if (!rem) return null;
 
+  // --- AVAILABLE HEIGHT (queue pane) ---
+  // The SDK cannot express "fill the pane": WidgetOptions.dimensions.height is
+  // `number | 'auto'` and the docs state percentages apply to width only. With
+  // 'auto' RemNote sizes the iframe to our content, so a CSS percentage is
+  // circular and 100vh is the *window*, not the pane. The sanctioned way out is
+  // plugin.widget.getDimensions(widgetInstanceId), which reports the rect the
+  // host actually gave this widget. We start at 100vh (deliberately tall) and
+  // then pin to the measured height, re-measuring so a pane drag is followed.
+  const [paneHeight, setPaneHeight] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const measure = async () => {
+      try {
+        const ctx: any = await plugin.widget.getWidgetContext();
+        const instanceId = ctx?.widgetInstanceId;
+        if (instanceId == null) return;
+        const rect = await plugin.widget.getDimensions(instanceId as any);
+        // Ignore nonsense/zero rects (widget not laid out yet) so we never pin
+        // the card to a collapsed height and get stuck there.
+        if (!cancelled && rect && rect.height > 80) {
+          setPaneHeight((prev) => (prev != null && Math.abs(prev - rect.height) < 2 ? prev : rect.height));
+        }
+      } catch {
+        // Older hosts may not expose getDimensions — the 100vh fallback stands.
+      }
+    };
+    measure();
+    const interval = setInterval(measure, 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [plugin]);
+
   // --- STATE 1: DEFERRED METADATA (Statistics) ---
   const [metadata, setMetadata] = useState<Metadata | null>(null);
 
@@ -544,14 +578,10 @@ export function ExtractViewer({ rem, plugin }: ExtractViewerProps) {
     <div
       className="extract-viewer"
       style={{
-        // Must be a viewport unit, not a percentage. The queue widget is registered
-        // with dimensions.height 'auto' (widgets.ts), so RemNote sizes the iframe to
-        // our content — which makes a percentage height circular: it collapses to
-        // content height, the content is a DocumentViewer overlay with no intrinsic
-        // height, and the card ends up a fraction of the pane. 100vh gives the chain
-        // a definite height to resolve against, and is what Reader/IsolatedCardViewer
-        // use for the same reason.
-        height: '100vh',
+        // Measured pane height when available (see paneHeight above), else 100vh.
+        // Never a percentage: with dimensions.height 'auto' the iframe is sized to
+        // our content, so a percentage resolves against nothing and collapses.
+        height: paneHeight != null ? `${paneHeight}px` : '100vh',
         width: '100%',
         boxSizing: 'border-box',
         display: 'flex',
