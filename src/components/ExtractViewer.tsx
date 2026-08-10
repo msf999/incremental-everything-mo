@@ -544,15 +544,19 @@ export function ExtractViewer({ rem, plugin }: ExtractViewerProps) {
     <div
       className="extract-viewer"
       style={{
-        height: '100vh',
+        // Fill whatever the queue gives us. NOT 100vh: the queue already wraps us
+        // in its own 100vh, p-2 box, so a viewport-height child overflows by that
+        // padding. 100% tracks the pane as the user resizes it in either axis.
+        height: '100%',
         width: '100%',
         boxSizing: 'border-box',
         display: 'flex',
         flexDirection: 'column',
-        alignItems: 'center',
-        // Top padding keeps the card below the queue's absolute "Back to isolated
-        // view" button (top:12), so it can never sit under the breadcrumb.
-        padding: '48px 16px 16px',
+        alignItems: 'stretch',
+        // Top padding keeps the card below the queue's absolute top-right buttons
+        // ("Back to isolated view" / "Read document", both at top:12), so it can
+        // never sit under the breadcrumb. The rest is just breathing room.
+        padding: '48px 12px 12px',
         overflow: 'hidden',
       }}
       onClick={(e) => {
@@ -574,8 +578,9 @@ export function ExtractViewer({ rem, plugin }: ExtractViewerProps) {
           the "Edit in sidebar" button. */}
       <div
         style={{
+          // No maxWidth: the card follows the queue pane's width so a wider pane
+          // gives the document more room (it used to cap at 1000px).
           width: '100%',
-          maxWidth: 1000,
           flex: 1,
           minHeight: 0,
           display: 'flex',
