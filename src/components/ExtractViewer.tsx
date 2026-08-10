@@ -544,10 +544,14 @@ export function ExtractViewer({ rem, plugin }: ExtractViewerProps) {
     <div
       className="extract-viewer"
       style={{
-        // Fill whatever the queue gives us. NOT 100vh: the queue already wraps us
-        // in its own 100vh, p-2 box, so a viewport-height child overflows by that
-        // padding. 100% tracks the pane as the user resizes it in either axis.
-        height: '100%',
+        // Must be a viewport unit, not a percentage. The queue widget is registered
+        // with dimensions.height 'auto' (widgets.ts), so RemNote sizes the iframe to
+        // our content — which makes a percentage height circular: it collapses to
+        // content height, the content is a DocumentViewer overlay with no intrinsic
+        // height, and the card ends up a fraction of the pane. 100vh gives the chain
+        // a definite height to resolve against, and is what Reader/IsolatedCardViewer
+        // use for the same reason.
+        height: '100vh',
         width: '100%',
         boxSizing: 'border-box',
         display: 'flex',
@@ -654,7 +658,19 @@ export function ExtractViewer({ rem, plugin }: ExtractViewerProps) {
             root with a green "🎯 Target Incremental Rem" badge. We render the
             document instead; see the container's onClick for the focus handling
             this requires inside the Flashcard pane. */}
-        <div className="document-viewer-section" style={{ flex: 1, minHeight: 0, overflow: 'hidden', backgroundColor: 'var(--rn-clr-background-primary, #ffffff)' }}>
+        <div
+          className="document-viewer-section"
+          style={{
+            // flex:1 + minHeight:0 makes this row absorb the leftover height, and
+            // height:'100%' hands the DocumentViewer a definite box to fill — the
+            // overlay has no intrinsic height, so without it the document collapses.
+            flex: 1,
+            minHeight: 0,
+            height: '100%',
+            overflow: 'hidden',
+            backgroundColor: 'var(--rn-clr-background-primary, #ffffff)',
+          }}
+        >
           <DocumentViewer width={'100%'} height={'100%'} documentId={rem._id} />
         </div>
 
