@@ -2,7 +2,7 @@
 // UPDATED: Added filtering for powerup slots (Incremental and CardPriority)
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { PluginRem, RNPlugin, RemViewer, BuiltInPowerupCodes, RemId, useTrackerPlugin } from '@remnote/plugin-sdk';
+import { PluginRem, RNPlugin, RemViewer, DocumentViewer, BuiltInPowerupCodes, RemId, useTrackerPlugin } from '@remnote/plugin-sdk';
 import { powerupCode, dismissedPowerupCode, allCardPriorityInfoKey, incremNotesSidebarWidgetId, incremNotesSidebarRemIdKey } from '../lib/consts';
 import { resolveRemTextForBreadcrumb } from '../lib/richTextRemRefs';
 import { getRemReadPoint } from '../lib/remReadPoint';
@@ -60,6 +60,10 @@ const hintButtonStyle: React.CSSProperties = {
  * ignores. Bounded by MAX_PREVIEW_CHILDREN per node and MAX_PREVIEW_DEPTH; past
  * either, a hint routes to the sidebar.
  */
+// FORK NOTE: retained from upstream but NOT rendered by this fork — the queue body
+// uses RemNote's DocumentViewer instead (see the content section below and
+// Deviation 11 in CLAUDE.md). Kept rather than deleted so upstream changes to it
+// keep merging cleanly, and so the read-only tree is one line away if ever wanted.
 function ReadOnlyRemTree({
   remId,
   depth,
@@ -272,8 +276,6 @@ export function ExtractViewer({ rem, plugin }: ExtractViewerProps) {
   // --- READ POINT (rem-type bookmark) ---
   // Reactive so setting/changing the read point while reviewing updates the
   // viewer live. Resolves the bookmarked descendant's id + display text.
-  // Bumping scrollTrigger re-centers the node (used by the banner button).
-  const [scrollTrigger, setScrollTrigger] = useState(0);
   const readPoint = useTrackerPlugin(
     async (rp) => {
       const entry = await getRemReadPoint(rp as unknown as RNPlugin, rem._id);
@@ -553,6 +555,19 @@ export function ExtractViewer({ rem, plugin }: ExtractViewerProps) {
         padding: '48px 16px 16px',
         overflow: 'hidden',
       }}
+      onClick={(e) => {
+        // FORK DEVIATION (restored from pre-merge): with an editable DocumentViewer
+        // inside the queue's Flashcard pane, clicking chrome (breadcrumb, footer,
+        // empty space) leaves focus in a no-man's-land where neither the RemNote
+        // editor nor the parent window handles keystrokes — and stray keys can
+        // reach the card. Redirect such clicks into the editable area.
+        const target = e.target as HTMLElement;
+        if (!target.closest('.document-viewer-section, a, button, [role="button"], input, select, textarea, [contenteditable]')) {
+          const editable = (e.currentTarget as HTMLElement)
+            .querySelector('.document-viewer-section [contenteditable="true"]') as HTMLElement | null;
+          editable?.focus();
+        }
+      }}
     >
       {/* Card frame (modelled on IsolatedCardViewer): header (wrapping
           breadcrumb), scrollable read-only content, and a footer with stats +
@@ -623,39 +638,19 @@ export function ExtractViewer({ rem, plugin }: ExtractViewerProps) {
             >
               🔖 Read point: <span style={{ fontWeight: 600 }}>{readPoint.text}</span>
             </div>
-            <button
-              onClick={() => setScrollTrigger((n) => n + 1)}
-              title="Scroll to the read point in the preview below"
-              style={{
-                flexShrink: 0,
-                padding: '4px 10px',
-                borderRadius: 6,
-                border: '1px solid var(--rn-clr-blue, #3b82f6)',
-                backgroundColor: 'var(--rn-clr-background-primary, #ffffff)',
-                color: 'var(--rn-clr-blue, #3b82f6)',
-                cursor: 'pointer',
-                fontSize: 12,
-                fontWeight: 600,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              🔖 Scroll to it
-            </button>
           </div>
         )}
 
-        {/* Content — read-only Rem + its descendant subtree (reactive; never
-            captures focus, so editing is routed to the auto-opened notes
-            sidebar). Uses the primary background so only the frame
-            (header/footer) is grey, like IsolatedCardViewer. */}
-        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '12px 16px', backgroundColor: 'var(--rn-clr-background-primary, #ffffff)' }}>
-          <ReadOnlyRemTree
-            remId={rem._id}
-            depth={0}
-            onEditInSidebar={openNotesSidebar}
-            readPointRemId={readPointRemId}
-            scrollTrigger={scrollTrigger}
-          />
+        {/* Content — FORK DEVIATION: RemNote's own DocumentViewer, i.e. the Rem
+            rendered exactly as it appears in the editor (real formatting, powerup
+            properties, collapsing, and inline editing). Upstream replaced this
+            with a hand-drawn read-only tree (ReadOnlyRemTree) that re-implements
+            rendering and therefore loses formatting and properties, and boxes the
+            root with a green "🎯 Target Incremental Rem" badge. We render the
+            document instead; see the container's onClick for the focus handling
+            this requires inside the Flashcard pane. */}
+        <div className="document-viewer-section" style={{ flex: 1, minHeight: 0, overflow: 'hidden', backgroundColor: 'var(--rn-clr-background-primary, #ffffff)' }}>
+          <DocumentViewer width={'100%'} height={'100%'} documentId={rem._id} />
         </div>
 
         {/* Footer — status + statistics, and the Edit-in-sidebar action. */}
@@ -686,7 +681,7 @@ export function ExtractViewer({ rem, plugin }: ExtractViewerProps) {
           </div>
           <button
             onClick={openNotesSidebar}
-            title="Open this Rem in the notes sidebar to edit (the in-queue view is read-only)"
+            title="Open this Rem in the notes sidebar (handy for editing alongside the source, or when the queue pane is cramped)"
             style={{
               flexShrink: 0,
               display: 'inline-flex',

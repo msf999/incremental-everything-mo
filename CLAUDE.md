@@ -201,13 +201,14 @@ This file has grown into the most heavily customised widget. All changes are add
 **What changed:** two related fork edits so a queue item is always shown **as the Rem, in the queue body** — never as the source document, and never pushed into the right sidebar.
 
 - `src/components/ExtractViewer.tsx` — upstream's mount effect force-opened the notes sidebar on every render (`plugin.window.openWidgetInRightSidebar(incremNotesSidebarWidgetId)`), which fired for **every** rem-type queue card. That single line is removed. The `incremNotesSidebarRemIdKey` session write around it is **kept**, so the sidebar still resolves the right Rem when opened deliberately via the `✎ Edit in sidebar` button or the Reader's 📝 button.
+- `src/components/ExtractViewer.tsx` — the queue body renders RemNote's own **`DocumentViewer`** (restored from the pre-merge fork state), i.e. the Rem exactly as it appears in the editor: real formatting, powerup properties, collapsing, and inline editing. Upstream (`033a8c8`) had replaced it with `ReadOnlyRemTree`, a hand-drawn read-only re-implementation that loses formatting/properties and boxes the root in a green `🎯 Target Incremental Rem` badge. `ReadOnlyRemTree` is **kept in the file but unrendered** (flagged with a FORK NOTE) so upstream edits to it keep merging cleanly. The container's `onClick` refocus handler is restored alongside it — required because an editable viewer inside the Flashcard pane otherwise leaves focus in a no-man's-land where stray keys can reach the card. The read-point banner's `🔖 Scroll to it` button was removed (it re-centred the tree that no longer renders).
 - `src/widgets/queue.tsx` — upstream offers its Reader↔Outline toggle only when a read point exists on a descendant, and defaults to the Reader. We offer it for **every** `pdf` / `html` card and default to the **outline** (`ExtractViewer` on the IncRem itself): `offerOutlineToggle` is now a plain type check (`'pdf' || 'html'`) and `outlineView` initialises/resets to `true`. The render branch renders `null` (not the Reader) while `incRemRem` resolves, to avoid a one-frame PDF flash. The `📄 Read document` button still switches to the Reader per card.
 
 **Deliberately excluded:** `pdf-highlight` / `html-highlight` types. They already avoid the document via `IsolatedCardViewer` (which shows the highlight text), and their `← Back to isolated view` button occupies the same top-right slot as this toggle.
 
 **Known trade-offs of the outline default** (accepted, not bugs): the queue no longer hosts the reader's **page controls / page-range popup**, so PDF reading position can't be *changed* from the queue — `capturePdfPageHistoryIfNeeded` still runs and records the persisted position each rep. `✨ Scroll to Highlight` and `🔖 Scroll to Bookmark` still render but are no-ops with no reader pane mounted. In-queue highlighting and the multi-PDF switcher are unavailable. All degrade silently — none throw. Press `📄 Read document` for any of them.
 
-**Merge rule:** If upstream restructures `QueueComponent`'s render branch or `ExtractViewer`'s mount effects, re-apply both edits. Watch specifically for upstream re-adding an `openWidgetInRightSidebar` call in `ExtractViewer` (or anywhere that runs per queue card) — that is the regression to look for. Keep the `incremNotesSidebarRemIdKey` write. If upstream ever adds a real setting for the queue body view, prefer adopting it over this hard-coded default.
+**Merge rule:** If upstream restructures `QueueComponent`'s render branch or `ExtractViewer`'s mount effects/body renderer, re-apply all three edits (DocumentViewer body + refocus handler, no sidebar auto-open, outline-first toggle). Watch specifically for upstream re-adding an `openWidgetInRightSidebar` call in `ExtractViewer` (or anywhere that runs per queue card) — that is the regression to look for. Keep the `incremNotesSidebarRemIdKey` write. If upstream ever adds a real setting for the queue body view, prefer adopting it over this hard-coded default.
 
 ---
 
@@ -791,3 +792,18 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 - `CLAUDE.md` — added Deviation 11 and this entry.
 
 **Notes:** Two complaints, one theme — queue items should be the *Rem*, in the *queue body*. (1) Upstream commit `033a8c8` added a sidebar auto-open to `ExtractViewer`, which the queue renders for every rem-type card, so the right sidebar popped open on essentially every item; there was no setting to disable it, hence the code edit. (2) An IncRem with a PDF attached rendered the PDF reader; now it renders its own outline, with the Reader one click away via `📄 Read document`. Note upstream's queue body is **read-only** (`ReadOnlyRemTree`) — before `033a8c8` it was an editable `DocumentViewer`, which upstream replaced because it loses a focus fight inside the Flashcard pane (collapsing selections and sometimes rating the card). Restoring inline editing would mean reintroducing that; the `✎ Edit in sidebar` button is the deliberate alternative. See Deviation 11 for the accepted trade-offs (no in-queue page controls; Scroll-to-Highlight/Bookmark become no-ops in outline mode).
+
+---
+
+### 2026-08-10 — Edit (Queue body renders the Rem via `DocumentViewer`, as in the editor)
+
+**Upstream commit(s):** N/A (local change; reverts upstream `033a8c8`'s body renderer)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline, none in the edited file; production build + validate + zip pass)
+**Files touched:**
+- `src/components/ExtractViewer.tsx` — content section swapped from `ReadOnlyRemTree` back to `<DocumentViewer documentId={rem._id} />`; restored the pre-merge container `onClick` refocus handler; removed the read-point banner's now-dead `🔖 Scroll to it` button and the `scrollTrigger` state behind it; `ReadOnlyRemTree` retained but unrendered with a FORK NOTE; footer tooltip no longer claims the view is read-only.
+- `public/manifest.json` — version `1.0.36` → `1.0.37`.
+- `CLAUDE.md` — extended Deviation 11 and added this entry.
+
+**Notes:** Upstream's `ReadOnlyRemTree` re-implements rem rendering with `RemViewer` overlays, so the queue lost real formatting and powerup properties and gained a boxed green `🎯 Target Incremental Rem` badge — visually unlike the editor. `DocumentViewer` is the same component RemNote uses for a document, so the item now looks (and edits) exactly as it does in the editor. The trade-off upstream was avoiding is real and now applies again: an editable viewer inside the queue's Flashcard pane can lose a focus tug-of-war, which collapses selections and can let stray keystrokes rate the card — the restored refocus handler is the mitigation the fork used pre-merge. If that misbehaves in practice, the alternative is upstream's read-only tree (one line in the content section).
