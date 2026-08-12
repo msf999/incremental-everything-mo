@@ -10,7 +10,14 @@ interface SplitButtonProps {
   children: React.ReactNode;
   variant?: ButtonVariant;
   onClick: () => Promise<void> | void;
-  menuItems: MenuItem[];
+  /** Dropdown items. Ignored when onChevronClick is provided. */
+  menuItems?: MenuItem[];
+  /** When set, the chevron becomes a plain toggle (no dropdown): it calls this
+      instead of opening the menu. Used by the answer buttons to open a shared
+      offset row below the button row instead of a per-button popover. */
+  onChevronClick?: () => void;
+  /** Marks the chevron as "its panel is open" (glyph flips to ▲). */
+  chevronActive?: boolean;
   style?: React.CSSProperties;
   title?: string;
 }
@@ -19,7 +26,9 @@ export function SplitButton({
   children,
   variant = 'secondary',
   onClick,
-  menuItems,
+  menuItems = [],
+  onChevronClick,
+  chevronActive = false,
   style,
   title,
 }: SplitButtonProps) {
@@ -95,7 +104,7 @@ export function SplitButton({
 
       {/* Chevron toggle */}
       <button
-        onClick={() => setMenuOpen((v) => !v)}
+        onClick={() => (onChevronClick ? onChevronClick() : setMenuOpen((v) => !v))}
         title="More scheduling options"
         style={{
           ...styles.base,
@@ -126,11 +135,11 @@ export function SplitButton({
           e.currentTarget.style.boxShadow = styles.defaultShadow;
         }}
       >
-        <span style={{ fontSize: '10px', lineHeight: 1 }}>▼</span>
+        <span style={{ fontSize: '10px', lineHeight: 1 }}>{chevronActive ? '▲' : '▼'}</span>
       </button>
 
       {/* Dropdown menu */}
-      {menuOpen && (
+      {menuOpen && !onChevronClick && (
         <div
           style={{
             position: 'absolute',

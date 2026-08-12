@@ -27,6 +27,7 @@ import { cleanupOrphanedReviewGraphs } from '../lib/priority_review_document/cle
 import { compactAuthoritativeAggregatesIfNeeded } from '../lib/authoritative_aggregates';
 import { registerJumpToRemHelper } from '../register/window';
 import { registerPluginHidingCSS, registerPdfHighlightCSS, registerClozeExtractCSS, registerTagBadgeCSS, registerIgnoreTagCSS, registerHighlightBandBadgeCSS, registerTableBandBadgeCSS } from '../lib/ui_helpers';
+import { installForkGates, registerForkWidgets, registerForkSettingsSignpost } from '../lib/fork_gates';
 import { getIESetting } from '../lib/settings';
 import { migrateIESettingsIfNeeded, isIESettingsSeedNeeded } from '../lib/settings_migration';
 
@@ -41,6 +42,10 @@ async function onActivate(plugin: ReactRNPlugin) {
   (window as any).__plugin = plugin;
   registerJumpToRemHelper(plugin);
 
+  // FORK (Deviation 13): install the registration gates BEFORE any register*
+  // call below, so denied commands/widgets/menus/CSS are dropped centrally.
+  installForkGates(plugin);
+
 
   await registerPluginPowerups(plugin);
   // Core queue display powerups (Remove Parent / Remove Grandparent) are
@@ -54,6 +59,8 @@ async function onActivate(plugin: ReactRNPlugin) {
   // the IE Settings popup owns them.
   const seedNeeded = await isIESettingsSeedNeeded(plugin);
   await registerPluginSettings(plugin, { includePopupTier: seedNeeded });
+  // FORK (Deviation 13): the only row the fork leaves in RemNote's panel.
+  await registerForkSettingsSignpost(plugin);
 
   // Seed the plugin-owned settings store from the registrations that were just
   // installed. Must run after registerPluginSettings and before any widget can
@@ -89,6 +96,7 @@ async function onActivate(plugin: ReactRNPlugin) {
 
   registerCallbacks(plugin);
   await registerWidgets(plugin);
+  await registerForkWidgets(plugin); // FORK (Deviation 13): combined History tab
 
   // Register CSS rules
   // PDF highlight CSS is (re)registered reactively: the "peek" toggle (command +

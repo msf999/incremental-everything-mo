@@ -1,205 +1,135 @@
-# Incremental Everything
+# Mo's Incremental Everything
 
-![Incremental Everything Logo](https://raw.githubusercontent.com/bjsi/incremental-everything/main/img/inc-logo.png)
+> **This is a personal fork of [Incremental Everything](https://github.com/bjsi/incremental-everything)** by Jamesb, Hugomarins and Jonathangimeno. All credit for the plugin itself — incremental reading, prioritization, scheduling, analytics, and everything else it does — belongs upstream; read their README and [documentation site](https://hugomarins.github.io/incremental-everything/) first. This fork is **unlisted**, tracks upstream (currently synced to upstream v1.0.35, commit `5f8ccdd`), and layers the changes described below on top.
 
-🇪🇸 [Español](https://github.com/bjsi/incremental-everything/blob/main/README_ES.md) | 🇧🇷 [Português Brasileiro](https://github.com/bjsi/incremental-everything/blob/main/README_PT-BR.md)
+This document only describes **what is different from upstream**. If a feature isn't mentioned here, it works exactly as in the original plugin.
 
+---
 
-**A Complete Learning System for RemNote.**
+## New properties on Incremental Rems
 
-Incremental Everything allows you to interleave your flashcard reviews with notes, books, websites, and videos. Heavily inspired by SuperMemo's [Incremental Reading](https://supermemo.guru/wiki/Incremental_reading), it transforms RemNote into a powerful lifelong learning tool that handles the entire lifecycle of knowledge: **Acquisition → Processing → Mastery**.
+Both appear as visible properties under every Incremental Rem.
 
-## 🚀 Features
+### Rotation
 
-### The Core Loop
-- **Incremental Reading**: Read and review 1000s of notes, books, and websites in parallel. [Learn more](https://www.youtube.com/watch?v=oNCLLNZEtz0).
-- **Incremental Writing**: Write your essays and blog posts incrementally to maximize creativity. [Learn more](https://www.youtube.com/watch?v=LLS_8Y744lk).
-- **Incremental Video**: Watch and take notes on your YouTube video backlog.
-- **Incremental Tasks**: Clear out your tasklist between flashcard reviews.
+A plain-text scheduling override. Give a Rem a `Rotation` like `2 days`, `10 days`, `3 weeks`, `6 months`, or `4.5w` (any human-readable duration), and reviewing it with **Next** always reschedules it that far out — the SRS scheduler is bypassed entirely. Set it to `Default` (or leave it empty) for normal scheduling.
 
-### 🧠 Advanced Prioritization
-Manage information overload with a robust dual-priority system:
-- **Absolute & Relative Priorities**: Prioritize items from 0-100 and see exactly where they rank.
-- **Priority Inheritance**: New extracts and flashcards automatically inherit the priority of their source material.
-- **Priority Shield & Weighted Shield**: Diagnostic tools showing your capacity to process high-priority material and the fraction of your total priority-weighted queue processed.
-- **FSRS Analytics**: Real-time Difficulty (D), Stability (S), and Retrievability (R) statistics computed for flashcards.
-- **Priority Review Documents**: Generate focused study sessions for your top items when overwhelmed.
+- **Inheritance:** when a Rem is made incremental, it inherits the Rotation of its closest incremental ancestor. Set `Rotation: 1 week` on a project note, and every extract created under it rotates weekly.
+- The **Next** and **Open Editor** buttons show the rotation-based date in their sublabel, so you can see the override is active.
+- An unparsable value (e.g. `banana`) turns those buttons amber with an `invalid rotation` warning; reviews then fall back to the normal scheduler until you fix it.
 
-### 📊 History, Dashboard & Mastery Drill *(new in v0.2.182)*
-A full suite of history and practice tools now built into the right sidebar:
-- **Visited Rem History**: jump back to any document you navigated to recently.
-- **Flashcard History**: find and open any flashcard you've reviewed, searchable by front and back text.
-- **Practiced Queues Dashboard**: real-time session metrics (speed, retention, card age) and a full history of every practice session, with Export/Import backup.
-- **Mastery Drill**: a focused re-practice queue for cards you rated *Forgot* or *Hard* — inspired by SuperMemo's Final Drill. Open with the `Mastery Drill` command or via the Left Sidebar notification.
+### First Added
 
-👉 [Full documentation](https://hugomarins.github.io/incremental-everything/History-Queue-Dashboard-and-Mastery-Drill/)
+A date property recording the day the Rem was first made incremental in this knowledge base. Purely informational — useful for sorting and auditing what entered the system when.
 
-### 📱 Performance Modes
-- **Light Mode (Default for Mobile/Web)**: Fast, stable, and essential features only. Prevents crashes on phones and tablets.
-- **Full Mode (Desktop Power User)**: Complete feature set with heavy cache load on startup (of the priority of all your flashcard rems), enabling real-time statistical calculations for detailed analytics.
+## The queue review bar
 
-### 🧰 More than Incremental Reading: a Toolset for Your KB
-Beyond the core learning loop, Incremental Everything ships **dozens of standalone utilities** that make day-to-day note-taking and knowledge-base organization faster — useful even when you're not reviewing. A few examples:
+The answer-button row is rebuilt into six buttons, identical on desktop and mobile:
 
-- **Outline & heading tools**: [Restructure Outline by Headings](https://hugomarins.github.io/incremental-everything/Utilities/#restructure-outline-by-headings) (re-nest a flat or mis-pasted document under its headings), [Apply Heading Levels by Hierarchy (Table of Contents)](https://hugomarins.github.io/incremental-everything/Utilities/#apply-heading-levels-by-hierarchy-table-of-contents), and [Set Next Heading Level](https://hugomarins.github.io/incremental-everything/Utilities/#set-next-heading-level) — all with side-by-side previews and one-click undo.
-- **Queue display control**: [Hide / Remove Parent & Grandparent and more](https://hugomarins.github.io/incremental-everything/Utilities/#queue-display-utilities) to clean up how ancestor Rems appear on your flashcards.
-- **Editing helpers**: [Text Case Converter](https://hugomarins.github.io/incremental-everything/Utilities/#text-case-converter) (Shift+F3 cycling, with English/Portuguese title-case rules) and [Bulletize Inline Selected Text](https://hugomarins.github.io/incremental-everything/Utilities/#bulletize-inline-selected-text) for restoring bullets that PDF highlights flatten.
-- **Navigation & sources**: [Find Rem](https://hugomarins.github.io/incremental-everything/Utilities/#find-rem--reference-or-open) (surfaces Rems RemNote's `[[` search can't) and [Open Source in Popup / Floating Window](https://hugomarins.github.io/incremental-everything/Utilities/#open-source-in-popup) to peek at a PDF/web source without leaving the queue.
-- **Analytics & diagnostics**: the [Study Dashboard](https://hugomarins.github.io/incremental-everything/Study-Dashboard/) for KB-wide learning stats and the [History suite & Practiced Queues Dashboard](https://hugomarins.github.io/incremental-everything/History-Queue-Dashboard-and-Mastery-Drill/) to revisit any document, flashcard, or past session.
-- **Per-item review insight**: drill into a single item's timeline with the [Flashcard Repetition History](https://hugomarins.github.io/incremental-everything/Plugin-Widgets-Reference/#211-flashcard-repetition-history) and [IncRem Repetition History](https://hugomarins.github.io/incremental-everything/Plugin-Widgets-Reference/#212-increm-repetition-history--aggregated-view) popups — the latter with an **aggregated roll-up** of reps, time, and counts across a Rem's whole descendant subtree. Backed by an embedded **FSRS v6** engine that computes per-card Difficulty / Stability / Retrievability, plus a clickable [priority-weighted Shield breakdown](https://hugomarins.github.io/incremental-everything/Prioritization-&-Sorting/#weighted-shield) of how much of your workload you've processed.
+**Previous · Next · Open Editor · Skip · Dismiss · ⚙️ Options**
 
-👉 See the **[Utilities](https://hugomarins.github.io/incremental-everything/Utilities/)** page for the full list, and the **[Plugin Commands Reference](https://hugomarins.github.io/incremental-everything/Plugin-Commands-Reference/)** for every command.
+- **Previous** steps back to the last card (and is exempt from the stale-item auto-skip below, so a just-reviewed item can be revisited).
+- **Next** (blue outline) — as upstream: record a review, advance.
+- **Open Editor** (green outline) — records the review **and opens the Rem in-app** (no browser tab), so you can process it immediately. Scheduling happens before navigation, so the review is never lost.
+- **Skip** (purple outline) — advances **without recording a review or rescheduling** (the item stays due).
+- **Dismiss** (red outline) — as upstream.
+- **⚙️ Options** toggles a second row holding the power-user tools: Reschedule, Change Priority, Review with Timer, Scroll to Highlight, Scroll to Bookmark, Review Note, Read point, the Web-Clipper URL button, and Help.
 
-## Installation
+### Custom scheduling: the chevron offset picker
 
-- Open the [RemNote plugin store](https://www.remnote.com/plugins), search for "Incremental Everything" and install the plugin.
+**Next**, **Open Editor** and **Skip** are split buttons. Pressing the **▼ chevron** opens a picker row beneath the buttons: a −/+ stepper with a typeable number, a **Days / Weeks / Months** toggle (months are calendar-aware), a live preview of the landing date, and one Apply button that reads back your choice (e.g. *"Next in 3 weeks"*). Enter applies, Escape closes.
 
-## 📚 Documentation & Support
+The chosen offset does whatever its button does: **Next** records a review at that offset, **Open Editor** does the same and opens the editor, **Skip** reschedules with **no** review recorded.
 
-This README covers the basics. For the comprehensive guides, please visit the **User's Manual**:
+### `(OpenLink)` titles
 
-👉 **[Incremental Everything — User's Manual](https://hugomarins.github.io/incremental-everything/)**
+If a Rem's visible title ends with `(OpenLink)` (case-sensitive), **Open Editor** (and `Ctrl+G`) opens the Rem's extracted external URL(s) in browser tabs **instead of** the Rem document — one tab per URL. Without the suffix, only the Rem document opens and URLs are never auto-opened. Useful for link-queue items you want to read at the source.
 
-*(The documentation moved off the GitHub Wiki in August 2026. The new site is fully searchable, works on mobile, and has light/dark themes — please update your bookmarks.)*
+## Keyboard shortcuts (rebindable in RemNote → Settings → Shortcuts)
 
-### 🎥 Videos about the basics
+| Shortcut | Action |
+|---|---|
+| `Ctrl+G` | The full Open Editor flow from the keyboard (including `(OpenLink)` handling) |
+| `Opt+T` | Next item in queue (alternate binding, same as upstream's `Cmd/Ctrl+Right`) |
+| `Opt+B` | Skip — advance without recording a review |
 
-- **Introductory Videos**: 
-  * [Incremental Reading Web Pages in RemNote](https://youtu.be/eXRlfCTOQNw)
-  * [Incremental Reading in RemNote](https://youtu.be/SL7wjgntrbg)
+Two upstream defaults collided with Chrome DevTools, which matters when RemNote runs in a browser tab, and were moved: **Review in Editor** `Ctrl+Shift+J` → `Ctrl+Shift+E`, and **Toggle Ignore Tag** `Ctrl+Shift+I` → `Ctrl+Shift+G`.
 
-- **Priorities Playlist**: [Prioritization in Incremental Everything](https://www.youtube.com/playlist?list=PLpmcfTqNVuo9DWjeIrMZZfG140kOZD8Tl) – Covers setting priorities, inheritance, the Priority Shield, creating Priority Review Documents, and how to use prioritization to manage information overload.
+## Queue behaviour
 
-- **What is Incremental Reading?**: [Incremental Journey - Incremental Reading in Simple Terms](https://youtu.be/V4xEziM8mco)
+### Items are shown as the Rem, not the source document
 
-### Useful Links
-- **[Changelog](https://hugomarins.github.io/incremental-everything/Changelog/)**: See the latest features and updates.
-- **[Discord](http://bit.ly/RemNoteDiscord)**: Join the community and chat with us (look for the plugin channels).
+- A queue item renders **the Rem itself in the queue body**, using RemNote's real document renderer — actual formatting, powerup properties, and inline editing — not a read-only approximation.
+- An IncRem with a PDF/HTML source attached shows this outline too — the source reader is disabled entirely in this fork (see below), so there is no 📄 Read document button. Highlight-type items keep upstream's isolated view.
+- The notes sidebar **never opens on its own**. The footer under the item (type + child/descendant/flashcard counts) ends with a small **✎ Open in sidebar** button: it opens the Rem in the notes sidebar for full editing (backlink search, date pickers, etc.) and pauses the in-queue copy while it's there; the button becomes a filled-blue **✎ Show in queue** to bring it back. Close the sidebar pane itself with RemNote's own control.
 
+### Stale items auto-skip
 
-## Usage
+If an item's next-rep date is already in the future when it comes up (typical after reviewing on another device mid-session), the queue skips past it automatically instead of showing it. **Previous** is exempt, so stepping back to something you just reviewed still works.
 
-### Getting Started
-1. **Make Incremental**: Make any Rem, PDF, or Website `Incremental` using the `/Make Incremental (Extract)` command (Shortcut: `Alt+X`).
-   * **Extract Selection**: If you have text selected, `Alt+X` will extract that specific piece into a new child Rem and link it back.
+### Info bar under every queue item
 
-![Make Incremental using the command](https://raw.githubusercontent.com/bjsi/incremental-everything/main/img/tag-inc-rem.gif)
+Upstream shows an info bar only under Incremental Rems. Here it appears under **every** queue item, flashcards included, and leads with the **due-IncRem priority distribution**: a stacked bar across the plugin's ten priority bands (0s, 10s, … 90s), coloured exactly as the priority badges elsewhere — red for urgent through blue for low.
 
-2. **Prioritize it**: Use `Alt+P` or `Alt+Shift+X` (Extract with Priority) to set its importance.
-3. **Copy/Paste Sources**: Efficiently link multiple chapters to one PDF using `Ctrl+Shift+F1` (Copy) and `Alt+Shift+V` (Paste).
-4. **Create Flashcards**: Use `Alt+Z` to quickly create a **Cloze Deletion** from selected text.
-5. **Review it**: The plugin interleaves these items into your regular flashcard queue.
-6. **Disable it**: Remove the `Incremental` tag or press the **Dismiss** button in the queue if you are done reviewing it.
+Band widths are proportional to their counts, so the shape of your backlog reads at a glance; every band shows its number, zeros included; and the band holding the current item's own priority is ringed, so you can see where what you're reviewing sits against the rest. Hover for the exact figure and share of each band.
 
-### ⚡ Prioritization & Sorting
-- 0 is for your most important material and 100 is for the least important.
-- **Change Priority**: Click the button in the queue or press `Alt+P` to open the full priority popup.
-- **Quick Shortcuts**: Use `Ctrl+Opt+Up` / `Ctrl+Opt+Down` to adjust priority instantly without breaking flow.
-- **Sorting Criteria**: Use the queue menu to adjust the balance between **Structure** (strict priority) and **Exploration** (randomness), and control the ratio of Flashcards to Reading material.
+After the distribution the bar shows the item's own repetitions and review time. Priority is not repeated here — it lives in the chip at the top of the queue (below).
 
-### Scheduling
+Control it under **General → Queue → Queue info bar**: all items / Incremental Rems only / all items but Incremental Rems only on mobile (the default) / off.
 
-- **Default Scheduler**: Uses an exponential formula — `interval = ⌈Multiplier ^ N⌉` days (multiplier defaults to 1.5). Simple and effective for items needing few reviews.
-- **Beta Scheduler (Saturating Curve)**: An opt-in alternative where intervals start at a configurable *First Review Interval* (default 5 days) and gradually approach a *Max Interval* (default 30 days). Ideal for items needing many reviews (books, chapters). See the [IncRem Scheduler](https://hugomarins.github.io/incremental-everything/IncRem-Scheduler/) page for details.
-- You can manually set the next repetition date using the **Reschedule** command (**Ctrl+J**), or RemNote's tables and properties features.
+### Priority chip in the queue's top bar
 
-### 📱 Mobile Support
-The plugin now features **Automatic Light Mode**.
-- When you open RemNote on iOS or Android, the plugin automatically switches to "Light Mode".
-- This disables heavy background calculations to ensure a crash-free experience on mobile devices.
-- Your desktop experience remains fully featured.
+The `P50 (92.5%)` chip at the top right is the one place priority is shown, for Incremental Rems and flashcards alike.
 
-### Incremental Reading
+The percentage is a **rank, not a share**. Since a lower priority number means more important, `92.5%` says 92.5% of your Incremental Rems are at least as important as this one — it sits in the least-important 7.5%. Hovering explains that, names where the priority came from, and adds the same rank within your current queue scope.
 
-- You can tag PDFs, websites and highlights with the `Incremental` tag to do classic SuperMemo-style incremental reading.
-- It works whether you tag the PDF/website itself, a Rem with a single source, or a Rem with **multiple PDF sources** — the plugin lets you switch between them on the fly and pin one as the *active* PDF for that Inc Rem.
-- The plugin will render the PDF or website reader view inside the queue.
-- If you want to turn a highlight into an incremental Rem, click on the highlight and click the puzzle piece icon.
-- 📄 **PDFs & Web**
-  - **Visual Status**: Highlights turn **Green** when toggled as Incremental, and **Blue** when extracted.
-  - **Tag Badges**: To keep the editor uncluttered, the `Incremental` and `pdfextract` tag labels are replaced by compact emoji badges — **🔍** for `Incremental` and **✂️** for `pdfextract` — so you can still identify item types at a glance without losing horizontal space.
-  - **PDF Control Panel**: Manage chapters, set page ranges, and view reading history for long documents.
-  - **Multi-PDF Switcher** *(new)*: When an Inc Rem has multiple PDF sources, a dropdown appears in the Reader (next to the 📝 Document Notes icon), in the Editor Review Timer, in the Execute Repetition popup, in the PDF Control Panel, and in the Editor Toolbar — letting you switch the PDF in view and pin a chosen one as active for that Inc Rem. Resolution order is **explicit pin → `#preferthispdf` → first PDF**, applied uniformly across every surface.
-  - **Position Tracking**: The plugin automatically saves your last read page when using the PDF Chapter workflow or creating extracts.
-  - **Create Incremental Rem**: Select text in a PDF -> Highlight it -> Click the Funnel Icon -> **"Create Incremental Rem"**. This extracts the text to a new Rem under a parent of your choice (using the smart parent selector).
+A flashcard has no priority of its own, so it shows **its document's** — and only that one document's: the lookup stops there and never walks further up, so an item inside a document you haven't prioritised shows no chip at all. If that source was an Incremental Rem and has since been dismissed, the chip shows the last priority its review history recorded. Clicking opens the priority editor, but only on an Incremental Rem — under a flashcard the number belongs to the document, not the card.
 
-![PDF Highlight Toolbar](https://raw.githubusercontent.com/bjsi/incremental-everything/main/img/pdfhighlight-toolbar.png)
+Set it under **General → Queue → Priority Chip in Queue Top Bar**: always show (the default) / always hide / only on web / only on mobile.
 
-![Highlight](https://raw.githubusercontent.com/bjsi/incremental-everything/main/img/highlight.gif)
+### Deterministic ordering among equal priorities
 
-### Incremental Writing
+When several due items share a priority, the **most overdue comes first** (in the live queue, the IncRem table's "Queue Order" view, and Priority Review Documents). Upstream's priority-weighted randomness lottery still applies on top (default 20%; set Sorting Criteria → randomness to 0 for strictly deterministic order).
 
-- You can tag any normal Rem with the `Incremental` tag to turn it into an incremental Rem.
-- The plugin will render it as a normal Rem in the document view in the queue.
+## Intentionally different / removed
 
-### Incremental Video
+- Upstream's green **🎯 Target Incremental Rem** boxed read-only queue view is replaced by the editable document view described above.
+- Upstream's "Open Editor in New Tab" button is replaced by the in-app Open Editor flow.
+- The Saturday/Monday quick-reschedule dropdowns became the granular offset picker.
+- The translated READMEs (ES, PT-BR) are removed in this fork; see upstream for translations.
 
-- You can tag YouTube videos with the `Incremental` tag to watch them incrementally.
-- It will work if you tag the link Rem itself, or a Rem with the YouTube link as a source.
-- **Video Extracts**: Create precise sub-clips with specific start/end timestamps, each with its own schedule and priority.
-- **Auto-Transcription**: Automatically fetch YouTube transcripts for extract ranges to make content searchable and ready for clozing. [P.S.: Currently down after YouTube recent anti-bot measures]
-- The plugin will automatically save your progress and playback rate.
-- You can open the resizable notes section on the left to take notes while you watch.
+## Slimmed down in this fork
 
-![Incremental Video](https://hugomarins.github.io/incremental-everything/assets/YT-extract-mode.png)
+This fork disables the upstream subsystems its owner doesn't use (everything remains in the code behind a single flags file, `src/lib/fork_gates.ts` — any of it can be re-enabled by flipping one boolean):
 
-### Incremental Mathematics
+- **All PDF/reader tooling** — the in-reader highlight toolbar (bookmark / extract / tag-as-incremental / peek), PDF Control Panel, source popups (Opt+O / Opt+Shift+O), reading-position memory, and the in-queue reader itself: queue items always show the rem outline (no 📄 Read document button). Read sources with RemNote's own reader.
+- **Flashcard features** — the card info bar, batch card priority, card-maintenance commands (the flashcard-prioritisation engine was already off), and cloze-creation commands. The editor's priority widget is on/off here rather than upstream's three modes, since its third mode existed only to add a card-priority editor beside rems with flashcards.
+- **Analytics** — Priority/Weighted Shields, Practiced Queues and its per-card session tracking. (The Study Dashboard is kept.)
+- **Editor utilities** — heading/outline restructuring, listify/bulletize, text-case converter, reference finder, read points.
+- **Misc** — video debug surface, all debug/repair commands, Priority Review Documents.
+- **Modes & native settings** — Full performance mode is retired (the fork always runs Light) and the startup "running in Light Mode" banner is gone. RemNote's own plugin-settings panel now holds **no settings at all**, just a signpost row: every setting lives in the plugin's settings window (see below).
+- **Migration commands** — Import-with-History, and Copy/Paste Rem Sources (upstream groups the latter with the PDF tooling).
 
-- A quick example of plugin interoperability.
-- Integrates with my [Lean theorem prover plugin](https://github.com/bjsi/remnote-lean) to schedule math proof problem sets over time.
-- The Lean plugin provides the queue widget and the Incremental Everything plugin provides the scheduling.
-- I hope other devs can build similar integrations with their plugins!
+**Changed:** the three history sidebar tabs (Incremental / Flashcard / Visited Rems) are merged into **one "History" tab** with collapsible sections. Kept: the 📚 Inc Rems counter under document titles, the No-IncRem queue timer, Sorting Criteria, all IncRem priority tools, and repetition history (Ctrl+Shift+H).
 
-![Incremental Mathematics](https://raw.githubusercontent.com/bjsi/incremental-everything/main/img/lean.png)
+Also fixed here (pre-existing upstream bug): a stuck `plugin_operation_active` flag after making a rem incremental with flashcard prioritisation off, which silently disabled manual-dismiss and manual-date-edit detection.
 
-### Subset Review
+## Settings, in one window
 
-- You can do basic subset reviews by studying a particular document. Only Rem from that document will be shown to you.
-- You can also create a table from the `Incremental` tag and filter it down to a sorted subset using the table filter and sort features.
-- You can review the rows of a table in order by sorting the table and using the "Practice in Order" practice mode.
+Every setting now lives in the plugin's own window — open it from the omnibar with **"Incremental: Settings"** (quick code `ies`). RemNote's plugin-settings panel carries only a pointer to it.
 
-There are lots of ways you can filter the table to create a subset of Rem to review. Here are some examples:
+The window is reorganised into **three sections** holding the ~16 settings that still do something here (settings belonging to disabled subsystems are hidden, not deleted — their stored values survive):
 
-- Only Web extracts
+1. **General** — split into *Queue* (queue info bar, priority chip, collapse top bar, isolated card view) and *Appearance* (priority widget in the editor, left borders, hidden tags, table badges).
+2. **Priority & Scheduling** — *Priority* (default IncRem priority, step size), then *Scheduling* (initial interval, the Beta-scheduler switch, and only the selected curve's parameters).
+3. **Advanced** — Hide-in-Queue integration, flashcard response-time limit.
 
-![Only Extracts Filter](https://raw.githubusercontent.com/bjsi/incremental-everything/main/img/only-extracts.png)
+The Hide-in-Queue warning about duplicate powerups — the one thing here that can genuinely break the plugin — renders as a red callout rather than a sentence buried in the description. Note that moving that setting out of RemNote's panel resets it to its default (off); re-enable it here if you used it.
 
-- Only YouTube videos
+## Commands in the omnibar
 
-![Only YouTube videos Filter](https://raw.githubusercontent.com/bjsi/incremental-everything/main/img/inc-vid-filter.png)
+Every command this plugin registers is prefixed **`Incremental: `** in the omnibar, so they group together and are findable — upstream's names ranged from "Open Study Dashboard" to "Preserve history & remove" with nothing marking them as belonging to this plugin. Several were also renamed for intent over implementation (e.g. *Preserve history & remove* → **Delete Rem, Keep Study History**; *Quick Increase/Decrease Priority Number* → **Make Less/More Important**). Quick codes are untouched.
 
+## Versioning & syncing
 
-## Known Issues
-
-### Incremental PDF Reading Position
-Previously, reading positions for large PDFs were easily lost. 
-
-  * **The Solution**: The plugin now supports a **Chapter-based workflow**. By splitting a PDF into multiple Incremental Rems (each with a defined page range) or using **PDF Highlights** as incremental items, the plugin **reliably saves and restores your reading position** for each specific item. 
-  * **The Remaining Challenge**: While we can now track positions per item, the RemNote Plugin SDK still lacks direct programmatic control over the native PDF viewer's internal scroll engine. This means that while we can take you to the correct page, we cannot yet control the exact vertical pixel scroll within that page.
-  * **How You Can Help**: We are still advocating for a more robust Plugin API. Please continue to upvote our request for better programmatic scroll control.
-
-➡️ **[Upvote the Feature Request on the RemNote Feedback Site](https://feedback.remnote.com/p/feature-request-programmatic-control-over-pdf-scroll-position-for-plugins?b=Plugin-Requests)**
-
-### Editing a Rem-type Incremental Rem in the Queue
-
-Earlier versions embedded an **editable** editor for regular Rem cards directly in the queue, but native queue keyboard shortcuts took precedence over typing in it — a plugin can't fully capture keyboard input inside the queue (Flashcard) pane, since the editor is a "fake embed" rendered in RemNote's main window while the plugin runs in a sandboxed frame.
-
-  * **The Solution**: The in-queue card for a Rem-type Incremental Rem is now a **read-only preview** (showing the Rem and its descendant subtree), so there is no keyboard conflict and no risk of stray keys rating/advancing the card. Editing is routed to the **Document Notes sidebar**, which opens automatically when the item loads (a separate pane that holds focus correctly) — or click the **"✎ Edit in sidebar →"** button on the card. The **"Press 'P' to Edit"** previewer and the **"Review in Editor"** button remain available as alternatives.
-
-
-## Development Details
-
-- The plugin stores repetition data as powerup properties on the Rem. These aren't "normal" RemNote flashcards. All of the scheduling is managed internally by the plugin.
-
-### How to Develop
-
-Run the following commands:
-
-```sh
-git clone https://github.com/bjsi/incremental-everything
-cd incremental-everything
-npm i
-npm run dev
-```
-
-Then follow [this part of the quick start guide](https://plugins.remnote.com/getting-started/quick_start_guide#run-the-plugin-template-inside-remnote) to get the plugin running in RemNote.
+The fork adopts upstream's version numbers and bumps the patch for fork-only releases — upstream `1.0.35` is the current base, this fork is at `1.0.43`. Upstream is merged in periodically; the full engineering log of deviations and merges lives in `CLAUDE.md`. **This README is kept in sync with the fork's actual behaviour** — whenever a fork feature is added, changed, or removed, the relevant section above is updated.

@@ -27,6 +27,7 @@ import {
 import { setCurrentIncrementalRem } from '../lib/incremental_rem';
 import { safeRemTextToString } from '../lib/pdfUtils';
 import { startIncRemEngagement, endIncRemEngagement } from '../lib/queue_session';
+import { FORK_FEATURES } from '../lib/fork_gates';
 import { isIncRemDue } from '../lib/shield_history';
 import { useIESettingOptional } from '../lib/settings';
 
@@ -92,7 +93,9 @@ export function QueueComponent() {
   // text, not the document) and their '← Back to isolated view' button occupies
   // the same top-right slot as this toggle.
   const outlineCapableType = remAndType?.type === 'pdf' || remAndType?.type === 'html';
-  const offerOutlineToggle = outlineCapableType;
+  // FORK (Deviation 13): with the PDF reader disabled there is nothing to toggle
+  // to — the outline is the only body, so the 📄 button disappears entirely.
+  const offerOutlineToggle = outlineCapableType && FORK_FEATURES.pdfReader;
   // true = Outline (ExtractViewer, our default), false = Reader. Reset on card change.
   const [outlineView, setOutlineView] = useState(true);
   useEffect(() => { setOutlineView(true); }, [ctx?.remId]);
@@ -111,6 +114,10 @@ export function QueueComponent() {
   // change = engagement ends (accumulated time is added to the session).
   useEffect(() => {
     if (!ctx?.remId) return;
+    // FORK (Deviation 13): engagement events only feed Practiced Queues /
+    // dashboards; with session analytics off nothing drains the event queue,
+    // so don't produce them.
+    if (!FORK_FEATURES.sessionAnalytics) return;
     startIncRemEngagement(plugin, ctx.remId);
     return () => {
       endIncRemEngagement(plugin);
@@ -412,7 +419,13 @@ export function QueueComponent() {
           remAndType.type === 'html-highlight' ? (
           // Hybrid toggle: flip a PDF/HTML reading card to its outline (read-only
           // ExtractViewer on the IncRem) when the user has chosen the outline view.
-          offerOutlineToggle && outlineView ? (
+          !FORK_FEATURES.pdfReader ? (
+            // FORK (Deviation 13): reader disabled — the rem outline is the
+            // terminal branch for ALL reading types, including highlight types
+            // that fell through the isolated view. Null until the IncRem
+            // resolves (avoids a one-frame flash).
+            incRemRem ? <ExtractViewer rem={incRemRem} plugin={plugin} /> : null
+          ) : offerOutlineToggle && outlineView ? (
             // Render nothing until the IncRem resolves rather than falling through
             // to the Reader — otherwise the PDF flashes for a frame on every card.
             incRemRem ? <ExtractViewer rem={incRemRem} plugin={plugin} /> : null

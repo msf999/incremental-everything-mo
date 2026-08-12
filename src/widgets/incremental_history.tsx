@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { FORK_FEATURES } from '../lib/fork_gates';
 import {
     RemHierarchyEditorTree,
     RemId,
@@ -17,7 +18,7 @@ import { allIncrementalRemKey, pendingPrioritySaveKey } from "../lib/consts";
 
 const NUM_TO_LOAD_IN_BATCH = 30;
 
-function IncrementalHistory() {
+export function IncrementalHistory() { // FORK (Deviation 13): exported for the combined History sidebar
     const plugin = usePlugin();
     const [historyDataRaw, setHistoryData] = useSyncedStorageState<IncrementalHistoryData[]>(
         "incrementalHistoryData",
@@ -439,5 +440,11 @@ function HistoryItem({
     );
 }
 
-renderWidget(IncrementalHistory);
+// FORK (Deviation 13): this module is ALSO imported as a component by
+// history_sidebar.tsx (the combined History tab). A module-scope
+// renderWidget() runs on import too, and the SDK's HMR path then calls
+// unmountComponentAtNode on a container that doesn't exist in a
+// non-entry bundle — which throws and blocks the combined tree. Only
+// self-render when this widget is registered standalone.
+if (!FORK_FEATURES.combinedHistoryTab) renderWidget(IncrementalHistory);
 

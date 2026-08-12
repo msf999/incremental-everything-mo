@@ -1,3 +1,4 @@
+import { FORK_FEATURES } from './fork_gates';
 import { RNPlugin, PluginRem } from '@remnote/plugin-sdk';
 import { getActivePdfForIncRem, getIncrementalReadingPosition, addPageToHistory, safeRemTextToString } from './pdfUtils';
 import { getIncrementalRemFromRem, updateReviewRemData } from './incremental_rem';
@@ -16,7 +17,8 @@ export const handleReviewInEditorRem = async (
 ) => {
     if (!rem) return;
 
-    if (remType === 'pdf') {
+    // FORK (Deviation 13): PDF reader disabled — no reading-position writes.
+    if (FORK_FEATURES.pdfReader && remType === 'pdf') {
         const pdfRem = await getActivePdfForIncRem(plugin, rem);
         if (pdfRem) {
             const currentPage = await getIncrementalReadingPosition(plugin, rem._id, pdfRem._id);

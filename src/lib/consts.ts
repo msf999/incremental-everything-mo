@@ -34,6 +34,16 @@ export const betaMaxIntervalId = 'beta-max-interval';
 export const collapseQueueTopBar = 'collapse-queue-top-bar';
 export const defaultPriorityId = 'default-priority';
 export const defaultCardPriorityId = 'defaultCardPriority';
+// FORK (Deviation 14): where the queue info bar (priority / stats / due-IncRem
+// priority distribution) is shown.
+export const queueInfoBarModeId = 'queue-info-bar-mode';
+export type QueueInfoBarMode = 'all' | 'incRemOnly' | 'allExceptMobile' | 'off';
+// FORK (Deviation 14): where the queue toolbar's P-chip is shown. Replaces
+// upstream's boolean `display-queue-toolbar-priority`, whose widget the fork
+// denies in favour of its own (widgets/queue_priority_chip.tsx).
+export const queueToolbarPriorityModeId = 'queue-toolbar-priority-mode';
+export type QueueToolbarPriorityMode = 'always' | 'off' | 'webOnly' | 'mobileOnly';
+
 export const isolatedQueueModeId = 'isolated-queue-view-mode';
 export type IsolatedQueueMode = 'highlights' | 'rems' | 'both' | 'none';
 export const priorityStepSizeId = 'priority-step-size';

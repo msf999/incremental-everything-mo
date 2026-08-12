@@ -1,5 +1,6 @@
 import { AppEvents, ReactRNPlugin, RemId, BuiltInPowerupCodes, RichTextElementRemInterface, QueueInteractionScore } from '@remnote/plugin-sdk';
 import * as _ from 'remeda';
+import { FORK_FEATURES } from '../lib/fork_gates';
 import {
   allIncrementalRemKey,
   priorityCalcScopeRemIdsKey,
@@ -1225,10 +1226,10 @@ export function registerEventListeners(
   registerQueueCompleteCardListener(plugin);
   registerGlobalRemChangedListener(plugin);
   registerGlobalOpenRemListener(plugin);
-  registerQueueSessionTracking(plugin);
+  if (FORK_FEATURES.sessionAnalytics) registerQueueSessionTracking(plugin); // FORK (Deviation 13)
   registerDrillCardRatingListener(plugin);
 
-  registerHoveredReferenceTracking(plugin);
+  if (FORK_FEATURES.pdfReader) registerHoveredReferenceTracking(plugin); // FORK (Deviation 13): feeds only the source popups
   registerQueueDashboardRefocusListener(plugin);
 }
 

@@ -207,7 +207,11 @@ export function PriorityEditor() {
         incRemRelativePriority,
         cardRelativePriority,
         allPrioritizedCardInfo: allPrioritizedCardInfo || [],
-        displayMode: displayMode || 'all',
+        // FORK (Deviation 13): this fork offers on/off only — 'all' is upstream's
+        // "also show a card-priority editor on rems with flashcards", and the
+        // card-priority engine is disabled here. A value stored before the
+        // setting was reduced (or by upstream's own default) reads as On.
+        displayMode: (!displayMode || displayMode === 'all' ? 'incRemOnly' : displayMode) as typeof displayMode,
       };
     },
     [remId]
@@ -248,7 +252,8 @@ export function PriorityEditor() {
   const incRemRelativePriority = remData?.incRemRelativePriority ?? null;
   const cardRelativePriority = remData?.cardRelativePriority ?? null;
   const allPrioritizedCardInfo = remData?.allPrioritizedCardInfo ?? [];
-  const displayMode = remData?.displayMode ?? 'all';
+  // FORK (Deviation 13): 'incRemOnly' is this fork's "on" — see the coercion above.
+  const displayMode = remData?.displayMode ?? 'incRemOnly';
 
   // IMPORTANT: All hooks must be called unconditionally BEFORE any early returns
   // Optimized: Use useMemo to avoid recalculating these conditions on every render

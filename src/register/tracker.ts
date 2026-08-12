@@ -215,6 +215,12 @@ export function registerIncrementalRemTracker(plugin: ReactRNPlugin) {
     // leaked full cascades into Light Mode.
     if (!(await getIESetting(plugin, enableFlashcardPrioritisationId))) {
       console.log('[Tracker] Cascade skipped — flashcard prioritisation is off');
+      // FORK bugfix (pre-existing upstream bug): initIncrementalRem/extract.ts
+      // set plugin_operation_active=true and rely on runCascade's finally to
+      // clear it. Returning early here left the flag stuck, permanently
+      // suppressing the GlobalRemChanged handler (manual powerup-removal and
+      // manual date-edit detection). Mirror the finally before bailing.
+      await plugin.storage.setSession('plugin_operation_active', false);
       return;
     }
 

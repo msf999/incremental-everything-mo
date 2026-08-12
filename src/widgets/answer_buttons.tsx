@@ -12,6 +12,26 @@ import dayjs from 'dayjs';
 import { IncrementalRep, repCountsForScheduling } from '../lib/incremental_rem/types';
 import { NextRepTime } from '../components/NextRepTime';
 import { SplitButton } from '../components/buttons/SplitButton';
+
+// Granular offset picker opened by the chevrons on Next / Open Editor / Skip:
+// a number stepper + a Days/Weeks/Months unit toggle in one shared row below
+// the button row (same visual convention as the ⚙️ Options row). The chevron
+// picks WHICH action the chosen offset applies to.
+type OffsetUnit = 'days' | 'weeks' | 'months';
+const OFFSET_UNITS: { unit: OffsetUnit; label: string }[] = [
+  { unit: 'days', label: 'Days' },
+  { unit: 'weeks', label: 'Weeks' },
+  { unit: 'months', label: 'Months' },
+];
+// Calendar-aware conversion: months use real month lengths, not 30-day blocks.
+const offsetToDays = (value: number, unit: OffsetUnit): number => {
+  const today = dayjs().startOf('day');
+  const target =
+    unit === 'days' ? today.add(value, 'day')
+    : unit === 'weeks' ? today.add(value * 7, 'day')
+    : today.add(value, 'month');
+  return Math.max(1, target.diff(today, 'day'));
+};
 import { Button } from '../components/buttons/Button';
 import { getButtonStyles } from '../components/buttons/styles';
 import {
@@ -26,12 +46,22 @@ import {
   priorityCalcScopeRemIdsKey,
   incremReviewStartTimeKey,
   queueBackNavKey,
+  queueInfoBarModeId,
+  isMobileDeviceKey,
 } from '../lib/consts';
 import { getIncrementalRemFromRem, handleNextRepetitionClick, handleNextRepetitionManualOffset, rescheduleWithoutReview, updateReviewRemData, getRotationIntervalMs, requestQueueDashboardRefocus } from '../lib/incremental_rem';
 import { removeIncrementalRemCache, updateIncrementalRemCache } from '../lib/incremental_rem/cache';
 import { IncrementalRem } from '../lib/incremental_rem';
 import { percentileToHslColor, calculateRelativePercentile, calculateVolumeBasedPercentile, calculateWeightedShield, PERFORMANCE_MODE_LIGHT } from '../lib/utils';
 import { safeRemTextToString, getActivePdfForIncRem, findHTMLinRem, addPageToHistory, getPageHistory, getIncrementalReadingPosition, getDescendantsToDepth, resolveSessionBookmarkCarry } from '../lib/pdfUtils';
+import { FORK_FEATURES } from '../lib/fork_gates';
+import {
+  QueueDistribution,
+  shouldShowQueueInfoBar,
+  getQueueInfoBarStyle,
+  QUEUE_INFO_BAR_OUTER_PADDING,
+  QUEUE_PRIORITY_NEUTRAL_COLOR,
+} from '../components/QueueDistribution';
 import { remTitleEndsWithOpenLinkTag, extractExternalHttpUrlsFromRem } from '../lib/open_editor_link_tag';
 import { getRemReadPoint } from '../lib/remReadPoint';
 import { resolveRemTextForBreadcrumb } from '../lib/richTextRemRefs';
@@ -50,6 +80,11 @@ import { getIESetting, useIESetting } from '../lib/settings';
 export function AnswerButtons() {
   const plugin = usePlugin();
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
+  // Which button's chevron opened the offset row (null = closed).
+  const [offsetRowFor, setOffsetRowFor] = useState<null | 'next' | 'editor' | 'skip'>(null);
+  // Granular picker value — remembered across opens within this card.
+  const [offsetValue, setOffsetValue] = useState(1);
+  const [offsetUnit, setOffsetUnit] = useState<OffsetUnit>('days');
 
   // Separate lightweight trackers for UI state
   const useLightMode = useTrackerPlugin(
@@ -64,6 +99,16 @@ export function AnswerButtons() {
 
   const shouldDisplayShield = useIESetting(displayPriorityShieldId);
   const shouldDisplayWeightedShield = useIESetting(displayWeightedShieldId);
+
+  // FORK (Deviation 14): the info bar's visibility setting. isMobile drives the
+  // 'allExceptMobile' option; this is an IncRem bar, so isIncRem is true.
+  // MUST stay in the hooks section ABOVE the early returns below (Rules of
+  // Hooks) — placing these beside the render code silently kills the widget.
+  const infoBarMode = useIESetting(queueInfoBarModeId);
+  const isMobileDevice =
+    useTrackerPlugin(async (rp) => !!(await rp.storage.getSession<boolean>(isMobileDeviceKey)), []) ??
+    false;
+  const showInfoBar = shouldShowQueueInfoBar(infoBarMode, true, isMobileDevice);
 
   const activeHighlightId = useTrackerPlugin(
     (rp) => rp.storage.getSession<string | null>(activeHighlightIdKey),
@@ -107,6 +152,8 @@ export function AnswerButtons() {
   const coreData = baseData ? { ...baseData, sessionCache: sessionCacheData } : null;
 
   const shieldStatusAsync = useTrackerPlugin(async (rp) => {
+    // FORK (Deviation 13): shields disabled — skip the whole computation.
+    if (!FORK_FEATURES.shields) return null;
     if (useLightMode || !shouldDisplayShield || !coreData?.sessionCache) return null;
 
     const seenRemIds = (await rp.storage.getSession<string[]>(seenRemInSessionKey)) || [];
@@ -372,6 +419,8 @@ export function AnswerButtons() {
     : {};
 
   const capturePdfPageHistoryIfNeeded = async () => {
+    // FORK (Deviation 13): PDF reader disabled — stop writing reading positions.
+    if (!FORK_FEATURES.pdfReader) return;
     if (remType === 'pdf') {
       const pdfRem = await getActivePdfForIncRem(plugin, rem);
       if (pdfRem) {
@@ -457,11 +506,22 @@ export function AnswerButtons() {
     }
   };
 
-  const today = dayjs().startOf('day');
-  const daysUntilSaturday = ((13 - today.day()) % 7) || 7;
-  const daysUntilMonday = ((8 - today.day()) % 7) || 7;
+  // Open Editor with a manual offset: same flow as the main click, but the
+  // review is recorded with the chosen offset instead of the scheduler's date.
+  const runOpenEditorWithOffset = async (offsetDays: number) => {
+    openExternalLinkTabsWhenOpenLinkTagged();
+    if (shouldSkipRemDocumentForOpenEditor) {
+      await runManualNext(offsetDays);
+      return;
+    }
+    const incRemType = await determineIncRemType(plugin, rem);
+    // Fire both operations together so queue teardown does not prevent editor open.
+    await Promise.allSettled([runManualNext(offsetDays), openEditorAction(incRemType)]);
+  };
 
-  const priorityColor = percentiles.kb ? percentileToHslColor(percentiles.kb) : '#6b7280';
+  const priorityColor = percentiles.kb
+    ? percentileToHslColor(percentiles.kb)
+    : QUEUE_PRIORITY_NEUTRAL_COLOR;
   const buttonStyles = getButtonStyles();
 
   // When both a reader bookmark and an outline read point exist, the reader
@@ -479,7 +539,7 @@ export function AnswerButtons() {
     display: 'flex',
     flexDirection: 'column',
     gap: '8px',
-    padding: '8px 12px 12px 12px',
+    padding: QUEUE_INFO_BAR_OUTER_PADDING,
     backgroundColor: 'var(--rn-clr-background-primary)',
     borderRadius: '12px',
   };
@@ -499,32 +559,7 @@ export function AnswerButtons() {
     margin: '0 6px',
   };
 
-  const priorityBadgeStyle: React.CSSProperties = {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '5px 12px',
-    borderRadius: '14px',
-    fontSize: '12px',
-    fontWeight: 600,
-    color: 'white',
-    backgroundColor: priorityColor,
-    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-  };
-
-  const infoBarStyle: React.CSSProperties = {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexWrap: 'wrap',
-    gap: '16px',
-    padding: '8px 16px',
-    backgroundColor: 'var(--rn-clr-background-secondary)',
-    borderRadius: '10px',
-    fontSize: '12px',
-    color: 'var(--rn-clr-content-secondary)',
-    borderLeft: `4px solid ${priorityColor}`,
-  };
+  const infoBarStyle = getQueueInfoBarStyle(priorityColor);
 
   return (
     <div
@@ -567,14 +602,18 @@ export function AnswerButtons() {
         </Button>
 
         <SplitButton
-          variant="primary"
+          variant="secondary"
           onClick={handleNextClick}
           title="Next (Cmd+Right / Ctrl+Right, or Opt+T): Mark as reviewed, calculate next interval, and advance to next item"
-          menuItems={[
-            { label: `Saturday (${daysUntilSaturday}d)`, onClick: () => runManualNext(daysUntilSaturday) },
-            { label: `Monday (${daysUntilMonday}d)`, onClick: () => runManualNext(daysUntilMonday) },
-          ]}
-          style={warningStyle}
+          onChevronClick={() => setOffsetRowFor((v) => (v === 'next' ? null : 'next'))}
+          chevronActive={offsetRowFor === 'next'}
+          style={{
+            // Outline colouring (Dismiss-style): border + font only, neutral background.
+            minWidth: '115px',
+            color: 'var(--rn-clr-blue, #3b82f6)',
+            border: '1px solid var(--rn-clr-blue, #3b82f6)',
+            ...warningStyle,
+          }}
         >
           <div style={buttonStyles.label}>Next</div>
           {hasInvalidRotation ? (
@@ -590,10 +629,10 @@ export function AnswerButtons() {
           variant="secondary"
           onClick={performOpenEditorFlow}
           style={{
+            // Outline colouring (Dismiss-style): border + font only, neutral background.
             minWidth: '100px',
-            backgroundColor: '#16a34a',
-            color: '#ffffff',
-            border: '1px solid #16a34a',
+            color: 'var(--rn-clr-green, #16a34a)',
+            border: '1px solid var(--rn-clr-green, #16a34a)',
             ...warningStyle,
           }}
           title={
@@ -601,36 +640,8 @@ export function AnswerButtons() {
               ? 'Open external link(s) in new tab(s), then advance the queue (title ends with "(OpenLink)" — no Rem document tab)'
               : 'Open Editor: Open this Rem in the editor, then advance (external URLs open in tabs only when the title ends with "(OpenLink)")'
           }
-          menuItems={[
-            { label: `Saturday (${daysUntilSaturday}d)`, onClick: async () => {
-                openExternalLinkTabsWhenOpenLinkTagged();
-                const skipRem = shouldSkipRemDocumentForOpenEditor;
-                if (skipRem) {
-                  await runManualNext(daysUntilSaturday);
-                  return;
-                }
-                const incRemType = await determineIncRemType(plugin, rem);
-                // Fire both operations together so queue teardown does not prevent editor open.
-                await Promise.allSettled([
-                  runManualNext(daysUntilSaturday),
-                  openEditorAction(incRemType),
-                ]);
-              } },
-            { label: `Monday (${daysUntilMonday}d)`, onClick: async () => {
-                openExternalLinkTabsWhenOpenLinkTagged();
-                const skipRem = shouldSkipRemDocumentForOpenEditor;
-                if (skipRem) {
-                  await runManualNext(daysUntilMonday);
-                  return;
-                }
-                const incRemType = await determineIncRemType(plugin, rem);
-                // Fire both operations together so queue teardown does not prevent editor open.
-                await Promise.allSettled([
-                  runManualNext(daysUntilMonday),
-                  openEditorAction(incRemType),
-                ]);
-              } },
-          ]}
+          onChevronClick={() => setOffsetRowFor((v) => (v === 'editor' ? null : 'editor'))}
+          chevronActive={offsetRowFor === 'editor'}
         >
           <div style={buttonStyles.label}>Open Editor</div>
           {hasInvalidRotation ? (
@@ -648,10 +659,13 @@ export function AnswerButtons() {
             await plugin.queue.removeCurrentCardFromQueue();
           }}
           title="Skip (Opt+B): Move to the next item without recording a review or rescheduling"
-          menuItems={[
-            { label: `Saturday (${daysUntilSaturday}d)`, onClick: () => rescheduleWithoutReview(plugin, incRemInfo, daysUntilSaturday) },
-            { label: `Monday (${daysUntilMonday}d)`, onClick: () => rescheduleWithoutReview(plugin, incRemInfo, daysUntilMonday) },
-          ]}
+          onChevronClick={() => setOffsetRowFor((v) => (v === 'skip' ? null : 'skip'))}
+          chevronActive={offsetRowFor === 'skip'}
+          style={{
+            // Outline colouring (Dismiss-style): border + font only, neutral background.
+            color: 'var(--rn-clr-purple, #8b5cf6)',
+            border: '1px solid var(--rn-clr-purple, #8b5cf6)',
+          }}
         >
           <div style={buttonStyles.label}>Skip</div>
         </SplitButton>
@@ -659,7 +673,9 @@ export function AnswerButtons() {
         <Button
           variant="danger"
           onClick={async () => {
-            await handleCardPriorityInheritance(plugin, rem, incRemInfo);
+            // FORK (Deviation 13): card surface disabled — don't stamp CardPriority
+            // tags onto dismissed rems (T4).
+            if (FORK_FEATURES.cardSurface) await handleCardPriorityInheritance(plugin, rem, incRemInfo);
 
             //Calculate review time and add current history entry
             const startTime = await plugin.storage.getSession<number>(incremReviewStartTimeKey);
@@ -715,6 +731,169 @@ export function AnswerButtons() {
         </Button>
       </div>
 
+      {/* Offset picker — opened by the chevrons on Next / Open Editor / Skip.
+          Number stepper + unit toggle + live landing date + one Apply button.
+          Same visual convention as the ⚙️ Options row below. */}
+      {offsetRowFor && (() => {
+        const offsetDays = offsetToDays(offsetValue, offsetUnit);
+        const landing = dayjs().startOf('day').add(offsetDays, 'day');
+        const unitWord = offsetValue === 1 ? offsetUnit.slice(0, -1) : offsetUnit;
+        const applyLabel =
+          offsetRowFor === 'next'
+            ? `Next in ${offsetValue} ${unitWord}`
+            : offsetRowFor === 'editor'
+              ? `Open Editor in ${offsetValue} ${unitWord}`
+              : `Skip to ${offsetValue} ${unitWord}`;
+        // Outline colouring per mode, matching the main buttons (border + font only).
+        const applyStyle =
+          offsetRowFor === 'next'
+            ? { color: 'var(--rn-clr-blue, #3b82f6)', border: '1px solid var(--rn-clr-blue, #3b82f6)' }
+            : offsetRowFor === 'editor'
+              ? { color: 'var(--rn-clr-green, #16a34a)', border: '1px solid var(--rn-clr-green, #16a34a)' }
+              : { color: 'var(--rn-clr-purple, #8b5cf6)', border: '1px solid var(--rn-clr-purple, #8b5cf6)' };
+        const runApply = async () => {
+          setOffsetRowFor(null);
+          if (offsetRowFor === 'next') {
+            await runManualNext(offsetDays);
+          } else if (offsetRowFor === 'editor') {
+            await runOpenEditorWithOffset(offsetDays);
+          } else {
+            await rescheduleWithoutReview(plugin, incRemInfo, offsetDays);
+          }
+        };
+        const stepBtnStyle: React.CSSProperties = {
+          width: 28,
+          height: 28,
+          borderRadius: 8,
+          border: '1px solid var(--rn-clr-border-primary)',
+          backgroundColor: 'var(--rn-clr-background-primary)',
+          color: 'var(--rn-clr-content-primary)',
+          fontSize: 15,
+          fontWeight: 600,
+          lineHeight: 1,
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        };
+        return (
+          <div
+            style={{
+              display: 'flex',
+              gap: '10px',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: 'var(--rn-clr-background-secondary)',
+              padding: '8px 12px',
+              borderRadius: '8px',
+              border: '1px solid var(--rn-clr-border-primary)',
+            }}
+          >
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--rn-clr-content-tertiary)' }}>
+              {offsetRowFor === 'next' ? 'Next in:' : offsetRowFor === 'editor' ? 'Open Editor in:' : 'Skip to (no review):'}
+            </span>
+
+            {/* Stepper: − [n] + */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <button
+                style={stepBtnStyle}
+                title="Decrease"
+                onClick={() => setOffsetValue((v) => Math.max(1, v - 1))}
+              >
+                −
+              </button>
+              <input
+                type="number"
+                min={1}
+                max={999}
+                value={offsetValue}
+                onChange={(e) => {
+                  const n = parseInt(e.target.value, 10);
+                  if (!isNaN(n)) setOffsetValue(Math.min(999, Math.max(1, n)));
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') runApply();
+                  if (e.key === 'Escape') setOffsetRowFor(null);
+                  e.stopPropagation();
+                }}
+                style={{
+                  width: 52,
+                  height: 28,
+                  textAlign: 'center',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  borderRadius: 8,
+                  border: '1px solid var(--rn-clr-border-primary)',
+                  backgroundColor: 'var(--rn-clr-background-primary)',
+                  color: 'var(--rn-clr-content-primary)',
+                  outline: 'none',
+                }}
+              />
+              <button
+                style={stepBtnStyle}
+                title="Increase"
+                onClick={() => setOffsetValue((v) => Math.min(999, v + 1))}
+              >
+                +
+              </button>
+            </div>
+
+            {/* Unit segmented toggle */}
+            <div
+              style={{
+                display: 'inline-flex',
+                borderRadius: 8,
+                border: '1px solid var(--rn-clr-border-primary)',
+                overflow: 'hidden',
+              }}
+            >
+              {OFFSET_UNITS.map(({ unit, label }) => (
+                <button
+                  key={unit}
+                  onClick={() => setOffsetUnit(unit)}
+                  style={{
+                    padding: '5px 12px',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    border: 'none',
+                    cursor: 'pointer',
+                    backgroundColor:
+                      offsetUnit === unit
+                        ? 'var(--rn-clr-button-primary-bg, #3b82f6)'
+                        : 'var(--rn-clr-background-primary)',
+                    color: offsetUnit === unit ? '#ffffff' : 'var(--rn-clr-content-primary)',
+                    transition: 'background-color 0.15s',
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {/* Landing date preview */}
+            <span style={{ fontSize: '12px', color: 'var(--rn-clr-content-tertiary)', whiteSpace: 'nowrap' }}>
+              → {landing.format('ddd, MMM D')}{offsetDays !== offsetValue || offsetUnit !== 'days' ? ` (${offsetDays}d)` : ''}
+            </span>
+
+            <Button
+              variant="secondary"
+              style={applyStyle}
+              onClick={runApply}
+              title={
+                offsetRowFor === 'next'
+                  ? `Record a review and schedule the next repetition in ${offsetDays} day(s)`
+                  : offsetRowFor === 'editor'
+                    ? `Record a review scheduled in ${offsetDays} day(s), then open the editor`
+                    : `Reschedule ${offsetDays} day(s) from now without recording a review`
+              }
+            >
+              <div style={buttonStyles.label}>{applyLabel}</div>
+            </Button>
+          </div>
+        );
+      })()}
+
       {/* Advanced Options Toolbar */}
       {showAdvancedOptions && (
         <div style={{ 
@@ -748,7 +927,7 @@ export function AnswerButtons() {
             <div style={buttonStyles.label}>📝 Review Note</div>
           </Button>
 
-          {activeHighlightId && (
+          {FORK_FEATURES.pdfReader && activeHighlightId && (
             <Button onClick={async () => {
               const highlightRem = await plugin.rem.findOne(activeHighlightId);
               await highlightRem?.scrollToReaderHighlight();
@@ -757,7 +936,7 @@ export function AnswerButtons() {
             </Button>
           )}
 
-          {bookmarkHighlightId && (
+          {FORK_FEATURES.pdfReader && bookmarkHighlightId && (
             <Button
               onClick={async () => {
                 const bookmarkRem = await plugin.rem.findOne(bookmarkHighlightId);
@@ -775,7 +954,7 @@ export function AnswerButtons() {
             </Button>
           )}
 
-          {remReadPointInfo && (
+          {FORK_FEATURES.readPoints && remReadPointInfo && (
             <Button
               onClick={async () => {
                 const ok = window.confirm(
@@ -861,39 +1040,18 @@ export function AnswerButtons() {
       )}
 
       {/* Priority and Shield Info Bar */}
-      {(incRemInfo || (shouldDisplayShield && shieldStatusAsync)) && (
+      {showInfoBar && (incRemInfo || (shouldDisplayShield && shieldStatusAsync)) && (
         <div style={infoBarStyle}>
-          {/* Left side: Priority and Shield */}
+          {/* FORK (Deviation 14): due-IncRem priority distribution, moved here
+              from the queue's top counter. */}
+          <QueueDistribution highlightPriority={incRemInfo.priority} />
+          {/* FORK (Deviation 14): the priority pill, its KB/Doc percentiles and
+              the ⟳ stale-doc-percentile hint used to sit here. They moved to the
+              queue toolbar's P-chip (widgets/queue_priority_chip.tsx), which
+              shows "P50 (92.5%)" and explains the source and the percentile on
+              hover — one place for priority instead of two. The bar keeps its
+              priority-coloured left border. */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            {/* Priority Display */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontWeight: 600 }}>Priority:</span>
-              <div style={priorityBadgeStyle}>
-                <span>{incRemInfo.priority}</span>
-                {/* Show KB percentile (always current). Doc percentile removed from cache after priority change. */}
-                {percentiles.kb !== null && (
-                  <span style={{ opacity: 0.9, fontSize: '11px' }}>
-                    ({percentiles.kb}% KB
-                    {/* 🔌 Conditionally show Doc percentile */}
-                    {!useLightMode && percentiles.doc !== null && `, ${percentiles.doc}% Doc`})
-                  </span>
-                )}
-              </div>
-              {/* Show refresh icon only when Doc percentile is missing (will be recalculated on next queue) */}
-              {percentiles.kb !== null && percentiles.doc === null && (
-                <span
-                  style={{
-                    fontSize: '16px',
-                    opacity: 0.6,
-                    cursor: 'help'
-                  }}
-                  title="Doc percentile will be recalculated when you start a new queue session"
-                >
-                  ⟳
-                </span>
-              )}
-            </div>
-
             {/* Shield Display */}
             {/* 🔌 Conditionally show Shield */}
             {!useLightMode && shouldDisplayShield && shieldStatusAsync && (

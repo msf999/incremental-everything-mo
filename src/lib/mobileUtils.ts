@@ -2,6 +2,7 @@ import { RNPlugin, Platform } from '@remnote/plugin-sdk';
 import { alwaysUseLightModeOnMobileId, lastDetectedOSKey, isMobileDeviceKey, alwaysUseLightModeOnWebId, isWebPlatformKey, lastDetectedPlatformKey } from './consts';
 import { getPerformanceMode, isLightPerformanceMode } from './utils';
 import { getIESetting } from './settings';
+import { FORK_FEATURES } from './fork_gates';
 
 /**
  * Get the operating system name
@@ -120,6 +121,11 @@ export async function getEffectivePerformanceMode(plugin: RNPlugin): Promise<'li
  * This is the main function to call when the plugin initializes
  */
 export async function handleMobileDetectionOnStartup(plugin: RNPlugin): Promise<void> {
+  // FORK (Deviation 13): the mode banners are pointless with a single mode —
+  // Full Mode is retired in this fork (performanceMode is pinned to 'light').
+  const notify = async (msg: string) => {
+    if (FORK_FEATURES.startupModeBanner) await plugin.app.toast(msg);
+  };
   const os = await getOperatingSystem(plugin);
   const platform = await getPlatform(plugin);
   const isMobile = os === 'ios' || os === 'android';
@@ -155,16 +161,16 @@ export async function handleMobileDetectionOnStartup(plugin: RNPlugin): Promise<
     if (alwaysUseLightOnMobile !== false) { // true or undefined (default true)
       // Will use light mode regardless of setting
       if (performanceModeSetting === 'full') {
-        await plugin.app.toast(`📱 ${friendlyOSName} detected: using Light Mode (Full Mode disabled on mobile for stability)`);
+        await notify(`📱 ${friendlyOSName} detected: using Light Mode (Full Mode disabled on mobile for stability)`);
       } else {
-        await plugin.app.toast(`📱 ${friendlyOSName} detected: running in Light Mode`);
+        await notify(`📱 ${friendlyOSName} detected: running in Light Mode`);
       }
     } else {
       // User disabled auto-switch - warn them if in full mode
       if (performanceModeSetting === 'full') {
-        await plugin.app.toast(`⚠️ ${friendlyOSName} detected: Full Mode can crash mobile. Consider enabling 'Always use Light Mode on mobile' in settings.`);
+        await notify(`⚠️ ${friendlyOSName} detected: Full Mode can crash mobile. Consider enabling 'Always use Light Mode on mobile' in settings.`);
       } else {
-        await plugin.app.toast(`📱 ${friendlyOSName} detected: running in Light Mode`);
+        await notify(`📱 ${friendlyOSName} detected: running in Light Mode`);
       }
     }
     
@@ -174,16 +180,16 @@ export async function handleMobileDetectionOnStartup(plugin: RNPlugin): Promise<
     if (alwaysUseLightOnWeb !== false) { // true or undefined (default true)
       // Will use light mode regardless of setting
       if (performanceModeSetting === 'full') {
-        await plugin.app.toast(`🌐 ${friendlyPlatformName} on ${friendlyOSName}: using Light Mode (Full Mode disabled on web for performance)`);
+        await notify(`🌐 ${friendlyPlatformName} on ${friendlyOSName}: using Light Mode (Full Mode disabled on web for performance)`);
       } else {
-        await plugin.app.toast(`🌐 ${friendlyPlatformName} on ${friendlyOSName}: running in Light Mode`);
+        await notify(`🌐 ${friendlyPlatformName} on ${friendlyOSName}: running in Light Mode`);
       }
     } else {
       // User disabled auto-switch - warn them if in full mode
       if (performanceModeSetting === 'full') {
-        await plugin.app.toast(`⚠️ ${friendlyPlatformName} detected: Full Mode may be slow on web. Consider enabling 'Always use Light Mode on web' in settings.`);
+        await notify(`⚠️ ${friendlyPlatformName} detected: Full Mode may be slow on web. Consider enabling 'Always use Light Mode on web' in settings.`);
       } else {
-        await plugin.app.toast(`🌐 ${friendlyPlatformName} on ${friendlyOSName}: running in Light Mode`);
+        await notify(`🌐 ${friendlyPlatformName} on ${friendlyOSName}: running in Light Mode`);
       }
     }
     
@@ -195,10 +201,10 @@ export async function handleMobileDetectionOnStartup(plugin: RNPlugin): Promise<
     if ((osChanged && lastOS && (lastOS === 'ios' || lastOS === 'android')) || 
         (platformChanged && lastPlatform === 'web')) {
       // Switched from mobile or web to desktop app
-      await plugin.app.toast(`💻 ${friendlyPlatformName} on ${friendlyOSName}: now using ${modeText}`);
+      await notify(`💻 ${friendlyPlatformName} on ${friendlyOSName}: now using ${modeText}`);
     } else {
       // Normal desktop startup
-      await plugin.app.toast(`💻 ${friendlyPlatformName} on ${friendlyOSName}: running in ${modeText}`);
+      await notify(`💻 ${friendlyPlatformName} on ${friendlyOSName}: running in ${modeText}`);
     }
   }
 

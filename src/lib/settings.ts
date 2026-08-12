@@ -45,6 +45,10 @@ import {
   displayQueueToolbarPriorityId,
   isolatedQueueModeId,
   IsolatedQueueMode,
+  queueInfoBarModeId,
+  queueToolbarPriorityModeId,
+  QueueInfoBarMode,
+  QueueToolbarPriorityMode,
   autoFocusQueueDashboardId,
   hideCardPriorityTagSettingId,
   showLeftBorderForIncRemsSettingId,
@@ -95,6 +99,8 @@ export interface IESettings {
   [displayWeightedShieldId]: boolean;
   [displayQueueToolbarPriorityId]: boolean;
   [isolatedQueueModeId]: IsolatedQueueMode;
+  [queueInfoBarModeId]: QueueInfoBarMode;
+  [queueToolbarPriorityModeId]: QueueToolbarPriorityMode;
   [autoFocusQueueDashboardId]: boolean;
 
   // Editor indicators
@@ -143,13 +149,17 @@ export const IE_SETTINGS_DEFAULTS: IESettings = {
   [defaultPriorityId]: 50,
   [defaultCardPriorityId]: 50,
   [priorityStepSizeId]: 5,
-  [priorityEditorDisplayModeId]: 'all',
+  // FORK (Deviation 13): was 'all', which also renders a card-priority editor on
+  // every rem with flashcards — the disabled card-priority surface. On = IncRems only.
+  [priorityEditorDisplayModeId]: 'incRemOnly',
 
   [collapseQueueTopBar]: false,
   [displayPriorityShieldId]: true,
   [displayWeightedShieldId]: true,
   [displayQueueToolbarPriorityId]: true,
   [isolatedQueueModeId]: 'highlights',
+  [queueInfoBarModeId]: 'allExceptMobile',
+  [queueToolbarPriorityModeId]: 'always',
   [autoFocusQueueDashboardId]: false,
 
   [hideCardPriorityTagSettingId]: true,
@@ -254,10 +264,12 @@ export const IE_DOCS_BASE_URL = 'https://hugomarins.github.io/incremental-everyt
  * description is the single spot available to tell someone reading that panel
  * that the other twenty-eight settings are elsewhere.
  */
+// FORK (Deviation 13): reworded — the performance switches are no longer shown
+// in RemNote's panel (only Hide-in-Queue remains native).
 export const MORE_SETTINGS_POINTER =
-  'MORE SETTINGS: these are only the performance switches. Every other Incremental Everything ' +
-  'setting lives in the plugin\'s own settings window — run the "Incremental Everything: ' +
-  'Settings" command from the omnibar (quick code: ies).';
+  'MORE SETTINGS: every other Incremental Everything setting lives in the plugin\'s own ' +
+  'settings window — run the "Incremental Everything: Settings" command from the omnibar ' +
+  '(or type: ies).';
 
 interface SettingSpecBase {
   title: string;
@@ -270,6 +282,12 @@ interface SettingSpecBase {
   helpPath?: string;
   /** Rendered as a prominent warning box above the control in the popup. */
   warning?: string;
+  /**
+   * FORK (Deviation 13): severity of `warning`. 'danger' renders the callout in
+   * red rather than amber — for warnings where ignoring the advice breaks the
+   * plugin, not merely slows it down.
+   */
+  warningTone?: 'warn' | 'danger';
   /**
    * Appended as the very last line of this setting's description in RemNote's
    * settings panel — after the docs link and the reload note. Panel-only: the
@@ -425,11 +443,18 @@ export const IE_SETTINGS_SCHEMA: Record<IESettingId, SettingSpec> = {
     group: 'priority',
     title: 'Priority Widget in Editor',
     description:
-      'When to show the priority widget in the right-hand margin of each rem in the editor.',
+      'Whether to show the priority widget in the right-hand margin of an Incremental Rem ' +
+      'in the editor.',
+    // FORK (Deviation 13): reduced to on/off. Upstream's third option, 'all',
+    // exists only to ALSO render a card-priority editor on any rem that has
+    // flashcards (priority_editor.tsx: showCardEditor requires displayMode ===
+    // 'all') — a surface for the card-priority engine this fork disables. With
+    // that gone the choice is just "show it on IncRems" or "don't". The union
+    // type still admits 'all' so a value stored before this change stays
+    // readable; priority_editor coerces it to 'incRemOnly'.
     options: [
-      { value: 'all', label: 'Show for IncRem and Cards' },
-      { value: 'incRemOnly', label: 'Show only for IncRem' },
-      { value: 'disable', label: 'Disable' },
+      { value: 'incRemOnly', label: 'On' },
+      { value: 'disable', label: 'Off' },
     ],
   },
 
@@ -472,15 +497,58 @@ export const IE_SETTINGS_SCHEMA: Record<IESettingId, SettingSpec> = {
     description:
       'Shows the priority badge of the current flashcard or IncRem at the top right of the queue.',
   },
+  // FORK (Deviation 14): the queue toolbar's P-chip. Replaces upstream's boolean
+  // `display-queue-toolbar-priority` (whose widget the fork denies) with four modes.
+  [queueToolbarPriorityModeId]: {
+    kind: 'dropdown',
+    tier: 'popup',
+    group: 'queue',
+    title: 'Priority Chip in Queue Top Bar',
+    description:
+      'The coloured "P50" chip at the top right of the queue, showing the current item\'s ' +
+      'priority — its own if it has one, otherwise its document\'s (the same value the queue ' +
+      'info bar shows). Clicking it opens the priority editor, but only for an Incremental ' +
+      'Rem: under a flashcard the priority belongs to the document, not to the card. ' +
+      '"Only on web" means the browser, "only on mobile" means an iOS/Android device — a ' +
+      'phone browser counts as both.',
+    options: [
+      { value: 'always', label: 'Always show' },
+      { value: 'off', label: 'Always hide' },
+      { value: 'webOnly', label: 'Only show on web' },
+      { value: 'mobileOnly', label: 'Only show on mobile' },
+    ],
+  },
+  // FORK (Deviation 14): the queue info bar.
+  [queueInfoBarModeId]: {
+    kind: 'dropdown',
+    tier: 'popup',
+    group: 'queue',
+    title: 'Queue Info Bar',
+    description:
+      'A bar under the queue item showing the due-Incremental-Rem priority distribution ' +
+      '(counts in the ranges 0-10 / 11-30 / 31-60 / 61-100, lower = more important), plus ' +
+      'the item\'s own stats: priority and KB percentile for an Incremental Rem, or ' +
+      'repetitions and review time for a flashcard.',
+    options: [
+      { value: 'all', label: 'All queue items' },
+      { value: 'incRemOnly', label: 'Incremental Rems only' },
+      { value: 'allExceptMobile', label: 'All items (Incremental Rems only on mobile)' },
+      { value: 'off', label: 'Off' },
+    ],
+  },
+
   [isolatedQueueModeId]: {
     kind: 'dropdown',
     tier: 'popup',
     group: 'queue',
     title: 'Use Isolated Card View in Queue for',
     description:
-      'Which incremental items default to the isolated card view. Highlights that do not use it ' +
-      'appear inside the PDF/HTML reader; regular rems that do not use it appear in full document ' +
-      'context. You can always toggle in the queue — this only sets the initial view.',
+      // FORK (Deviation 13): reworded — this fork has no in-queue PDF/HTML reader,
+      // so items that do not use the isolated view show the Rem itself.
+      'Which incremental items start in the isolated card view — a minimal card showing only ' +
+      'that item\'s own text (or a highlight\'s clipping). Items that do not use it show the ' +
+      'Rem in full document context instead. You can toggle per card in the queue; this only ' +
+      'sets the initial view.',
     options: [
       { value: 'highlights', label: 'Highlights (PDF/HTML)' },
       { value: 'rems', label: 'Regular Rems' },
@@ -544,7 +612,7 @@ export const IE_SETTINGS_SCHEMA: Record<IESettingId, SettingSpec> = {
     title: 'Show Priority Badges in Table Cells',
     description:
       'Tables are the one place the priority editor cannot render, so a coloured band badge ' +
-      '(e.g. "70s") is drawn in the top-right of each cell instead. Run "Refresh Priority Badges" ' +
+      '(e.g. "70s") is drawn in the top-right of each cell instead. Run "Incremental: Refresh Priority Badges (Tables)" ' +
       'once to fill in existing rems.',
   },
 
@@ -654,17 +722,26 @@ export const IE_SETTINGS_SCHEMA: Record<IESettingId, SettingSpec> = {
   // --- Integrations ---
   [enableHideInQueueIntegrationId]: {
     kind: 'boolean',
-    tier: 'native',
+    // FORK (Deviation 13): popup-tier so the plugin's own settings window is the
+    // single place every setting is changed. Native-tier settings are read-only
+    // there (the SDK has no setter for them), so the tier had to move, not just
+    // the display. Default stays false.
+    tier: 'popup',
     group: 'integrations',
     reloadRequired: true,
     helpPath: 'Utilities/#hide-in-queue',
     title: 'Enable Hide-in-Queue Powerups and Commands',
+    // FORK (Deviation 13): the fatal-conflict warning was buried mid-description;
+    // moved into the `warning` field so it renders in the callout box, and marked
+    // 'danger' so that box is red.
+    warning:
+      'Only enable this if you do NOT have the standalone "Hide in Queue" plugin installed — ' +
+      'duplicate powerup registration throws a fatal error that breaks this plugin. Uninstall ' +
+      'the standalone plugin first, then reload RemNote.',
+    warningTone: 'danger',
     description:
       'Registers the "Hide in Queue", "Remove from Queue", "No Hierarchy", "Hide Parent" and ' +
       '"Hide Grandparent" powerups and commands inside Incremental Everything.\n\n' +
-      'WARNING: only enable this if you do NOT have the standalone "Hide in Queue" plugin ' +
-      'installed — duplicate powerup registration throws a fatal error that breaks this plugin. ' +
-      'Uninstall the standalone plugin first, then reload RemNote.\n\n' +
       '"Remove Parent" and "Remove Grandparent" are always registered, since the Cloze and Extract ' +
       'creators depend on them.',
     // Last native-tier setting in registration order, so this lands at the very

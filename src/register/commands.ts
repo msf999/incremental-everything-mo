@@ -55,6 +55,7 @@ import { safeRemTextToString, getIncrementalReadingPosition, addPageToHistory, r
 import { getHoveredReference } from './events';
 import { transferToDismissed } from '../lib/dismissed';
 import { addToIncrementalHistory, addDismissalToIncrementalHistory } from '../lib/history_utils';
+import { FORK_FEATURES } from '../lib/fork_gates';
 import { handleCardPriorityInheritance } from '../lib/card_priority/card_priority_inheritance';
 import dayjs from 'dayjs';
 import {
@@ -2379,7 +2380,8 @@ export async function registerCommands(plugin: ReactRNPlugin) {
 
         // Replicate the Dismiss button logic from answer_buttons.tsx
         // 1. Handle card priority inheritance
-        await handleCardPriorityInheritance(plugin, rem, incRemInfo);
+        // FORK (Deviation 13): card surface disabled — see answer_buttons Dismiss.
+        if (FORK_FEATURES.cardSurface) await handleCardPriorityInheritance(plugin, rem, incRemInfo);
 
         // 2. Calculate review time
         const startTime = await plugin.storage.getSession<number>(incremReviewStartTimeKey);

@@ -55,8 +55,11 @@ export function registerQueueCounter(
   count: number,
   priorityBuckets?: [number, number, number, number]
 ): void {
+  // FORK (Deviation 14): the bucket breakdown moved to the queue info bar, where
+  // it can be labelled and colour-coded. The top counter keeps the plain count;
+  // callers still pass buckets (used only for the console line below).
   const distribution = priorityBuckets ? ` (${priorityBuckets.join(', ')})` : '';
-  const suffix = ` + ${count}${distribution}`;
+  const suffix = ` + ${count}`;
   const css = `
     .rn-queue__card-counter {
       /*visibility: hidden;*/

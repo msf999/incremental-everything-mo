@@ -22,13 +22,14 @@ When working on this repository, follow these rules in order:
 
 4. **Preserve `manifest.json` overrides.** Our fork uses a different `id` (**critical** — must differ or our fork collides with the official plugin), a different `name` and `repoUrl`, and sets `unlisted: true`. Any upstream change to `manifest.json` must keep these four fields as-is (see Deviation 1).
 5. **Preserve additive custom code.** Our changes are designed to be additive (new constants, new slots, new helper functions, new branches in existing functions). Upstream refactors that rename or move the functions we hook into require manual adaptation -- do not auto-resolve.
-6. **Test compilation.** After resolving conflicts, run `npm run dev` and confirm webpack compiles successfully before committing.
+6. **Test compilation.** After resolving conflicts run `npm run build` **and** `npx tsc --noEmit`, compared against the current error baseline (Runbook Step 5). `npm run dev` is transpile-only: it does not catch type errors, and it is exactly what hid the `9e2a2bb` remeda crash recorded in the 2026-06-15 Fix.
 
 ### After Any Merge or Edit
 
 7. **Update "Upstream Sync Status"** with the new upstream commit hash.
 8. **Update "Current Deviations"** if files or regions changed.
 9. **Append a changelog entry** using the template in "Logging Protocol."
+10. **Update `README.md`** whenever the fork's user-visible behaviour changes — a feature added, modified, or removed, whether by a local edit or by adopting/dropping something in an upstream merge. `README.md` is fork-owned, user-facing documentation: it links upstream and describes only the fork's differences, written for someone who knows the original plugin. Keep it describing the **current** state (not history — history lives in the Changelog below).
 
 ---
 
@@ -40,7 +41,7 @@ When working on this repository, follow these rules in order:
 | **Our fork** | `https://github.com/msf999/incremental-everything-mo` |
 | **Last synced upstream commit** | `5f8ccdd` — _Merge pull request #306 from hugomarins/main_ (synced 2026-08-10) |
 | **Our first custom commit** | `88839e1` — _feat: add Rotation and First Added properties, make Open Editor advance queue_ |
-| **Branch** | `main` |
+| **Branch** | `main` is the fork trunk; the current work sits on `merge/upstream-5f8ccdd` until Runbook Step 6 lands it |
 
 ---
 
@@ -58,13 +59,13 @@ All custom changes are **additive** unless noted otherwise. No upstream logic wa
 | `unlisted` | `false` | `true` | Prevents public listing of our private fork |
 | `author` | `Jamesb and Hugomarins (cont. Jonathangimeno)` | `Jamesb, Hugomarins and Jonathangimeno` | Minor attribution wording (cosmetic) |
 
-**Merge rule:** Always keep our values for the four fields above (`id`, `name`, `repoUrl`, `unlisted`; `author` is cosmetic). Accept all other manifest changes from upstream — including the upstream `version` and the `supportUrl` / `projectUrl` / `changeLogUrl` fields (these now point at upstream's MkDocs site `hugomarins.github.io/incremental-everything`, which is fine for a fork that tracks upstream features).
+**Merge rule:** Always keep our values for the four fields above (`id`, `name`, `repoUrl`, `unlisted`; `author` is cosmetic). Accept all other manifest changes from upstream — including the upstream `version` and the `supportUrl` (upstream's GitHub issues) / `projectUrl` / `changeLogUrl` fields (the latter two point at upstream's MkDocs site `hugomarins.github.io/incremental-everything`, which is fine for a fork that tracks upstream features).
 
-**Version scheme:** upstream reset its numbering `0.2.294 → 1.0.x` during the `5f8ccdd` sync; we adopted it (fork was `0.2.277` → now `1.0.35`). The rule is unchanged — accept upstream's `version`, and bump the patch for fork-local releases on top of it (next fork-only fix = `1.0.36`).
+**Version scheme:** upstream reset its numbering `0.2.294 → 1.0.x` during the `5f8ccdd` sync; we adopted it (fork was `0.2.277` → upstream base `1.0.35`, now at fork-local **`1.0.43`**). The rule is unchanged — accept upstream's `version`, and bump the patch for fork-local releases on top of it.
 
 ### 2. `src/lib/consts.ts`
 
-**What changed:** Added two new export constants immediately after `originalIncrementalDateSlotCode` (since the `5f8ccdd` sync, upstream's `pdfStateSlotCode` block also sits in that region — ours follow it):
+**What changed:** Added two new export constants immediately after `originalIncrementalDateSlotCode` (since the `5f8ccdd` sync, upstream's `pdfStateSlotCode` block also sits in that region — it follows ours, after its own comment block):
 
 ```
 firstAddedSlotCode = 'firstAdded'
@@ -118,7 +119,7 @@ This file has the most custom code. All additions are in clearly separated block
 | **New helpers (before `initIncrementalRem`)** | Added `MS_PER_DAY`, `getRotationIntervalMs()`, `getRotationIntervalDays()`, `getInitialRotation()`, and `rescheduleWithoutReview()`. Freestanding — upstream has no functions by these names. |
 | **`initIncrementalRem()`** | Upstream batches its slot writes into a `slotWrites: Promise<unknown>[]` array + `Promise.all`. Our two writes are entries in that array: (a) `firstAddedSlotCode` set to upstream's existing **`todayRef`** — deliberately *not* a second `getDailyDocReferenceForDate` call, which upstream documents as a `getDailyDoc` race — guarded only on `todayRef` truthiness (unconditional on `hasExistingHistory`, unlike upstream's own `originalIncDate` write); (b) `rotationSlotCode` set from `getInitialRotation()`, which is resolved **before** the array so the value is also in scope for the cache entry. Upstream replaced its closing re-read with a hand-built `constructedIncRem` + `safeParse` — **`rotation: initialRotation` must be in that literal**, or the cache entry silently loses rotation until the next full read. |
 | **`handleNextRepetitionClick()` / `handleNextRepetitionManualOffset()`** | Use manual in-memory `IncrementalRem` patch + `updateIncrementalRemCache` from review result / constructed state (upstream) instead of re-fetching from the Rem after write. Upstream's `requestQueueDashboardRefocus` (before `removeCurrentCardFromQueue`) and `stampNoteAndContext` / `manualEntry` coexist with it. |
-| **`updateReviewRemData()`** | Branching `nextRepDateToUse`: explicit overrides, then rotation interval (`getRotationIntervalMs`), then normal scheduler. Returns `{ ...nextSpacing, newNextRepDate: nextRepDateToUse, newHistory }` so callers patch the cache with the **persisted** next date (required when rotation overrides the scheduler). Upstream's `stampNoteAndContext` block sits immediately **before** our branch. ⚠️ Upstream adds **no** `requestQueueDashboardRefocus` here — do not add one: this function is also called by the Review-in-Editor path, which deliberately leaves the queue. |
+| **`updateReviewRemData()`** | Branching `nextRepDateToUse`: explicit overrides, then rotation interval (`getRotationIntervalMs`), then normal scheduler. Returns `{ ...nextSpacing, newNextRepDate: nextRepDateToUse, newHistory }` so callers patch the cache with the **persisted** next date (required when rotation overrides the scheduler). Upstream's `stampNoteAndContext` block and its `overrideIntervalDays` write sit immediately **before** our branch — which is **not** purely additive: it replaces upstream's one-line `nextRepDateToUse` ternary with the 3-tier if/else. ⚠️ Upstream adds **no** `requestQueueDashboardRefocus` here — do not add one: this function is also called by the Review-in-Editor path, which deliberately leaves the queue. |
 
 **Merge rule:** If upstream modifies `getIncrementalRemFromRem`, `initIncrementalRem`, or `updateReviewRemData`, carefully re-apply our additions into the updated function bodies — the anchors above are the current ones and upstream has rewritten all three at least once. Our helpers are freestanding and should not conflict. Our re-applied blocks never write `prioritySlotCode`, so none of them needs routing through upstream's `setIncRemPriority` band-sync chokepoint.
 
@@ -128,28 +129,29 @@ This file has grown into the most heavily customised widget. All changes are add
 
 | Region | What Changed |
 |---|---|
-| **Imports** | Added `getRotationIntervalMs`, `rescheduleWithoutReview` from `../lib/incremental_rem`; replaced `DraggableButton` import with `SplitButton`. |
+| **Imports** | Added `getRotationIntervalMs`, `rescheduleWithoutReview` from `../lib/incremental_rem`; replaced `DraggableButton` import with `SplitButton`. Later joined by the Deviation 13/14 imports: `FORK_FEATURES`, `queueInfoBarModeId` + `isMobileDeviceKey`, and the shared bar geometry from `../components/QueueDistribution` (`QUEUE_INFO_BAR_OUTER_PADDING` and `getQueueInfoBarStyle` are load-bearing for the container). |
 | **`hasInvalidRotation` + `warningStyle`** | Derived boolean + amber style object computed after `incRemInfo` is destructured. Applied to the Next and Open Editor buttons when the rotation value cannot be parsed. |
-| **Next button** | Replaced `DraggableButton` (drag-up/down gesture) with `SplitButton` (dropdown chevron). Menu items: "Saturday (Xd)", "Monday (Xd)" with dynamic day counts. When `hasInvalidRotation` is true, the sublabel shows `"invalid rotation"` in amber instead of `<NextRepTime />`. |
+| **Next button** | Replaced `DraggableButton` (drag-up/down gesture) with `SplitButton`. The chevron toggles the shared **offset row** (see below) in `'next'` mode. When `hasInvalidRotation` is true, the sublabel shows `"invalid rotation"` in amber instead of `<NextRepTime />`. |
 | **`openEditorAction` helper** | Extracted editor-opening logic into a reusable async function. It now always opens in-app (`openRemAsPage` for `pdf-note`, otherwise `plugin.window.openRem`) on both mobile and desktop. |
-| **Open Editor button** | Converted from `Button` to `SplitButton`. Scheduling runs **before** navigation so the widget is not destroyed before the review is recorded. Dropdown items: "Saturday (Xd)", "Monday (Xd)" — each records a review with the chosen offset then opens the editor in-app. The sublabel now mirrors Next (`<NextRepTime />`) and shows `invalid rotation` in amber when parsing fails. Styled with a custom green theme for visual distinction. |
-| **Skip button** | Converted from `Button` to `SplitButton`. Main click calls `plugin.queue.removeCurrentCardFromQueue()` (advances queue without recording a review). Dropdown items: "Saturday (Xd)", "Monday (Xd)" — each reschedules to the chosen date without recording a review via `rescheduleWithoutReview`. |
-| **Unified layout (Accordion)** | Removed all `!isMobile` conditional rendering guards. Consolidated the top row into a minimalist 6-button layout: Previous, Next, Open Editor, Skip, Dismiss, and `⚙️ Options`. Built a dynamic `showAdvancedOptions` local state variable. Clicking `⚙️ Options` opens a visually clean secondary row positioned underneath to host the power-user buttons: Reschedule, Change Priority, Review with Timer, Scroll to Highlight, **Scroll to Bookmark** (PDF: last page-history entry with `highlightId`; upstream feature merged into this row), URL clipping, and Help. **(Post `5f8ccdd`)** upstream's new **📝 Review Note** toggle and **🔖 Read point** button were folded into this row too, restyled to the row's `Button` + single-label convention. |
+| **Open Editor button** | Converted from `Button` to `SplitButton`. Scheduling runs **before** navigation so the widget is not destroyed before the review is recorded. Its chevron toggles the offset row in `'editor'` mode — a chosen offset records a review with that offset then opens the editor in-app (`runOpenEditorWithOffset`). The sublabel now mirrors Next (`<NextRepTime />`) and shows `invalid rotation` in amber when parsing fails. Styled with a green **outline** theme (border + font only, Dismiss-style; neutral background). |
+| **Skip button** | Converted from `Button` to `SplitButton`. Main click calls `plugin.queue.removeCurrentCardFromQueue()` (advances queue without recording a review). Its chevron toggles the offset row in `'skip'` mode — a chosen offset reschedules without recording a review via `rescheduleWithoutReview` (which advances the queue itself). |
+| **Offset picker (chevrons)** | The chevrons on Next / Open Editor / Skip no longer open per-button dropdowns. Each toggles ONE shared picker row rendered below the button row (same visual convention as the ⚙️ Options row), driven by `offsetRowFor: 'next' \| 'editor' \| 'skip' \| null`. The picker is granular: a − / + stepper with a typeable number (1–999, Enter applies, Escape closes), a Days/Weeks/Months segmented toggle (`OFFSET_UNITS`; months are calendar-aware via `offsetToDays`, not 30-day blocks), a live landing-date preview ("→ Tue, Sep 8 (28d)"), and one Apply button labelled per mode ("Next in 3 weeks") and outline-coloured to match its action (blue / green / purple). Value+unit persist across opens within a card. Applying closes the row and runs the mode's action (`runManualNext` / `runOpenEditorWithOffset` / `rescheduleWithoutReview`). This replaced the earlier "Saturday (Xd)" / "Monday (Xd)" dropdown items and an interim fixed-chip row. |
+| **Unified layout (Accordion)** | Removed all `!isMobile` conditional rendering guards **from the button rows** (a mobile gate returned later, for the info bar only — see Deviation 14). Consolidated the top row into a minimalist 6-button layout: Previous, Next, Open Editor, Skip, Dismiss, and `⚙️ Options`. Built a dynamic `showAdvancedOptions` local state variable. Clicking `⚙️ Options` opens a visually clean secondary row positioned underneath to host the power-user buttons: Reschedule, Change Priority, Review with Timer, Scroll to Highlight, **Scroll to Bookmark** (PDF: last page-history entry with `highlightId`; upstream feature merged into this row), URL clipping, and Help. **(Post `5f8ccdd`)** upstream's new **📝 Review Note** toggle and **🔖 Read point** button were folded into this row too, restyled to the row's `Button` + single-label convention. |
 | **Upstream hooks + note input (post `5f8ccdd`)** | Upstream's `remReadPointInfo` tracker and the note state (`noteOpen` / `noteText` + prefill `useEffect`) live in the **hooks section above the early returns** — moving them down beside `hasInvalidRotation` would break the Rules of Hooks and crash the widget. The note **input row** renders **outside** the accordion (upstream's position, after the `showAdvancedOptions` block): its prefill effect auto-opens when a note is parked, and the accordion defaults closed, so inside it a parked note would be invisible. `readerBookmarkIsLatest` (non-hook) drives the ` • latest` badge on our Scroll-to-Bookmark button. |
 | **Link Auto-Open (guarded)** | Added `externalUrls` via `useTrackerPlugin` (extract from `rem.text`, `rem.backText`, Link powerup). `openExternalLinkTabsWhenOpenLinkTagged()` runs **first** on Open Editor clicks (sync `window.open` while the gesture is valid) but **only** when the title ends with **`(OpenLink)`**. If the title does **not** end with `(OpenLink)`, only the Rem document opens — external URLs are not opened in new tabs. |
-| **Title `(OpenLink)` → external tabs, no Rem doc** | `remTitleEndsWithOpenLinkTag` (`open_editor_link_tag.ts`) **and** non-empty `externalUrls`: `performOpenEditorFlow` skips `openEditorAction` so only external URL(s) open (one tab per URL). If the title has `(OpenLink)` but no URL was extracted, the Rem document still opens. Saturday/Monday dropdown paths use the same rules. |
+| **Title `(OpenLink)` → external tabs, no Rem doc** | `remTitleEndsWithOpenLinkTag` (`open_editor_link_tag.ts`) **and** non-empty `externalUrls`: `performOpenEditorFlow` skips `openEditorAction` so only external URL(s) open (one tab per URL). If the title has `(OpenLink)` but no URL was extracted, the Rem document still opens. The offset picker's `'editor'` path (`runOpenEditorWithOffset`) applies the same rules. |
 
-**Merge rule:** If upstream modifies the answer buttons layout, the Next button component, the Open Editor button, or the Skip area, re-apply our changes: (0) Previous button via `goBackToPreviousCard()`, (1) SplitButton with Saturday/Monday dropdown on Next, Open Editor, and Skip, (2) Open Editor uses in-app `openEditorAction` on all platforms and runs after scheduling, (3) `hasInvalidRotation` warning on Next + Open Editor, (4) `rescheduleWithoutReview` for Skip dropdown items, (5) accordion-style toggle logic for the power-user button array (`showAdvancedOptions` state block), (6) inject `openExternalLinkTabsWhenOpenLinkTagged()` at the start of Open Editor click handlers (URLs only when `(OpenLink)`), (7) skip `openEditorAction` when the title ends with `(OpenLink)` and `externalUrls` is non-empty; (8) Next/Skip button tooltips advertise the `Opt+T` / `Opt+B` queue shortcuts (see Deviation 3.1); (9) new upstream buttons go in the accordion but their **hooks stay above the early returns**; (10) `handleNextClick`'s PDF branch uses `getIncrementalReadingPosition` (see Deviation 3.1's PDF note).
+**Merge rule:** If upstream modifies the answer buttons layout, the Next button component, the Open Editor button, or the Skip area, re-apply our changes: (0) Previous button via `goBackToPreviousCard()`, (1) SplitButton on Next, Open Editor, and Skip with the chevron-toggled shared offset picker (`offsetRowFor`, `OFFSET_UNITS`, `offsetToDays`), (2) Open Editor uses in-app `openEditorAction` on all platforms and runs after scheduling, (3) `hasInvalidRotation` warning on Next + Open Editor, (4) `rescheduleWithoutReview` for the offset picker's Skip mode, (5) accordion-style toggle logic for the power-user button array (`showAdvancedOptions` state block), (6) inject `openExternalLinkTabsWhenOpenLinkTagged()` at the start of Open Editor click handlers (URLs only when `(OpenLink)`), (7) skip `openEditorAction` when the title ends with `(OpenLink)` and `externalUrls` is non-empty; (8) Next/Skip button tooltips advertise the `Opt+T` / `Opt+B` queue shortcuts (see Deviation 3.1); (9) new upstream buttons go in the accordion but their **hooks stay above the early returns**; (10) `handleNextClick`'s PDF branch uses `getIncrementalReadingPosition` (see Deviation 3.1's PDF note).
 
 **Deliberately dropped (post `5f8ccdd`):** upstream's edit to its "Open Editor in New Tab" button (`plugin.settings.getSetting(remnoteEnvironmentId)` → `getIESetting`, which only picks `beta.` vs `www.remnote.com` for a browser-tab URL). The fork replaced that button with the in-app `openEditorAction`, which builds no URL — verified UI-only, nothing to port. Re-check this if upstream ever puts functional logic in that handler. Note the container's `onClick` **must** keep upstream's `closest('input, textarea')` bail-out, or the note input cannot be typed into (our stricter guard is on `onMouseDown`, a different handler).
 
 ### 6.1. `src/lib/open_editor_link_tag.ts` *(new file)*
 
-**What changed:** Shared `remTitleEndsWithOpenLinkTag()` helper: checks **front and back** (`rem.text` / `rem.backText`). First walks rich text with `richTextVisibleForLinkSuffix()` (strings + `.text` + nested arrays; **does not** append raw `url` so hyperlinked titles like `Article (OpenLink)` still match), then falls back to `safeRemTextToString` + regex **`/\(\s*OpenLink\s*\)\s*$/`** (**case-sensitive** — must be exactly `OpenLink` inside the parens). Also exports `extractExternalHttpUrlsFromRem()` (scans front + back). Used by answer buttons and `Ctrl+G`.
+**What changed:** Shared `remTitleEndsWithOpenLinkTag()` helper: checks **front and back** (`rem.text` / `rem.backText`). First walks rich text with `richTextVisibleForLinkSuffix()` (strings + `.text` + nested arrays; **does not** append raw `url` so hyperlinked titles like `Article (OpenLink)` still match), then falls back to `safeRemTextToString`. **Both** strings are normalised by `normalizeVisibleTitleForLinkCheck()` (NFKC + fullwidth `（ ）` → ASCII parens) and tested against **`/\(\s*OpenLink\s*\)\s*$/`** (**case-sensitive** — must be exactly `OpenLink` inside the parens); the plain fallback additionally ignores the literal title `Untitled`. Also exports `extractExternalHttpUrlsFromRem()` (scans front + back). Used by answer buttons and `Ctrl+G`.
 
 ### 6.2. `src/components/buttons/SplitButton.tsx` *(new file)*
 
-**What changed:** New component that renders a split button — main click area on the left, small chevron on the right that opens a dropdown menu. Used by the Next, Open Editor, and Skip buttons. Replaces the upstream `DraggableButton` pattern. Added an iframe sandbox padding hack in the `useEffect` (`document.body.style.paddingBottom = '150px'`) whenever the menu toggles open to proactively expand the RemNote plugin boundary, gracefully preventing native clipping since it renders downward as a `position: absolute` popover. Later updated so optional custom `style` props also apply to the chevron segment, enabling consistent full-button theming (used by green Open Editor).
+**What changed:** New component that renders a split button — main click area on the left, small chevron on the right. Used by the Next, Open Editor, and Skip buttons; replaces the upstream `DraggableButton` pattern. Two chevron modes: with `menuItems` it opens a dropdown popover; with the (now-preferred) `onChevronClick` + `chevronActive` props it is a plain toggle (glyph ▼/▲, no popover) — the answer buttons use this to open their shared offset row. Added an iframe sandbox padding hack in the `useEffect` (`document.body.style.paddingBottom = '150px'`) whenever the menu toggles open to proactively expand the RemNote plugin boundary, gracefully preventing native clipping since it renders downward as a `position: absolute` popover. Later updated so optional custom `style` props also apply to the chevron segment, enabling consistent full-button theming (used by green Open Editor).
 
 **Merge rule:** Freestanding new file. No conflict expected. If upstream introduces its own split-button or dropdown component, consider consolidating, but ensure any absolute-positioned dropdown injects dynamic body padding to survive iframe clipping.
 
@@ -178,7 +180,7 @@ This file has grown into the most heavily customised widget. All changes are add
 **What changed:** Extended upstream's queue top-bar counter (which appends ` + <due IncRem count>` to RemNote's native card counter) to also show the due IncRems' **priority distribution** by range `[0-10, 11-30, 31-60, 61-100]` (inclusive), e.g. `1440 + 1610 (x, y, z, u)`. All four files modify **upstream** code:
 
 - `src/lib/session_helpers.ts` — added `getDueIncRemPriorityBuckets()` + `DueIncRemStats` type; **renamed upstream `calculateDueIncRemCount` → `calculateDueIncRemStats`**, now returning `{ count, priorityBuckets }`, computed from the same due-IncRem array in each branch (priority-doc / full-KB / scoped-full / scoped-light).
-- `src/lib/ui_helpers.ts` — `registerQueueCounter(plugin, count, priorityBuckets?)` gained an optional buckets arg; appends ` (x, y, z, u)` to the CSS `::after` content.
+- `src/lib/ui_helpers.ts` — `registerQueueCounter(plugin, count, priorityBuckets?)` gained an optional buckets arg. ⚠️ **Superseded by Deviation 14 (2026-08-12):** it no longer appends ` (x, y, z, u)` to the CSS `::after` content — the counter shows only ` + <count>`, and the distribution moved into the queue info bar where it can be labelled and colour-coded. Both call sites still pass buckets, now used only for the console line; `getDueIncRemPriorityBuckets` is still the 4-bucket helper for that log, while the *bar* draws the plugin's ten bands instead.
 - `src/register/events.ts` — QueueEnter calls `calculateDueIncRemStats` and passes `.count` + `.priorityBuckets`.
 - `src/register/callbacks.ts` — the live `GetNextCard` counter path (excludes already-seen rems) now calls `registerQueueCounter(plugin, filtered.length, getDueIncRemPriorityBuckets(filtered))` instead of inlining the CSS, keeping both counter paths consistent.
 
@@ -200,19 +202,61 @@ This file has grown into the most heavily customised widget. All changes are add
 
 **What changed:** two related fork edits so a queue item is always shown **as the Rem, in the queue body** — never as the source document, and never pushed into the right sidebar.
 
-- `src/components/ExtractViewer.tsx` — upstream's mount effect force-opened the notes sidebar on every render (`plugin.window.openWidgetInRightSidebar(incremNotesSidebarWidgetId)`), which fired for **every** rem-type queue card. That single line is removed. The `incremNotesSidebarRemIdKey` session write around it is **kept**, so the sidebar still resolves the right Rem when opened deliberately via the `✎ Edit in sidebar` button or the Reader's 📝 button.
-- `src/components/ExtractViewer.tsx` — the queue body renders RemNote's own **`DocumentViewer`** (restored from the pre-merge fork state), i.e. the Rem exactly as it appears in the editor: real formatting, powerup properties, collapsing, and inline editing. Upstream (`033a8c8`) had replaced it with `ReadOnlyRemTree`, a hand-drawn read-only re-implementation that loses formatting/properties and boxes the root in a green `🎯 Target Incremental Rem` badge. `ReadOnlyRemTree` is **kept in the file but unrendered** (flagged with a FORK NOTE) so upstream edits to it keep merging cleanly. The container's `onClick` refocus handler is restored alongside it — required because an editable viewer inside the Flashcard pane otherwise leaves focus in a no-man's-land where stray keys can reach the card. The read-point banner's `🔖 Scroll to it` button was removed (it re-centred the tree that no longer renders). **Sizing:** the card frame has **no `maxWidth`** (it used to cap at 1000px), so width follows the pane. **Layout is the pre-merge grid, restored:** a flat `display: grid` with `gridTemplateRows: 'auto 1fr auto'` (four rows when a read point banner shows) directly on the widget root — breadcrumb / document / footer, with no card wrapper. Upstream's nested "card" (border + radius + shadow + grey chrome) was removed: it read as a box pasted into the queue, and its extra layout layer sat between the root and the document. The document row is a grid `1fr`, which is a *definite* height — `DocumentViewer` is an overlay with no intrinsic height, so it needs one to fill. Height **cannot be a percentage**: the queue widget is registered with `dimensions.height: 'auto'` (`widgets.ts`), so RemNote sizes the iframe to our content — which makes a percentage height circular (it collapses to content height, and `DocumentViewer` is an overlay with no intrinsic height, so the card renders a fraction of the pane). `Reader` and `IsolatedCardViewer` use `100vh` for exactly this reason. The document section carries `flex: 1` + `minHeight: 0` + `height: '100%'` so the overlay gets a definite box to fill. The `48px` top padding is load-bearing — it keeps the card clear of the queue's absolute top-right buttons.
-- `src/widgets/queue.tsx` — upstream offers its Reader↔Outline toggle only when a read point exists on a descendant, and defaults to the Reader. We offer it for **every** `pdf` / `html` card and default to the **outline** (`ExtractViewer` on the IncRem itself): `offerOutlineToggle` is now a plain type check (`'pdf' || 'html'`) and `outlineView` initialises/resets to `true`. The render branch renders `null` (not the Reader) while `incRemRem` resolves, to avoid a one-frame PDF flash. The `📄 Read document` button still switches to the Reader per card.
+- `src/components/ExtractViewer.tsx` — **restored VERBATIM from the pre-merge fork** (`git show be390d5:src/components/ExtractViewer.tsx`, 332 lines) after several failed attempts to blend upstream's rewritten card layout with the fork's geometry (2026-08-10/11 changelog). This one move resolves everything at once: **no sidebar auto-open** (upstream's `openWidgetInRightSidebar` mount effect post-dates this file), the body is RemNote's own **`DocumentViewer`**. Two small fork additions since the restore (the file is otherwise verbatim): the footer's `justify-between` became a left-aligned `gap-4` row (the status label used to be pushed a pane-width away from the stats), and a **tiny sidebar-toggle button** sits at the row's end (`marginLeft: 'auto'`). It is a **toggle over `incremNotesSidebarRemIdKey`** (the key doubles as the open-flag — no extra state): open sets the key to this rem and opens the **docked** notes sidebar (`openWidgetInRightSidebar(incremNotesSidebarWidgetId)`); while `key === rem._id` the in-queue `DocumentViewer` is **unmounted** (hint panel) so two editable host-window overlays of the same rem never fight for focus/clicks; close clears the key and the document returns (the sidebar *pane* is closed with RemNote's own control — the SDK cannot). **Button labels are state-describing:** `✎ Open in sidebar` (blue outline) → pressed: `✎ Show in queue` (filled blue, white text). (A 2s-heartbeat auto-remount on sidebar close was also built and removed at the user's request — no sidebar-close event exists, and the manual toggle was preferred.) Per-rem by construction, so the next card shows its document normally; upstream's `clearStaleIncRemSignals` also clears the key on queue transitions. **Recorded dead-ends (2026-08-11, tried and removed — do not retry):** a floating-widget variant of the notes panel (true open/close toggle, near-fullscreen, centred) was abandoned because RemNote's host popups — `[[` search, the date picker, tag navigation — cannot function over a plugin floating window (both documents are host-window overlays with plugin-uncontrollable stacking; the queue's overlay even captured the float's clicks until the in-queue document was paused). The SDK also offers **no way to close the docked right sidebar** (`openWidgetInRightSidebar` has no close counterpart) and **no way to trigger the native `P` previewer**, so open-only is the honest button behaviour. The body remains (real formatting, powerup properties, inline editing — not upstream's hand-drawn `ReadOnlyRemTree` with the green `🎯 Target Incremental Rem` badge), and the geometry is the known-good `100vh` flat grid (`auto 1fr auto`: breadcrumb `h-10` / document / stats footer) that the published fork build renders correctly. Compiles unchanged against the post-merge codebase.
+  - **Dropped with the restore** (upstream `033a8c8`+ additions that lived in this file): upstream's `✎ Edit in sidebar →` footer button — the fork's own ✎ toggle (above) replaced it and re-added the `incremNotesSidebarRemIdKey` write; the read-point banner (read points are disabled outright in this fork — Deviation 13's `readPoints: false`); and `ReadOnlyRemTree` itself — **no longer in the file at all**, so expect upstream edits to `ExtractViewer.tsx` to conflict wholesale at the next sync; keep this file verbatim unless upstream's version passes the re-test below.
+- `src/widgets/queue.tsx` — upstream offers its Reader↔Outline toggle only when a read point exists on a descendant, and defaults to the Reader. We offer it for **every** `pdf` / `html` card and default to the **outline** (`ExtractViewer` on the IncRem itself): `offerOutlineToggle` is a type check (`'pdf' || 'html'`) **AND-ed with `FORK_FEATURES.pdfReader`** (Deviation 13), which is `false` today — so in practice no toggle is offered; `outlineView` initialises/resets to `true`. The render branch renders `null` (not the Reader) while `incRemRem` resolves, to avoid a one-frame PDF flash. The `📄 Read document` button switches to the Reader per card **when `FORK_FEATURES.pdfReader` is on; with it off (the current default) neither the button nor the Reader is reachable**. Highlight types are deliberately excluded **from the toggle** — and with the reader disabled they render `ExtractViewer` too, via queue.tsx's `!pdfReader` terminal branch (`IsolatedCardViewer` already shows the highlight text, and its `← Back to isolated view` button shares the toggle's top-right slot).
 
-**Deliberately excluded:** `pdf-highlight` / `html-highlight` types. They already avoid the document via `IsolatedCardViewer` (which shows the highlight text), and their `← Back to isolated view` button occupies the same top-right slot as this toggle.
-
-**Known trade-offs of the outline default** (accepted, not bugs): the queue no longer hosts the reader's **page controls / page-range popup**, so PDF reading position can't be *changed* from the queue — `capturePdfPageHistoryIfNeeded` still runs and records the persisted position each rep. `✨ Scroll to Highlight` and `🔖 Scroll to Bookmark` still render but are no-ops with no reader pane mounted. In-queue highlighting and the multi-PDF switcher are unavailable. All degrade silently — none throw. Press `📄 Read document` for any of them.
 
 **Known limitation — the queue document does not fill the full pane height.** This is **long-standing and pre-dates the `5f8ccdd` merge**: the fork's own pre-merge `DocumentViewer` layout did not cover the full length either. The current result is **accepted** — do not spend more time on it without new information. Why it cannot be solved today: `WidgetOptions.dimensions.height` is `number | 'auto'` and the SDK docs state percentages apply to **width only**, so a widget cannot declare "fill the pane"; with `'auto'` the host sizes the iframe from our content, which makes a CSS percentage circular and `100vh` the *window* rather than the pane; and `plugin.widget.getDimensions(widgetInstanceId)` (real, `widget.d.ts:21`) reports *this widget's own* rect, which under `'auto'` is our content height — measuring it and pinning to it is circular too. All three were tried and are recorded in the 2026-08-10 changelog entries.
 
 **⚠️ Re-test on every upstream merge that touches queue rendering.** If a future sync changes how Rems are rendered in the queue — `ExtractViewer`, `queue.tsx`'s render branch, `IsolatedCardViewer`, `Reader`, or the `registerWidget('queue', …)` dimensions — **run upstream's version in the app before re-applying our overrides**. Upstream may have found a technique for filling the pane, or RemNote may have added SDK support (watch for percentage/`'fill'` heights on `dimensions.height`, or a new sizing API, in the SDK changelog). If upstream's rendering fills the pane and still shows real formatting and properties, **prefer it and retire the corresponding parts of this deviation** rather than reflexively restoring ours. The parts to keep regardless are the ones that are preferences, not workarounds: no auto-opened sidebar, and the outline-first default.
 
-**Merge rule:** If upstream restructures `QueueComponent`'s render branch or `ExtractViewer`'s mount effects/body renderer, first test upstream's behaviour (above), then re-apply whichever of the three edits still earn their place (DocumentViewer body + refocus handler, no sidebar auto-open, outline-first toggle). Watch specifically for upstream re-adding an `openWidgetInRightSidebar` call in `ExtractViewer` (or anywhere that runs per queue card) — that is the regression to look for. Keep the `incremNotesSidebarRemIdKey` write. If upstream ever adds a real setting for the queue body view, prefer adopting it over this hard-coded default.
+**Merge rule:** `ExtractViewer.tsx` is the verbatim `be390d5` file. At the next sync, first test upstream's behaviour (above); if it doesn't win, resolve `ExtractViewer.tsx` conflicts by keeping this file verbatim, and re-apply the `queue.tsx` outline-first edits separately. Watch for upstream re-adding a per-card `openWidgetInRightSidebar` call anywhere in the queue path — that is the regression to look for. If upstream ever adds a real setting for the queue body view, prefer adopting it over this hard-coded default.
+
+### 12. `README.md` (fork-owned; translations removed)
+
+**What changed:** `README.md` is replaced wholesale: a fork notice linking upstream (`bjsi/incremental-everything` + the MkDocs site), followed by a human-readable description of every fork difference and how to use it (Rotation/First Added, the queue bar + offset picker, `(OpenLink)`, shortcuts, outline-first queue + ✎ sidebar toggle, auto-skip, the queue info bar's priority distribution and the queue priority chip, ordering tiebreak, the single settings window, omnibar command naming, removed items, versioning). `README_ES.md` and `README_PT-BR.md` are **deleted** (translations are upstream's concern, not the fork's).
+
+**Merge rule:** `README.md` is **fork-owned** — at a sync, resolve conflicts by keeping ours wholesale; upstream README changes are only a prompt to check whether a new upstream feature deserves a mention in our "different from upstream" framing. If upstream re-adds or modifies `README_ES.md` / `README_PT-BR.md`, delete them again (expect modify/delete conflicts). Per AI System Instruction 10, refresh `README.md` whenever fork behaviour changes.
+
+### 13. Fork feature gates — unused upstream subsystems disabled (`fork_gates.ts` + flag edits)
+
+**What changed:** the fork's owner uses only the core incremental workflow (tag → inherit priority/rotation → queue shows the rem → Open Editor). Everything else is switched off via a central, merge-friendly mechanism:
+
+- **`src/lib/fork_gates.ts`** (fork-only): `FORK_FEATURES` booleans per subsystem + `installForkGates(plugin)`, which wraps `plugin.app.registerCommand/registerWidget/registerMenuItem/registerCSS` **and the four `plugin.settings.register*Setting` methods** (all own arrow-function properties — monkey-patchable) and silently drops ids on the deny-list assembled from the disabled groups. The command wrapper additionally **rewrites** every surviving command: it applies `FORK_COMMAND_OVERRIDES` (per-id `name` / `description` / `keyboardShortcut`) and then prefixes `Incremental: `. Installed by **one added block in `index.tsx`** before any registration. Also `registerForkWidgets` (the combined History tab plus the Deviation 14 queue widgets). Re-enabling a subsystem = flipping one boolean.
+- **Disabled groups** (all user decisions, 2026-08-11): `pdfReader` (highlight toolbar, PDF control panel, source popups, page-range/bookmark popups, highlight CSS, hover tracking, **and the in-queue Reader itself** — see queue.tsx below), `cardSurface` (card_info_bar, batch/maintenance commands; the *engine* was already off via `enable-flashcard-prioritisation`), `shields`, `practicedQueues` (Practiced Queues sidebar tab; the **Study Dashboard was restored** 2026-08-11 under its own `studyDashboard: true` flag — its IncRem time aggregates compute from rep history, so it works without session analytics), `upstreamQueueToolbarPriority` (upstream's queue-toolbar P-chip — split out of `practicedQueues`, where it had been lumped in, and replaced by the fork's own `queue_priority_chip`; see Deviation 14), `sessionAnalytics`, `clozeTools`, `outlineTools` (heading/outline/list/text-case), `referenceFinder`, `readPoints`, `videoSurface`, `debugTools`, `priorityReviewDocs`, `historyImport` (the Import-with-History migration command + popup, trimmed 2026-08-11; Reschedule and the IncRem Main View were offered and kept), `remSourceCopyPaste` (Copy/Paste Rem Sources — upstream groups them with the PDF tools and copy feeds the disabled PDF Control Panel's known-rem index).
+**Audited and deliberately KEPT** (offered 2026-08-11, user declined): the priority-band commands + table-cell badges (bands are still live — only the PDF-highlight badge CSS is denied), and `toggle-ignore-tag` (general editor utility, belongs to no disabled group). **Kept:** No-IncRem timer, Sorting Criteria, IncRem priority tools, 📚 Inc Rems editor counter, repetition-history popups + `preserve-history-and-remove`, priority bands (unasked → untouched), everything core. ⚠️ Import-with-History (`historyImport`) and Copy/Paste Rem Sources (`remSourceCopyPaste`) are **disabled** — an earlier revision of this line wrongly listed them as kept.
+- **Flag-gated behaviour edits** (registration gating alone isn't enough): `queue.tsx` — `offerOutlineToggle &&= FORK_FEATURES.pdfReader` (no 📄 button) and a `!pdfReader` terminal `ExtractViewer` branch so highlight types can never reach the Reader; engagement calls skipped when `!sessionAnalytics`. `answer_buttons.tsx` — `shieldStatusAsync` short-circuits; `capturePdfPageHistoryIfNeeded` no-ops (stops pdfState writes); Dismiss skips `handleCardPriorityInheritance` (T4); Scroll-to-Highlight/Bookmark + Read-point accordion buttons hidden. `commands.ts` — same Dismiss skip. `review_actions.ts` — pdf position write skipped. `events.ts` — `registerQueueSessionTracking` and `registerHoveredReferenceTracking` not wired.
+- **Combined History tab:** fork widget `src/widgets/history_sidebar.tsx` (RightSidebar tab "History") renders upstream's three components under collapsible headings; the three separate tabs are denied. Requires two small edits per widget file: `export` on `IncrementalHistory`/`FlashcardHistory`/`RemHistory`, and a self-render guard. **Import-side-effect (hit in-app, fixed 2026-08-11):** each module's own `renderWidget` also runs when the module is imported for its component, and the SDK's HMR branch then calls `unmountComponentAtNode` on a container absent from a non-entry bundle — it **throws** (`Target container is not a DOM element`) and the combined tree never renders. The earlier assumption that ReactDOM.render's replace semantics would let the last call win was **wrong**. Fix: guard each call with `if (!FORK_FEATURES.combinedHistoryTab) renderWidget(X);` — a compile-time constant, so no import-order dependency — so they self-render only when registered standalone. Both history writers stay on.
+- **Priority Widget in Editor reduced to on/off (2026-08-12):** upstream's three modes are `all` / `incRemOnly` / `disable`, but `all` differs from `incRemOnly` *only* by also rendering a card-priority editor on any rem with flashcards (`priority_editor.tsx`: `showCardEditor` requires `displayMode === 'all'`) — a surface for the disabled card-priority engine. The fork presents two options (On = `incRemOnly`, Off = `disable`) and its default moved `'all'` → `'incRemOnly'`. The union type still admits `'all'` so a value stored before the change stays readable, and `priority_editor` coerces `'all'` (and empty) to `'incRemOnly'` at the single read site, so a legacy value cannot resurrect the card editor. **Merge note:** the changed default sits in upstream's `IE_SETTINGS_DEFAULTS` table — re-apply it after a sync, or the card-priority editor silently returns.
+- **Native settings pruned (2026-08-11, same mechanism):** the gates also wrap `plugin.settings.register*Setting` and drop the four native-panel mode settings — `enable-flashcard-prioritisation`, `performanceMode`, `always-use-light-mode-on-mobile`, `alwaysUseLightModeOnWeb` — so RemNote's plugin-settings panel is **empty of real settings**. As of 2026-08-12 the last native setting, `enable-hide-in-queue-integration`, was moved to **popup tier** in `settings.ts` (a one-word `tier` change + FORK comment) so it can be *changed* in the plugin's own window — native-tier rows render read-only there because the SDK has no setter for them. The panel now carries a single **signpost row** (`registerForkSettingsSignpost`, an inert one-option dropdown — the panel has no text-only row type) stating that every setting lives in the plugin's settings window (`ies`). ⚠️ Side effect of the tier move: the value now reads from the plugin's own store, so anyone who had previously enabled Hide-in-Queue in RemNote's panel is reset to the default (`false`) and must re-enable it in the popup. Safe because `readRawSetting` try/catches native reads and falls back to defaults, which are exactly the fork's pinned values (prioritisation **false**, performance **'light'** — Full Mode is retired, light-on-mobile/web **true**). The "running in Light Mode" startup toasts in `mobileUtils.ts` are silenced behind `FORK_FEATURES.startupModeBanner` (10 call sites routed through a local `notify`). The four are gone from the IE Settings popup too: it renders only the ids named in `FORK_IE_LAYOUT`.
+- **IE Settings popup layout (fork-owned, in `fork_gates.ts`):** `FORK_IE_LAYOUT` + `FORK_IE_GROUPS` define the sections the popup renders; `FORK_HIDDEN_IE_SETTINGS` filters individual rows out of them. `FORK_HIDDEN_IE_GROUPS` is **dead code** — still exported and still imported by `ie_settings.tsx`, but never consulted; the layout allow-list superseded it. Delete it, or wire it back, but do not trust it to be hiding anything.
+- **Mastery Drill is deliberately NOT gated:** upstream already ships it opt-in behind `enableMasteryDrill` (default off), so its widgets (`mastery_drill`, `mastery_drill_notification`) and commands (`open_mastery_drill`, `debug_audit_mastery_drill`, `cleanup_mastery_drill`) stay registered and inert. Only its settings group is hidden. If it ever becomes default-on upstream, add a group for it.
+- **Never gated:** `registerPowerup` (T1 — `getInitialPriority` reads CardPriority slots unguarded during Make-Incremental; pdfState slot stores data read points/dismissal rely on).
+- **Upstream bugfix (T2), report upstream:** `tracker.ts`'s cascade watcher now clears `plugin_operation_active` on its prioritisation-off early return — previously the flag set by `initIncrementalRem`/`extract.ts` stayed stuck (its only clearer was `runCascade`'s `finally`), suppressing `GlobalRemChanged` (manual powerup-removal → Dismissed transfer, manual date-edit detection).
+
+**Merge rule:** at a sync, upstream's `commands.ts`/`widgets.ts`/`menus.ts` merge clean (untouched by this deviation) — but **re-verify the deny-list ids still match** (upstream renames = silently re-enabled feature; grep each denied id post-merge) and re-apply the flag edits if upstream rewrites the touched regions. If upstream adds new commands/widgets in a disabled subsystem, add their ids to the group. **Popup check:** the IE Settings popup renders only `FORK_IE_LAYOUT` ids, so a newly added upstream setting will not appear until its id is added there (deliberate — new upstream settings are opt-in for this fork).
+
+---
+
+### 14. Queue priority surfaces — info bar + toolbar chip (`QueueDistribution.tsx`, `queue_info_bar.tsx`, `queue_priority_source.ts`, `queue_priority_chip.tsx`, `answer_buttons.tsx`, `ui_helpers.ts`, `consts.ts`, `settings.ts`, `fork_gates.ts`)
+
+**What changed:** the bottom info bar now appears for **all** queue items, and the due-IncRem **priority distribution** moved into it from the queue's top counter.
+
+- `src/components/QueueDistribution.tsx` *(new, fork-only)* — renders the distribution as a **proportional stacked bar over the plugin's own ten priority bands** (`priority_bands.ts`), not the fork's four ad-hoc buckets: band membership via `bandForPriority`, colour via `percentileToHslColor(bandColorPercentile(...))`, so a band reads the same colour here as its badge does in a table cell. **All ten bands always render, and every one always shows its count — zeros included.** Each segment is `flex: n 1 <floor>px` with a matching `min-width`, where the floor is `bandFloorPx(n)` — sized to **that band's own digit count** (`digits × 6 + 8`, for 10px tabular figures), not to a fixed worst case. So an empty band shrinks to a tight `0` chip instead of reserving four-digit width it will never use, and everything above the sum of the floors is shared out by `flex-grow: n`, i.e. in proportion to the counts. An empty band has grow 0, so it stays at its floor showing `0` at 0.3 opacity — present on the scale, but receding. The strip's `min-width` is the computed sum of the ten floors plus gaps, so a narrow queue wraps the bar onto its own line rather than clipping a band away. The band holding the **current queue item's own priority is ringed** (`boxShadow: inset 0 0 0 2px var(--rn-clr-content-primary)`), so you can see where this item sits on the same scale the backlog is drawn on; that band also keeps full opacity even when empty. The priority arrives as the optional `highlightPriority` prop — both callers already resolve it (`answer_buttons` from `incRemInfo`, `queue_info_bar` from `resolveQueuePriority`), so the component stays a pure view. An **inset** ring rather than `outline` because the strip clips to a rounded rect with `overflow: hidden`, which shaves an outline off the first and last segments. Segments carry the **count only** — range labels inside them were tried and removed (they crowded the bar and truncated to things like `-19 4`); the band is conveyed by colour and position, and spelled out in the tooltip, which lists every band with its count and percentage. The strip is `flex: 1 1 (stripMinPx + 120)px` / `min-width: stripMinPx` — both derived from the same floor sum — and its wrapper (`flex: 1 1 auto`, `min-width: 0`) grows, so it takes the slack in the info bar rather than sitting at a fixed narrow width. No `Due <total>` caption and no `Priority:` caption on either bar — the queue's top counter already reports the due total, and the coloured pill needs no label; the total stays in the tooltip. Renders `null` when nothing is due. Computed client-side from `allIncrementalRemKey` filtered by `now >= nextRepDate` — nothing is stored (upstream wrote its buckets straight into CSS text). ⚠️ **Colour uses the ABSOLUTE scale** — `bandColorPercentile(null, band)`, the band midpoint — deliberately *not* the KB-ranked percentiles the table badges prefer when the sample is large: percentile ranking is right for one badge but collapses a distribution to a single colour whenever most IncRems sit in one band (the fork owner's KB: 1541 of 2006 due items in 0–10). Passing `percentiles.inc` here would look broken, not more consistent. Also the **single source of the bar's geometry**, shared by both widgets so they can't drift: `getQueueInfoBarStyle(color)`, `getQueuePriorityBadgeStyle(color)`, `QUEUE_INFO_BAR_OUTER_PADDING` (also used as `answer_buttons`' `containerStyle` padding), `QUEUE_PRIORITY_NEUTRAL_COLOR`, and `shouldShowQueueInfoBar(mode, isIncRem, isMobile)` — the single place the setting's four options are interpreted. The two bars live in **different iframes**, so any divergence shows up as a visible jump when the queue moves between item types; keep the styles here rather than inlining them.
+- `src/widgets/queue_info_bar.tsx` *(new, fork-only)* — the bar for **non-IncRem** items, registered at `WidgetLocation.FlashcardUnder` with **no** `powerupFilter`/`queueItemTypeFilter` (that location mounts for every queue item). Shows the distribution and the card's reps/time from `card.repetitionHistory`. It still resolves the priority, but **only to colour the bar's left border** — the readout itself lives in the toolbar chip. Two widgets are needed rather than one because `FlashcardAnswerButtons` is `queueItemTypeFilter: Plugin` and so can never render for a flashcard.
+  - **Bail discriminator:** it returns `null` while `incrementalQueueActiveKey` is true — i.e. while a *plugin queue item* is on screen and `answer_buttons` is drawing its own bar. ⚠️ This is deliberately about the **queue item**, not the rem: an earlier version bailed when the *rem* had the Incremental powerup, which wrongly blanked the bar for a flashcard whose rem is also an IncRem. `incrementalQueueActiveKey` is set true by `queue.tsx` on mount and false by `callbacks.ts` when a flashcard is served — the same discriminator upstream's `card_info_bar` uses.
+  - **Priority (border colour only):** resolved by the shared `resolveQueuePriority` (below). The `own` / `↖ document` badge, the percentile and the pill all moved to the toolbar chip's label and tooltip. The document walk starts at the card's rem and stops at the first ancestor with `isDocument()` true; whatever that document has is what shows, and it never continues upward — a card in an unprioritised document shows **no** chip even when a grandparent document is an IncRem. That unbounded climb is exactly what `findClosestIncrementalAncestor` does, so do **not** reintroduce it here (it was the first implementation and was wrong for this fork). `readRemPriority` resolves either source the same way: live IncRem → its current priority; dismissed → the last priority recorded in its preserved history (dismissal drops the priority slot, but every history entry carries the priority it had at the time), flagged `fromDismissed` and explained in prose by the chip's tooltip. Colour and the `x% KB` figure come from `calculateRelativePercentile(allIncRems, sourceRemId)` so the chip matches how the source rem itself looks; a dismissed source is no longer in the IncRem set, so it has no percentile and falls back to colouring by the absolute priority value. Read-only — nothing is written and no CardPriority tag is involved, so the disabled card-priority engine (Deviation 13) stays untouched.
+  - **Cluster caveat** (from upstream's `card_info_bar`): inside a Card Cluster a `FlashcardUnder` widget stays mounted across siblings and `getWidgetContext().remId` stays pinned to the cluster parent, so the visible card is tracked via the context's `cardId` + the `QueueLoadCard` event.
+- `src/widgets/answer_buttons.tsx` — the IncRem bar gains `<QueueDistribution />` as its first segment and is gated on `shouldShowQueueInfoBar(mode, true, isMobile)`. ⚠️ The gate's two hooks (`useIESetting(queueInfoBarModeId)` + the `isMobileDeviceKey` tracker) **must live in the hooks section above the `if (!coreData)` early return** — the same Rules-of-Hooks constraint Deviation 6 records for upstream's note/read-point hooks. Placed next to the render code they compile and typecheck fine, then blow the widget up the moment `coreData` resolves: the hook count changes between renders, React throws, and the **entire answer-buttons tree disappears** — no info bar *and no buttons* under the item. Hit in-app 2026-08-12 and fixed by moving them up.
+- `src/lib/ui_helpers.ts` — `registerQueueCounter` no longer appends the bucket breakdown to the top counter (it still shows `+ <count>`); both call sites still pass buckets, now used only for the console line.
+- Setting **`queue-info-bar-mode`** (`consts.ts` + the three `settings.ts` tables), options `All queue items` / `Incremental Rems only` / `All items (Incremental Rems only on mobile)` / `Off`, default **`allExceptMobile`**; listed first under General → Queue.
+
+- `src/lib/queue_priority_source.ts` *(new, fork-only)* — **the one rule** deciding which priority the fork's queue surfaces show, shared by the info bar and the toolbar chip so they can never disagree about the same item. `resolveQueuePriority(rem)`: (1) the rem's **own** priority if it has one, else (2) **its own document's and nothing above it** — nearest `isDocument()` ancestor, walk stops there whatever it finds — else (3) null and nothing renders. A rem inside an unprioritised document therefore shows **no** priority even when a grandparent document is an IncRem; `findClosestIncrementalAncestor` (`priority_inheritance.ts`) is exactly that unbounded climb and must **not** be substituted here (it was the first implementation and was wrong for this fork). `readRemPriority` resolves either source the same way: live IncRem → current priority; dismissed → the last priority recorded in its preserved history (dismissal drops the priority slot, but every history entry carries the priority it held at the time), flagged `fromDismissed`. Callers colour by `calculateRelativePercentile(allIncRems, sourceRemId)` so a chip matches the source rem's own appearance; a dismissed source is no longer in the IncRem set, has no percentile, and falls back to colouring by the absolute value. Read-only throughout — nothing written, no CardPriority tag, so the disabled card-priority engine (Deviation 13) stays untouched.
+- `src/widgets/queue_priority_chip.tsx` *(new, fork-only)* — the coloured `P50` chip in the queue's top bar (`WidgetLocation.QueueToolbar`), **replacing upstream's `queue_toolbar_priority`**, which stays denied under its own `upstreamQueueToolbarPriority: false` flag (it was split out of the `practicedQueues` group, where it had been lumped in and disappeared as collateral). A fork widget rather than an edit to upstream's because upstream's flashcard branch goes through `getCardPriority` — the disabled card-priority engine plus the unbounded ancestor walk — and would contradict the info bar under the same item; and because it is gated by a boolean where the fork wants four modes. Renders `P{n}` in the shared `getQueuePriorityBadgeStyle` pill plus a muted `({percentile}%)`, i.e. **the whole priority readout** — pill, percentile, source, and the explanation of what the percentile means (a rank, not a share; plus the Doc rank from `queueSessionCacheKey.incRemDocPercentiles` when a scoped session exists) in one hover tooltip. It deliberately does **not** use upstream's `PriorityBadge`: that component carries its own `title` ("top X%", misleading for a rank where high = unimportant), and a nested title would win over the container's on hover. Toolbar widgets get no per-item context, so the visible item is `currentIncRemKey` when `incrementalQueueActiveKey` is true and a 500 ms poll of `plugin.queue.getCurrentCard()` otherwise. **Click:** opens `openPopup('priority')` — the same popup as the queue's ⚡ Change Priority button — but **only** when `origin === 'own'` and not `fromDismissed`; under a flashcard the chip is inert, because the number belongs to the document, not the card, and a click would silently retarget.
+- Setting **`queue-toolbar-priority-mode`** (fork-owned; upstream's boolean `display-queue-toolbar-priority` stays in `FORK_HIDDEN_IE_SETTINGS`, inert): `Always show` / `Always hide` / `Only show on web` / `Only show on mobile`, default **`always`**, listed under General → Queue. "Web" reads `isWebPlatformKey` (browser) and "mobile" `isMobileDeviceKey` (iOS/Android) — **independent flags**, so a phone browser satisfies both; the description says so.
+
+**Merge rule:** all four new files are fork-only. If upstream restructures the `answer_buttons` info bar, re-insert `<QueueDistribution />`, the `showInfoBar` gate, and the `getQueueInfoBarStyle` / `getQueuePriorityBadgeStyle` calls (upstream's version inlines those style literals — re-inlining them silently desyncs the two bars' size). If upstream re-enables `card_info_bar` (currently denied), check the two bars don't stack under flashcards. If upstream changes `queue_toolbar_priority`, nothing needs porting unless the change is worth adopting into the fork chip — but **keep it denied**, or two P-chips render in the toolbar.
 
 ---
 
@@ -229,7 +273,7 @@ This file has grown into the most heavily customised widget. All changes are add
 |---|---|
 | **Base (last synced)** | `5f8ccdd` — _Merge PR #306_ (synced 2026-08-10) |
 | **Target (upstream HEAD)** | `5f8ccdd` — **caught up, no pending delta** |
-| **Our HEAD** | `44027fa` (merge commit) on `merge/upstream-5f8ccdd`; pending in-app verification before `main` fast-forwards |
+| **Our HEAD** | `cf5a72c` on `merge/upstream-5f8ccdd`, **plus a large uncommitted working tree** (Deviations 11 and 13-14: fork gates, settings rework, queue info bar, priority chip). `main` is 225 commits behind and nothing is pushed — Runbook Step 6 is still open, gated on in-app smoke tests. |
 | **Delta size** | none pending (next sync: `git fetch upstream` then re-run the runbook) |
 
 **Last sync's themes** (for reference; the next delta will differ — re-recon at Step 3):
@@ -254,22 +298,40 @@ Only files the fork has modified can conflict. Reference: the "Current Deviation
 |---|---|---|
 | `public/manifest.json` | reconcile | Keep fork `id` + `name` + `repoUrl` + `unlisted: true` (Deviation 1); accept upstream `version`. |
 | `src/register/commands.ts` | **HIGH** | `open-incremental-editor` (`Ctrl+G`) + `(OpenLink)` URL/skip-doc logic; `runNextInQueueAction` + `next-in-queue-alt` (`opt+t`) + `skip-in-queue` (`opt+b`); the two fork import lines; PDF position via `getIncrementalReadingPosition`. |
-| `src/widgets/answer_buttons.tsx` | **HIGH** | 6-button layout, `SplitButton`s, green in-app Open Editor flow, `(OpenLink)` trackers, rotation warning, Skip `rescheduleWithoutReview`. |
+| `src/widgets/answer_buttons.tsx` | **HIGH** | Deviation 6: 6-button layout, `SplitButton`s + shared offset picker, green in-app Open Editor flow, `(OpenLink)` trackers, rotation warning, Skip `rescheduleWithoutReview`. Deviation 13: shield/pdf-capture/Dismiss-inheritance gates, accordion buttons hidden. Deviation 14: `<QueueDistribution highlightPriority=…/>` + the `showInfoBar` gate (**hooks above the early returns**), and the priority pill REMOVED from the bar. |
 | `src/lib/incremental_rem/index.ts` | **HIGH** | rotation read, helpers, First-Added/inherited-rotation init, `updateReviewRemData` `newNextRepDate` return. |
 | `src/lib/incremental_rem/types.ts` | low | Keep both `rotation` and upstream `createdAt`. |
-| `src/lib/consts.ts` | low | `firstAddedSlotCode`, `rotationSlotCode`, `queueBackNavKey` (Deviation 8). |
+| `src/lib/consts.ts` | low | `firstAddedSlotCode`, `rotationSlotCode`, `queueBackNavKey` (Deviation 8); Deviation 14: `queueInfoBarModeId`/`QueueInfoBarMode` + `queueToolbarPriorityModeId`/`QueueToolbarPriorityMode`. |
 | `src/register/powerups.tsx` | low | First Added (DATE) + Rotation (TEXT) slots. |
 | `src/components/NextRepTime.tsx` | low | rotation-aware display branch. |
 | `package.json` / `package-lock.json` | low | Keep `parse-duration`; regenerate lock via `npm install`. |
 | `src/register/callbacks.ts` | **HIGH** | Deviations 9+10: queue-counter buckets in `GetNextCard`; remeda **multi-projection** `sortBy` tiebreak (never the lodash array-of-iteratees form); lottery ordering. |
 | `src/lib/sorting.ts` | reconcile | Deviation 10: `nextRepDate` tiebreak (`?? 0` guard) in the `sort` feeding `applyPriorityWeightedLottery` — conflicted in the `be390d5` merge. |
 | `src/lib/session_helpers.ts` | reconcile | Deviations 8+9: `calculateDueIncRemStats` rename + `getDueIncRemPriorityBuckets`; `queueBackNavKey` reset in `resetQueueSession`. |
-| `src/widgets/queue.tsx` | reconcile | Deviation 8: due-on-encounter auto-skip effect (keyed on `ctx.remId` only) + `queueBackNavKey` consume-first early-out. |
-| `src/lib/ui_helpers.ts` | low | Deviation 9: `registerQueueCounter` optional `priorityBuckets` arg. |
-| `src/register/events.ts` | low | Deviation 9: QueueEnter passes count + buckets to `registerQueueCounter`. |
+| `src/widgets/queue.tsx` | **HIGH** | Deviation 8: due-on-encounter auto-skip effect (keyed on `ctx.remId` only) + `queueBackNavKey` consume-first early-out. Deviation 11: outline-first (`offerOutlineToggle` is a plain pdf/html type check, `outlineView` defaults true, render branch yields `null` while resolving). Deviation 13: `offerOutlineToggle &&= FORK_FEATURES.pdfReader`, the `!pdfReader` terminal `ExtractViewer` branch, engagement calls gated. |
+| `src/lib/ui_helpers.ts` | low | Deviation 9: `registerQueueCounter` optional `priorityBuckets` arg. Deviation 14: buckets are **no longer appended** to the counter CSS (console line only) — a naive accept-upstream restores them. |
+| `src/register/events.ts` | low | Deviation 9: QueueEnter passes count + buckets to `registerQueueCounter`. Deviation 13: flag-gated wiring of `registerQueueSessionTracking` / `registerHoveredReferenceTracking` + import. |
 | `src/components/IncRemTable.tsx` | low | Deviation 10: "Queue Order" `nextRepDate` tiebreak. |
+| `README.md` | reconcile | **Fork-owned** (Deviation 12): keep ours wholesale; upstream's README changes only prompt a content review. |
+| `README_ES.md` / `README_PT-BR.md` | reconcile | Deleted by the fork (Deviation 12) — re-delete if upstream re-adds; expect modify/delete conflicts. |
+| `src/lib/fork_gates.ts` | none | Fork-only new file (Deviation 13) — cannot conflict; re-verify deny-list ids after each sync. |
+| `src/widgets/history_sidebar.tsx` | none | Fork-only new file (Deviation 13) — cannot conflict. |
+| `src/widgets/incremental_history.tsx` / `flashcard_history.tsx` / `rem_history.tsx` | low | Deviation 13: `export` on the component + `if (!FORK_FEATURES.combinedHistoryTab) renderWidget(X)` guard + `FORK_FEATURES` import. |
+| `src/register/tracker.ts` | low | Deviation 13: T2 bugfix — clear `plugin_operation_active` on the cascade watcher's prioritisation-off early return. |
+| `src/lib/review_actions.ts` | low | Deviation 13: `FORK_FEATURES.pdfReader` guard on the pdf position write + import. |
+| `src/widgets/index.tsx` | low | Deviation 13: `installForkGates` + `registerForkWidgets` calls + import. |
 | `src/lib/open_editor_link_tag.ts` | none | Fork-only new file — cannot conflict. |
 | `src/components/buttons/SplitButton.tsx` | none | Fork-only new file — cannot conflict. |
+| `CLAUDE.md` | none | Fork-only doc, absent upstream — cannot conflict. |
+| `src/components/ExtractViewer.tsx` | **HIGH** | Deviation 11: the **verbatim `be390d5` file** + the `✎` sidebar toggle. Upstream rewrote this file after that commit, so expect a wholesale conflict; keep ours unless upstream passes Deviation 11's re-test. |
+| `src/lib/settings.ts` | **HIGH** | Deviation 13: Hide-in-Queue moved to `tier: 'popup'`, `warningTone`, reworded descriptions, **`priorityEditorDisplayMode` default `'all'` → `'incRemOnly'`** (in upstream's `IE_SETTINGS_DEFAULTS` — a sync silently reverts it). Deviation 14: `queue-info-bar-mode` + `queue-toolbar-priority-mode` (id, type, default, schema entry — four places each). |
+| `src/widgets/ie_settings.tsx` | reconcile | Deviation 13: fork-owned section layout (`FORK_IE_LAYOUT` + `blocks`), `groupSpec()`, widened `activeGroup`, `danger` warning callout, row/group filtering by `FORK_HIDDEN_IE_*`. |
+| `src/widgets/priority_editor.tsx` | low | Deviation 13: coerce `displayMode` `'all'` → `'incRemOnly'` at the read site + the matching `??` default. |
+| `src/lib/mobileUtils.ts` | low | Deviation 13: the 10 Light-Mode startup toasts routed through a `notify` gated on `FORK_FEATURES.startupModeBanner`. |
+| `src/components/QueueDistribution.tsx` | none | Fork-only new file (Deviation 14) — the banded distribution **and** the geometry both info bars share. |
+| `src/widgets/queue_info_bar.tsx` | none | Fork-only new file (Deviation 14). |
+| `src/lib/queue_priority_source.ts` | none | Fork-only new file (Deviation 14) — the own-rem-then-own-document priority rule. |
+| `src/widgets/queue_priority_chip.tsx` | none | Fork-only new file (Deviation 14) — replaces upstream's denied `queue_toolbar_priority`; keep that denied or two chips render. |
 
 ---
 
@@ -358,7 +420,7 @@ git diff --stat 7e0bc0d..upstream/main -- \
 When recording a merge or edit, append an entry to the "Changelog" section below using this exact template:
 
 ```markdown
-### YYYY-MM-DD — [TYPE: Merge | Edit | Fix | Refactor]
+### YYYY-MM-DD — [TYPE: Merge | Edit | Fix | Refactor | Note]
 
 **Upstream commit(s):** `<hash>` to `<hash>` (or "N/A" for local edits)
 **Conflicts resolved:** [list files, or "None"]
@@ -884,3 +946,329 @@ When recording a merge or edit, append an entry to the "Changelog" section below
 - `CLAUDE.md` — added "Known limitation" + the re-test-on-upstream-merge instruction to Deviation 11; corrected the previous entry, which implied the grid restore made the document fill the pane.
 
 **Notes:** Confirmed by the user that the queue document **never** covered the full pane height, including well before the `5f8ccdd` merge and upstream's rendering changes — so this is an SDK limitation, not a merge regression, and the current appearance is accepted. Recorded so no future session re-litigates it: the three approaches that cannot work are percentage heights (the SDK allows them on width only), `100vh` (window, not pane), and `widget.getDimensions` (returns our own content-sized rect under `dimensions.height: 'auto'`). The standing instruction is to **test upstream's queue rendering before overriding it** at each sync — if upstream or a future SDK release makes the document fill the pane while keeping real formatting and properties, adopt it and retire that half of Deviation 11.
+
+---
+
+### 2026-08-11 — Fix (Queue: ExtractViewer restored verbatim from the pre-merge fork)
+
+**Upstream commit(s):** N/A (local; left uncommitted per user instruction)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline, no errors in the file)
+**Files touched:**
+- `src/components/ExtractViewer.tsx` — replaced wholesale with `git show be390d5:src/components/ExtractViewer.tsx` (the fork's published 0.2.277 file). Compiles unchanged post-merge.
+- `public/manifest.json` — version `1.0.41` → `1.0.42`.
+- `CLAUDE.md` — Deviation 11 rewritten around the verbatim restore.
+
+**Notes:** The endpoint of a day of failed geometry blending. Sequence: upstream's card layout left more whitespace above the answer buttons than the published build → a fixed `60vh` track shrank the reading area → a content-length estimate capped in `vh` collapsed (**viewport units inside a `dimensions.height:'auto'` iframe are self-referential** — the iframe is sized from our content, so `vh` chases its own tail) → fixed pixel tracks based on `screen.availHeight`, then `window.outerHeight`, still failed to show the stats footer + `✎ Edit in sidebar` on the user's machine. The user then asked for the frame exactly as their GitHub fork — which is simply the `be390d5` file, known to render correctly there (footer visible, published geometry). Restoring it verbatim also removed upstream's sidebar auto-open and `ReadOnlyRemTree` (now absent from the file entirely — future upstream edits to `ExtractViewer.tsx` will conflict wholesale; keep the verbatim file unless upstream's version passes Deviation 11's re-test). The sizing lessons stay recorded in Deviation 11's "Known limitation" paragraph.
+
+---
+
+### 2026-08-11 — Edit (Queue: chevrons open a granular offset picker instead of Saturday/Monday dropdowns)
+
+**Upstream commit(s):** N/A (local feature; left uncommitted per user instruction)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; the 6 SplitButton TS1117s are the pre-existing baseline errors)
+**Files touched:**
+- `src/components/buttons/SplitButton.tsx` — `menuItems` now optional; new `onChevronClick` (chevron becomes a plain toggle, no popover, no body-padding hack) + `chevronActive` (▼/▲) props. Dropdown mode kept for compatibility.
+- `src/widgets/answer_buttons.tsx` — the three chevrons toggle ONE shared picker row below the button row (⚙️-Options styling): − / + stepper with typeable number (1–999, Enter applies, Escape closes), Days/Weeks/Months segmented toggle (calendar-aware months via `offsetToDays`), live landing-date preview, and a per-mode Apply button. `runOpenEditorWithOffset` extracted from the old Saturday/Monday editor items; removed the now-unused `today`/`daysUntilSaturday`/`daysUntilMonday`.
+- `CLAUDE.md` — Deviation 6 rows (Next/Open Editor/Skip + "Offset picker" row), Deviation 6.2, merge-rule item (1), this entry.
+
+**Notes:** Requested UX: first a fixed 1-day–4-weeks chip row replacing the two-item dropdowns, then refined the same day to a granular number+unit picker ("select number of days or weeks or months easily"). Semantics per mode are unchanged from the old dropdown items: `'next'` records a review at the offset (`runManualNext`); `'editor'` does the same then opens the editor in-app, honouring the `(OpenLink)` policy; `'skip'` reschedules without recording a review (`rescheduleWithoutReview`, which also advances the queue). Months convert via real calendar arithmetic (`dayjs().add(n,'month')` diffed in days), so "1 month" from Jan 31 lands Feb 28/29, not Mar 2.
+
+---
+
+### 2026-08-11 — Edit (Queue: outline colouring for Next / Open Editor / Skip)
+
+**Upstream commit(s):** N/A (local styling; left uncommitted per user instruction)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline)
+**Files touched:**
+- `src/widgets/answer_buttons.tsx` — Next (blue), Open Editor (green) and Skip (purple, new accent) switched from solid/neutral fills to the Dismiss button's outline pattern: coloured border + font on the neutral secondary background. The picker's Apply button mirrors the same per-mode outline colours. Previous / Dismiss / ⚙️ Options unchanged. `warningStyle` still overrides Next/Open Editor with amber on invalid rotation.
+- `CLAUDE.md` — Deviation 6 wording (green outline; Apply colours) and this entry.
+
+**Notes:** User request for colour consistency across the row: every coloured button now uses border+font colouring only, like Dismiss (red). Palette: Next blue, Open Editor green, Skip purple, Dismiss red — with amber reserved for the invalid-rotation warning state.
+
+---
+
+### 2026-08-11 — Edit (Queue footer: tighten stats row, add tiny ✎ Sidebar button)
+
+**Upstream commit(s):** N/A (local; left uncommitted per user instruction)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline)
+**Files touched:**
+- `src/components/ExtractViewer.tsx` — footer's `justify-between` → left-aligned `gap-4 flex-wrap` (removes the big gap between "Document • Incremental Rem" and the stats); appended a tiny blue-outline `✎ Notes` button at the row's end that sets `incremNotesSidebarRemIdKey` and opens the docked notes sidebar on click (click-only — Deviation 11's no-auto-open rule stands). A floating-panel variant with a true close toggle was built and removed the same day — see the dead-ends note in Deviation 11 (host popups can't work over a plugin float; the SDK can neither close the docked sidebar nor trigger the native `P` previewer). Final refinement: the button toggles `incremNotesSidebarRemIdKey` with state-describing labels (`✎ Open in sidebar` → filled-blue `✎ Show in queue`); while the key points at the current rem the in-queue document is unmounted (paused) so the sidebar's editor is the only interactive overlay for that rem. A 2s-heartbeat auto-remount on sidebar close was tried and removed at the user's request. Extended the consts import accordingly. The file is otherwise still the verbatim `be390d5` restore.
+- `CLAUDE.md` — Deviation 11 wording + this entry.
+
+---
+
+### 2026-08-11 — Edit (Docs: fork-owned README; translations removed)
+
+**Upstream commit(s):** N/A (docs-only; left uncommitted per user instruction)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes (no code change)
+**Compilation verified:** N/A (docs only)
+**Files touched:**
+- `README.md` — replaced with a fork notice linking upstream plus a human-readable, user-facing description of every fork difference and how to use it (written for someone familiar with the original plugin).
+- `README_ES.md`, `README_PT-BR.md` — deleted (translations remain upstream's).
+- `CLAUDE.md` — new AI System Instruction 10 (keep README in sync with fork behaviour), Deviation 12, conflict-map rows, this entry.
+
+**Notes:** Standing rule going forward: any change to the fork's user-visible behaviour — added, modified, or removed, locally or via an upstream merge — must be reflected in `README.md` in the same change. The README describes the current state; the Changelog remains the historical record.
+
+---
+
+### 2026-08-11 — Edit (Fork feature gates: disable unused upstream subsystems; combined History tab; T2 bugfix)
+
+**Upstream commit(s):** N/A (local; left uncommitted per user instruction)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline, none in edited files; production `webpack` build + validate + zip pass)
+**Files touched:**
+- `src/lib/fork_gates.ts` — **new**: `FORK_FEATURES` flags + registration interceptor (deny-list over registerCommand/Widget/MenuItem/CSS) + `registerForkWidgets`.
+- `src/widgets/history_sidebar.tsx` — **new**: combined "History" sidebar tab (3 collapsible sections reusing upstream components).
+- `src/widgets/index.tsx` — install gates before registrations; register fork widgets after upstream's.
+- `src/widgets/incremental_history.tsx`, `flashcard_history.tsx`, `rem_history.tsx` — component `export` (one word each).
+- `src/widgets/queue.tsx` — Reader unreachable when `!pdfReader` (terminal ExtractViewer branch incl. highlight types; 📄 button gone); engagement calls gated.
+- `src/widgets/answer_buttons.tsx` — shield computation, pdf position capture, Dismiss card-priority inheritance, and Scroll/Read-point accordion buttons gated.
+- `src/register/commands.ts` — Dismiss card-priority inheritance gated (+ import).
+- `src/register/events.ts` — session tracking + hover tracking wiring gated (+ import).
+- `src/lib/review_actions.ts` — pdf position write gated (+ import).
+- `src/register/tracker.ts` — **T2 upstream bugfix**: clear `plugin_operation_active` on the prioritisation-off cascade early-return (stuck flag suppressed GlobalRemChanged).
+- `CLAUDE.md` — Deviation 13, conflict-map rows, this entry. `README.md` — "Slimmed down in this fork" section (AI Instruction 10).
+
+**Notes:** Full decision record and dependency analysis (3-explorer audit: 22-subsystem inventory, core-workflow dependency map with traps T1–T10, gating-pattern study) preceded this. Disabled: PDF/reader tools incl. the in-queue Reader, card-priority surface, shields, dashboards + practiced-queues session analytics, cloze tools, heading/outline/list/text-case utilities, reference finder, read points, video surface, debug/repair tools, Priority Review Documents. Kept: No-IncRem timer, Sorting Criteria, IncRem priority tools, the 📚 editor counter (explicitly asked), repetition-history popups, preserve-history, copy/paste-rem-sources, priority bands (unasked), Reschedule command, IncRem Main View. (Import-with-History later trimmed — see `historyImport`.) CardPriority powerup and pdfState slot remain registered (data safety, T1). All features restorable by flipping one `FORK_FEATURES` boolean.
+
+---
+
+### 2026-08-11 — Edit (Native settings panel reduced to Hide-in-Queue; Light Mode pinned; startup banner removed)
+
+**Upstream commit(s):** N/A (local; left uncommitted per user instruction)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build + validate + zip pass)
+**Files touched:**
+- `src/lib/fork_gates.ts` — new flags `nativeModeSettings: false` + `startupModeBanner: false`; the interceptor now also wraps `plugin.settings.registerBoolean/Number/String/DropdownSetting` and drops the four native mode settings.
+- `src/lib/settings.ts` — `MORE_SETTINGS_POINTER` reworded (no performance switches left in the panel; mentions the omnibar command + `ies`).
+- `src/lib/mobileUtils.ts` — the 10 "Light Mode" startup toasts in `handleMobileDetectionOnStartup` route through a `notify` gated on `startupModeBanner` (+ import).
+- `CLAUDE.md` — Deviation 13 extended; this entry.
+
+**Notes:** RemNote's native panel now shows only "Enable Hide-in-Queue Powerups and Commands", plus a standalone "ℹ️ Looking for the other settings?" signpost row beneath it (an inert one-option dropdown — native panels have no text-only rows; the old description-footer text is stripped to avoid duplication). The four removed settings read as their defaults via `readRawSetting`'s fallback — prioritisation off, performance permanently 'light' (Full Mode retired in this fork), auto-light on mobile/web — so no reader code paths change. Next planned step: clean the IE Settings popup itself (it still lists the four read-only, plus settings for gated features).
+
+---
+
+### 2026-08-11 — Edit (IE Settings popup: hide sections for disabled subsystems; trim history-import)
+
+**Upstream commit(s):** N/A (local; left uncommitted per user instruction)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build + validate + zip pass)
+**Files touched:**
+- `src/lib/fork_gates.ts` — `historyImport: false` flag (denies `import-incremental-history` + its popup; Reschedule and IncRem Main View were offered and kept); exported `FORK_HIDDEN_IE_GROUPS` = `flashcardPriority`, `performance`, `masteryDrill`, `fsrs`.
+- `src/widgets/ie_settings.tsx` — renders the fork's own section layout (`FORK_IE_LAYOUT`) instead of upstream's per-setting `group` field, with a `groupSpec()` helper that resolves labels/blurbs from `FORK_IE_GROUPS` and falls back to upstream's specs; `activeGroup` widened to `string` and defaulted to the first visible section (upstream's default `'flashcardPriority'` is hidden).
+- `CLAUDE.md` — Deviation 13 notes + this entry.
+
+**Notes:** Popup cleanup per user decisions: the Flashcard Prioritisation, Performance, Mastery Drill and (follow-up) FSRS sections are hidden entirely; **Other and the full Priority/Queue sections stay visible** (the earlier proposal to prune Default Card Priority + shield/toolbar/auto-focus queue settings was explicitly narrowed by the user — do not re-prune without asking). Hidden ≠ deleted: values remain stored and every read path still resolves via `readRawSetting`. The popup now shows 6 sections (Scheduling, Priority, Queue, Editor Indicators, Integrations, Other).
+
+---
+
+### 2026-08-11 — Edit (Study Dashboard restored; kept `phr` pending decision)
+
+**Upstream commit(s):** N/A (local; left uncommitted per user instruction)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build passes)
+**Files touched:**
+- `src/lib/fork_gates.ts` — the `dashboards` flag split: `studyDashboard: true` (restores `open-study-dashboard` + the `study_dashboard` widget) and `practicedQueues: false` (Practiced Queues tab + toolbar chip stay denied). `sessionAnalytics` stays off — the dashboard computes from rep histories, retroactively, and needs no session tracking.
+- `CLAUDE.md` — Deviation 13 group list + this entry.
+
+**Notes:** After a plain-language walkthrough of what the dashboard shows (KB-wide reviews/time-per-day incl. IncRems) vs what the per-rem views cover, the user chose to keep it. Because the dashboard reads `flashcardResponseTimeLimitId`, the "Other" settings section keeps a live reader and stays visible. `phr` (Preserve history & remove) was explained and left UNTOUCHED — no decision yet; ask before removing.
+
+---
+
+### 2026-08-11 — Edit (Omnibar: every surviving command prefixed "Incremental: ")
+
+**Upstream commit(s):** N/A (local; left uncommitted per user instruction)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build passes)
+**Files touched:**
+- `src/lib/fork_gates.ts` — the registerCommand wrapper rewrites `command.name` (strip a leading "Incremental Everything:", then prefix `Incremental: `) and applies `FORK_COMMAND_OVERRIDES` — an id-keyed map of optional `name` / `description` / `keyboardShortcut` replacements. Central: no upstream command strings edited.
+- `CLAUDE.md` — this entry.
+
+**Notes:** Requested after the restored Study Dashboard proved undiscoverable ("Open Study Dashboard" carried no plugin marker). All 27 surviving commands now group under "Incremental: " in the omnibar. A follow-up wording pass added `FORK_COMMAND_NAMES` (id-keyed rename map, applied before the prefix): de-stuttered 5 names (`Make Incremental (Extract)` → `Extract / Tag Rem`, `Open Incremental Editor` → `Open Editor`, `Dismiss/Reschedule Incremental Rem` → `Dismiss/Reschedule Rem`, `Open Incremental Rems Main View` → `Open Rems Table`), replaced implementation-speak with intent (`Preserve history & remove` → `Delete Rem, Keep Study History`, `Review in Editor (Execute Repetition)` → `Review in Editor (Timer)`, `Cancel No Inc Rem Timer` → `Cancel Queue Pause Timer`, `Quick Increase/Decrease Priority Number` → `Make Less/More Important`, `Remove Parent/Grandparent` → `… from Card`), dropped the disabled PDF-highlights mention from `Refresh Priority Badges`, and clarified `Open Queue Sorting Criteria` / `Next Item in Queue (alt shortcut)`. 13 names keep upstream wording. Quick codes and keyboard shortcuts are untouched throughout.
+
+---
+
+### 2026-08-11 — Fix (Combined History tab crashed: guard the imported widgets' self-render)
+
+**Upstream commit(s):** N/A (local; left uncommitted per user instruction)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build passes)
+**Files touched:**
+- `src/widgets/incremental_history.tsx`, `flashcard_history.tsx`, `rem_history.tsx` — module-scope `renderWidget(X)` → `if (!FORK_FEATURES.combinedHistoryTab) renderWidget(X)` (+ import).
+- `src/widgets/history_sidebar.tsx` — header comment corrected (it recorded the wrong assumption).
+- `CLAUDE.md` — Deviation 13 note + conflict-map row corrected; this entry.
+
+**Notes:** In-app the sidebar threw `unmountComponentAtNode(...): Target container is not a DOM element` from `flashcard_history.tsx`'s `renderWidget` inside the `history_sidebar` bundle; dismissing the error left only the first section visible. Cause: importing those modules for their components also executes their `renderWidget`, whose HMR branch unmounts `window.__plugin.mountDiv` — absent in a non-entry bundle. This was the risk the plan flagged ("verify at implementation; fallback = move the component bodies to `src/components/history/`"); the cheaper guard resolved it, so the move was unnecessary.
+
+---
+
+### 2026-08-12 — Edit (IE Settings popup: hide six settings with no live consumer)
+
+**Upstream commit(s):** N/A (local; left uncommitted per user instruction)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build passes)
+**Files touched:**
+- `src/lib/fork_gates.ts` — new `FORK_HIDDEN_IE_SETTINGS` set: `defaultCardPriority`, `display-priority-shield`, `display-weighted-shield`, `display-queue-toolbar-priority`, `auto-focus-queue-dashboard`, `remnote-environment`, `hideCardPriorityTag` (added 2026-08-12 — nothing writes CardPriority tags any more and its default is already 'hidden').
+- `src/widgets/ie_settings.tsx` — the visible-groups computation now also filters rows and drops groups left empty.
+- `CLAUDE.md` — this entry.
+
+**Notes:** Chosen after auditing each remaining setting's consumers post-debloat. Each hidden row is provably inert: the two shield toggles were already dead even pre-fork (their render sites also require `!useLightMode`, and light is the only mode), the toolbar-priority toggle's sole consumer is the denied `queue_toolbar_priority` widget, auto-focus targets the denied Practiced Queues tab, Default Card Priority feeds the disabled card-priority engine, and RemNote Environment only fed the "Open in New Tab" URL this fork replaced with in-app opening. **Explicitly kept** after the same audit: all 5 Scheduling settings, Default IncRem Priority / Priority Step Size / Priority Widget in Editor, Collapse Queue Top Bar, Use Isolated Card View, all 5 Editor Indicators (incl. Show Priority Badges in Table Cells — bands are still live), Hide-in-Queue, and Flashcard Response Time Limit (read by the restored Study Dashboard and `phr`). Popup is now **17 settings in 6 sections**.
+
+---
+
+### 2026-08-12 — Edit (IE Settings popup: consolidate 6 sections into 4, fork-owned layout)
+
+**Upstream commit(s):** N/A (local; left uncommitted per user instruction)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build passes)
+**Files touched:**
+- `src/lib/fork_gates.ts` — `FORK_IE_GROUPS` (3 section specs: General / Priority & Scheduling / Advanced, each with a blurb) + `FORK_IE_LAYOUT` (ordered section → setting-id lists, 17 ids, with optional `blocks` for sub-headings).
+- `src/widgets/ie_settings.tsx` — builds its sections from `FORK_IE_LAYOUT` (skipping ids absent from the schema, e.g. after an upstream rename, and dropping empty sections); renders optional sub-headings when a section defines `blocks` (a block whose rows are all filtered out by search or a `showWhen` rule drops its heading too); label/blurb/help via `groupSpec()`; `activeGroup` widened + defaulted to the first visible section.
+- `CLAUDE.md` — this entry.
+
+**Notes:** Layout settled after several rounds of user feedback (upstream's 6 sections → 4 → 3). Final:
+1. **General** — split by sub-heading: *Queue* (Collapse Queue Top Bar, Isolated Card View) then *Appearance* (Priority Widget in Editor, both left borders, both tag-hiders, table badges).
+2. **Priority & Scheduling** — split by sub-heading: *Priority* (Default IncRem Priority, Priority Step Size) then *Scheduling* (`Initial Interval` first because it applies to both curves, then the `Use Beta Scheduler` selector, then only the selected curve's parameters — upstream's `showWhen` rules, honoured by the popup via `isSettingVisible`, hide `Multiplier` while Beta is on and the two Beta params while it is off).
+3. **Advanced** — Hide-in-Queue (now editable here, default off), Flashcard Response Time Limit.
+
+Interim namings/orders not to revive: a "General" section holding scheduling values, a standalone "Beta Scheduler" section, "Appearance" for the display group, "Scheduling & Priority" with scheduling first, and the selector above Initial Interval. Upstream's `IE_SETTINGS_SCHEMA` and every setting's `group` field are untouched — the fork owns presentation only, so a sync merges upstream's schema cleanly. **Merge check:** after a sync, verify `FORK_IE_LAYOUT` still covers every setting worth showing — a newly added upstream setting will NOT appear until its id is added here (deliberate: new upstream settings are opt-in for this fork).
+
+---
+
+### 2026-08-12 — Edit (All settings in one place: Hide-in-Queue moved to the popup; native panel is a signpost only)
+
+**Upstream commit(s):** N/A (local; left uncommitted per user instruction)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build passes)
+**Files touched:**
+- `src/lib/settings.ts` — `enable-hide-in-queue-integration` `tier: 'native'` → `'popup'` (+ FORK comment). Default already `false`; its long description (incl. the duplicate-powerup warning and docs link) is unchanged and now renders in the popup.
+- `src/lib/fork_gates.ts` — new `registerForkSettingsSignpost()`; the interceptor's Hide-in-Queue special case (footer-strip + inline pointer registration) removed, since that setting no longer registers natively; Advanced blurb no longer claims the switch lives in RemNote's panel; General section split into *Queue* / *Appearance* sub-headings.
+- `src/widgets/index.tsx` — calls `registerForkSettingsSignpost` after `registerPluginSettings`.
+- `CLAUDE.md` — Deviation 13 + this entry.
+
+**Notes:** Goal was "one place for every setting". Hiding the row was not enough: native-tier settings are read-only in the popup (`SettingRow`'s `readOnly = spec.tier === 'native'`, and `setIESetting` refuses native writes), so the tier had to move. Reads now resolve from the plugin's synced store via `readRawSetting`'s popup branch. **Migration caveat:** a KB that had Hide-in-Queue enabled in RemNote's panel falls back to the default `false` after this change and must re-enable it in the popup — acceptable here (the fork owner keeps it off), but worth knowing. The signpost row's text was reworded to say all settings are in the plugin's window.
+
+---
+
+### 2026-08-12 — Edit (Hide-in-Queue conflict warning: red callout instead of buried prose)
+
+**Upstream commit(s):** N/A (local; left uncommitted per user instruction)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build passes)
+**Files touched:**
+- `src/lib/settings.ts` — new optional `warningTone?: 'warn' | 'danger'` on `SettingSpecBase`; the Hide-in-Queue duplicate-powerup warning moved out of the middle of `description` into the `warning` field with `warningTone: 'danger'`.
+- `src/widgets/ie_settings.tsx` — the warning callout renders red (2px red border, red tint, `⛔ WARNING:` prefix) when `warningTone === 'danger'`, keeping the existing amber style otherwise.
+- `CLAUDE.md` — this entry.
+
+**Notes:** Upstream already had a `warning` field with an amber callout, but this text sat as a plain paragraph inside `description`, so the one warning in the plugin whose consequence is *fatal* (duplicate powerup registration with the standalone Hide in Queue plugin) read like body copy. Amber is upstream's "this is heavy" tone (e.g. Enable Flashcard Prioritisation); red is reserved for "ignoring this breaks the plugin". The tone field is additive and optional, so upstream warnings keep their existing appearance.
+
+---
+
+### 2026-08-12 — Edit (General section: drop the CardPriority-tag setting; reword three stale descriptions)
+
+**Upstream commit(s):** N/A (local; left uncommitted per user instruction)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build passes)
+**Files touched:**
+- `src/lib/fork_gates.ts` — `hideCardPriorityTag` added to `FORK_HIDDEN_IE_SETTINGS` and removed from the General layout (flat list + Appearance block, kept in sync).
+- `src/lib/settings.ts` — three fork rewordings: **Isolated Card View** description no longer says non-isolated items "appear inside the PDF/HTML reader" (this fork has none — they show the Rem in document context); **Priority Widget in Editor** options `Show for IncRem and Cards / Show only for IncRem / Disable` → `All rems / Incremental Rems only / Off`; **Show Priority Badges in Table Cells** now names the command as renamed by the fork (`Incremental: Refresh Priority Badges (Tables)`).
+- `CLAUDE.md` — hidden-settings list + this entry.
+
+**Notes:** Audit of the General section after the user noticed lingering CardPriority references. Kept unchanged: Collapse Queue Top Bar, Green/Yellow left borders, Hide Dismissed Tag (Dismiss is core, so those tags really exist), Show Priority Badges (bands are live). General now reads: *Queue* (2) + *Appearance* (5) = 7 settings; popup total **16**.
+
+---
+
+### 2026-08-12 — Edit (Shortcuts audit: two DevTools-colliding defaults moved; three descriptions corrected)
+
+**Upstream commit(s):** N/A (local; left uncommitted per user instruction)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build passes)
+**Files touched:**
+- `src/lib/fork_gates.ts` — `FORK_COMMAND_NAMES` generalised into `FORK_COMMAND_OVERRIDES` (`{ name?, description?, keyboardShortcut? }` per command id); the interceptor now applies all three. New overrides: `review-increm-in-editor` → `ctrl+shift+e`, `toggle-ignore-tag` → `ctrl+shift+g`, `set-priority-light` description drops "and Card", `quick-increase/decrease-priority` descriptions name the Priority Step Size and its real default (**5**, upstream's text said 10).
+- `CLAUDE.md` — Deviation 13 note + this entry.
+
+**Notes:** Audit of all registered shortcuts. 17 were active; the debloat had already freed 13 more (their commands are denied). Nothing needed removing — every active binding belongs to a kept feature. Two defaults collided with Chrome DevTools, which matters because this fork runs in a browser tab: `Ctrl+Shift+J` (console) on Review in Editor and `Ctrl+Shift+I` (inspector) on Toggle Ignore Tag; both moved and both remain rebindable in RemNote → Settings → Shortcuts. Note for a future audit: two commands declare `id:` via a const (`dismissIncRemCommandId` = `ctrl+d`, `nextInQueueCommandId` = `cmd+right`), so a naive string-literal scan of `commands.ts` misses them.
+
+---
+
+### 2026-08-12 — Edit (Queue info bar on every item; priority distribution moved into it)
+
+**Upstream commit(s):** N/A (local; left uncommitted per user instruction)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline, none in the touched files; production build + validate + zip pass; dev server restarted and `queue_info_bar.js` served)
+**Files touched:**
+- `src/components/QueueDistribution.tsx` *(new)* — the due-IncRem priority distribution. Ended the day as a proportional stacked bar over the ten `priority_bands.ts` bands (counts only, via `bandForPriority`); also exports `shouldShowQueueInfoBar` and the bar/badge geometry shared by both bars.
+- `src/widgets/queue_info_bar.tsx` *(new)* — `FlashcardUnder` widget carrying the bar for non-IncRem items (distribution + that card's reps/minutes); returns `null` while an IncRem queue item is on screen.
+- `src/widgets/answer_buttons.tsx` — distribution prepended to the IncRem bar; whole bar gated on `shouldShowQueueInfoBar(mode, true, isMobile)`; its own priority pill/percentiles later removed (Fifth follow-up).
+- `src/lib/queue_priority_source.ts` *(new)* — the shared own-rem-then-own-document priority rule (`resolveQueuePriority` / `readRemPriority`), extracted from `queue_info_bar` once a second surface needed it.
+- `src/widgets/queue_priority_chip.tsx` *(new)* — the queue toolbar's `P50 (92.5%)` chip, replacing upstream's denied `queue_toolbar_priority`.
+- `src/lib/consts.ts` — `queueInfoBarModeId` / `QueueInfoBarMode` and `queueToolbarPriorityModeId` / `QueueToolbarPriorityMode`.
+- `src/lib/settings.ts` — two 4-option dropdowns (info bar, default `allExceptMobile`; toolbar chip, default `always`), placed first under General → Queue.
+- `src/lib/ui_helpers.ts` — the top counter no longer appends the bucket string (still shows `+ <count>`).
+- `src/lib/fork_gates.ts` — registers both fork widgets; splits `queue_toolbar_priority` out of the `practicedQueues` group into its own `upstreamQueueToolbarPriority: false` flag; adds the new setting id to the General → Queue layout.
+- `CLAUDE.md` — Deviation 14 + this entry. `README.md` — info-bar and priority-chip sections.
+
+**Follow-up fix (same day, in-app):** the first cut put the gate's two hooks beside the render code, *below* `if (!coreData)`. `tsc` and webpack were both happy; in the app the whole answer-buttons widget vanished for IncRems — bar **and** buttons — because the hook count changes once `coreData` resolves and React throws. Moved them into the hooks section next to the other `useIESetting` calls. Deviation 6 already recorded this trap for upstream's note/read-point hooks; Deviation 14 now records it for these.
+
+**Follow-up (same day, on user request):** the two bars were visibly different sizes and the flashcard one had no priority. Fixed by (a) moving the bar + badge geometry into `QueueDistribution.tsx` as shared helpers that both widgets call — including the outer padding, which is now literally the same constant as `answer_buttons`' `containerStyle` — and (b) giving the flashcard bar a priority chip. The bail also changed from "the rem is an IncRem" to "an IncRem queue item is on screen" (`incrementalQueueActiveKey`), because the old test blanked the bar for flashcards whose rem is itself an IncRem.
+
+**Second follow-up (same day, user correction):** the chip first resolved its priority by walking up to the *closest Incremental ancestor at any depth*, which meant a card in an unprioritised document could show a priority from somewhere far above it. Per the user's rule it now resolves **the card's own rem first, then only its own document**, with no chip at all when neither has a priority. (The own-rem step was briefly dropped on a literal reading of "otherwise it should not show priority" and restored when the user confirmed it: a rem with a priority of its own should use it.) Both sources go through the same `readRemPriority`, so a dismissed rem or document contributes its last recorded history priority.
+
+**Fifth follow-up (same day, user request):** **priority left the info bars entirely and lives only in the toolbar chip.** Both bars previously drew a priority pill (`answer_buttons`: pill + `(x% KB, y% Doc)` + the ⟳ stale-doc hint; `queue_info_bar`: pill + `(x% KB)` + the `own` / `↖ document` badge) — duplicating what the chip already showed two inches above. Both blocks were deleted, the chip now renders `P50 (92.5%)`, and everything explanatory moved into its hover tooltip. **Both bars still call `resolveQueuePriority`, now only to colour their left border** — if that ever needs trimming for cost, that is the call to remove.
+
+**Fourth follow-up (same day, user request):** the distribution was redrawn. It had been four labelled chips on the fork's own `0–10 / 11–30 / 31–60 / 61–100` buckets; the user asked for something glanceable that matches the plugin's existing priority colours, and to adopt the plugin's bands if it has more. It does — ten, in `priority_bands.ts` — so the readout is now a proportional stacked bar over those ten, coloured by the plugin's own band-colour function. `getDueIncRemPriorityBuckets` (4 buckets) survives untouched for the console line in `ui_helpers`.
+
+**Third follow-up (same day, user request):** the queue toolbar's `P50` chip was restored. The user noticed it missing and asked for it back, matching the info bar, clickable only on IncRems, with a four-option setting. The debloat had denied upstream's `queue_toolbar_priority` on 2026-08-11 as part of the `practicedQueues` group — a bad grouping (a priority badge is not a practiced-queues feature), so it vanished as collateral. Rather than un-deny upstream's widget, the fork now ships `queue_priority_chip` and the resolution logic moved out of `queue_info_bar` into the shared `lib/queue_priority_source.ts`, which both read.
+
+**Notes:** The distribution used to be written into the queue counter's CSS `::after` as a bare `(40, 582, 352, 965)` — four unlabelled numbers whose bands you had to remember. In the bar it gets band colours and a tooltip. Two widgets are needed rather than one because the IncRem bar lives in `answer_buttons` (`FlashcardAnswerButtons` + `queueItemTypeFilter: Plugin`, so it can never mount for a flashcard) — the new widget covers everything else and bails for IncRems so the bar never doubles. Card Clusters keep a `FlashcardUnder` widget mounted across siblings with `remId` pinned to the parent, so the new widget tracks the visible card through the context `cardId` + `QueueLoadCard` (the same approach upstream's denied `card_info_bar` uses). **Webpack discovers entries at startup**, so a new widget file needs a dev-server restart, not just a reload.
+
+---
+
+### 2026-08-12 — Edit (Priority Widget in Editor reduced to on/off)
+
+**Upstream commit(s):** N/A (local; left uncommitted per user instruction)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build passes)
+**Files touched:**
+- `src/lib/settings.ts` — the dropdown drops upstream's `all` option (On = `incRemOnly`, Off = `disable`), description narrowed to Incremental Rems, and the default in `IE_SETTINGS_DEFAULTS` moved `'all'` → `'incRemOnly'`.
+- `src/widgets/priority_editor.tsx` — coerce a stored/legacy `'all'` (and empty) to `'incRemOnly'` at the single read site; the later `??` default matched.
+- `CLAUDE.md` — Deviation 13 note + this entry. `README.md` — flashcard-features bullet.
+
+**Notes:** Upstream's three modes differ only in that `all` *also* renders a card-priority editor beside any rem with flashcards (`showCardEditor` requires `displayMode === 'all'`) — a surface for the engine this fork disables, so the real choice is on/off. The default had been `'all'`, so that editor had been rendering all along unless the setting was changed by hand. The union type still admits `'all'` so stored values stay readable; the coercion is what stops a legacy value resurrecting the card editor with no UI left to turn it off. ⚠️ The changed default lives in **upstream's** defaults table — re-apply after a sync.
+
+---
+
+### 2026-08-12 — Note (State of the fork: audit before landing)
+
+**Upstream commit(s):** N/A (docs/audit only)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes (no code change)
+**Compilation verified:** N/A
+**Files touched:**
+- `CLAUDE.md` — corrected Deviation 9 (the queue counter no longer appends the bucket string; superseded by Deviation 14), refreshed the stale "Our HEAD" row, and rebuilt the Runbook conflict map: added the nine fork-touched files it never listed (`ExtractViewer.tsx`, `settings.ts`, `ie_settings.tsx`, `priority_editor.tsx`, `mobileUtils.ts` and the four Deviation-14 files) and widened the `queue.tsx` / `answer_buttons.tsx` rows to name Deviations 11/13/14.
+- `README.md` — see the entry below.
+
+**Notes:** The conflict map is now verified mechanically rather than by eye: every path in `git diff --name-only upstream/main` plus every untracked `src/` file resolves to a row. Re-run that check after each sync. Outstanding at the time of writing, none of it code: the whole Deviation 11/13/14 body of work is **uncommitted** (21 modified, 2 deleted, 6 untracked fork-only sources), `main` is 225 commits behind `merge/upstream-5f8ccdd` with nothing pushed (Runbook Step 6), `public/manifest.json` is still `1.0.42` despite ~15 fork changes since, and the in-app smoke tests have not been run.

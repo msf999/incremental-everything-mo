@@ -15,6 +15,36 @@ import {
   isSettingVisible,
   hiddenDependentsOf,
 } from '../lib/settings';
+import {
+  FORK_HIDDEN_IE_GROUPS,
+  FORK_HIDDEN_IE_SETTINGS,
+  FORK_IE_GROUPS,
+  FORK_IE_LAYOUT,
+} from '../lib/fork_gates';
+
+// FORK (Deviation 13): the popup renders the fork's own section layout
+// (fork_gates.FORK_IE_LAYOUT) rather than upstream's per-setting `group` field —
+// six upstream sections consolidated into four, with rows for disabled features
+// omitted. Values and reads are untouched; this is presentation only. Any id in
+// the layout that isn't in the schema (e.g. after an upstream rename) is skipped
+// rather than crashing, and empty sections drop out.
+const keepId = (id: string) =>
+  !FORK_HIDDEN_IE_SETTINGS.has(id) && !!(IE_SETTINGS_SCHEMA as any)[id];
+
+const FORK_VISIBLE_IDS_BY_GROUP = FORK_IE_LAYOUT.map(({ group, ids, blocks }) => ({
+  group,
+  ids: ids.filter(keepId) as typeof IE_SETTING_IDS_BY_GROUP[number]['ids'],
+  blocks: blocks
+    ?.map((b) => ({ ...b, ids: b.ids.filter(keepId) }))
+    .filter((b) => b.ids.length > 0),
+})).filter((g) => g.ids.length > 0);
+
+/** Flat list of the ids this popup renders — used for the "changed" counter. */
+const FORK_VISIBLE_IDS = FORK_VISIBLE_IDS_BY_GROUP.flatMap((g) => g.ids);
+
+/** Section label/blurb/help: fork sections first, then upstream's. */
+const groupSpec = (group: string): { label: string; blurb?: string; helpPath?: string } =>
+  FORK_IE_GROUPS[group] ?? (IE_SETTING_GROUPS as any)[group] ?? { label: group };
 
 /**
  * The IE Settings popup: every setting the plugin owns, grouped and layered,
@@ -244,12 +274,22 @@ function SettingRow({ id, spec, value, onChange, hiddenDependents }: RowProps) {
             lineHeight: 1.5,
             padding: '8px 10px',
             borderRadius: 6,
-            border: '1px solid rgba(245, 158, 11, 0.45)',
-            backgroundColor: 'rgba(245, 158, 11, 0.10)',
+            // FORK (Deviation 13): 'danger' warnings (ignoring them breaks the
+            // plugin) get a red callout; the default amber is for "this is heavy".
+            border:
+              spec.warningTone === 'danger'
+                ? '2px solid rgba(220, 38, 38, 0.65)'
+                : '1px solid rgba(245, 158, 11, 0.45)',
+            backgroundColor:
+              spec.warningTone === 'danger'
+                ? 'rgba(220, 38, 38, 0.10)'
+                : 'rgba(245, 158, 11, 0.10)',
             color: 'var(--rn-clr-content-primary, #0f172a)',
           }}
         >
-          <strong>⚠️ </strong>
+          <strong style={spec.warningTone === 'danger' ? { color: 'var(--rn-clr-red, #dc2626)' } : undefined}>
+            {spec.warningTone === 'danger' ? '⛔ WARNING: ' : '⚠️ '}
+          </strong>
           {spec.warning}
         </div>
       )}
@@ -306,7 +346,13 @@ function SettingRow({ id, spec, value, onChange, hiddenDependents }: RowProps) {
 
 export function IESettingsWidget() {
   const plugin = usePlugin();
-  const [activeGroup, setActiveGroup] = useState<SettingGroupId>('flashcardPriority');
+  // FORK (Deviation 13): widened to string (fork section ids aren't in upstream's
+  // SettingGroupId union) and defaulted to the first VISIBLE section — upstream's
+  // default 'flashcardPriority' is now hidden, which would open the popup with no
+  // section selected.
+  const [activeGroup, setActiveGroup] = useState<string>(
+    FORK_VISIBLE_IDS_BY_GROUP[0]?.group ?? 'general'
+  );
   const [search, setSearch] = useState('');
 
   const allIds = useMemo(() => Object.keys(IE_SETTINGS_SCHEMA) as IESettingId[], []);
@@ -334,15 +380,21 @@ export function IESettingsWidget() {
     );
   };
 
+  // FORK (Deviation 13): count only settings this popup actually shows. Upstream
+  // counted every popup-tier id in the schema, so a hidden setting holding a
+  // non-default value (e.g. display-fsrs-dsr in the hidden FSRS group) reported
+  // "N changed from default" with no visible row marked — nothing to click.
   const modifiedCount = values
-    ? (allIds.filter((id) => IE_SETTINGS_SCHEMA[id].tier === 'popup' && !isDefault(id, values[id])).length)
+    ? FORK_VISIBLE_IDS.filter(
+        (id) => IE_SETTINGS_SCHEMA[id].tier === 'popup' && !isDefault(id, values[id])
+      ).length
     : 0;
 
   const onChange = async (id: IESettingId, value: unknown) => {
     await setIESetting(plugin, id, value as never);
   };
 
-  const visibleGroups = IE_SETTING_IDS_BY_GROUP.filter((g) => g.ids.some(matches));
+  const visibleGroups = FORK_VISIBLE_IDS_BY_GROUP.filter((g) => g.ids.some(matches));
   const shownGroups = query ? visibleGroups : visibleGroups.filter((g) => g.group === activeGroup);
 
   const navBtn = (active: boolean): CSSProperties => ({
@@ -415,9 +467,9 @@ export function IESettingsWidget() {
               overflowY: 'auto',
             }}
           >
-            {IE_SETTING_IDS_BY_GROUP.map(({ group, ids }) => (
+            {FORK_VISIBLE_IDS_BY_GROUP.map(({ group, ids }) => (
               <button key={group} onClick={() => setActiveGroup(group)} style={navBtn(group === activeGroup)}>
-                <span>{IE_SETTING_GROUPS[group].label}</span>
+                <span>{groupSpec(group).label}</span>
                 <span style={{ fontSize: 10, color: 'var(--rn-clr-content-tertiary, #94a3b8)' }}>
                   {ids.filter(visible).length}
                 </span>
@@ -436,18 +488,18 @@ export function IESettingsWidget() {
               No settings match “{search}”.
             </div>
           ) : (
-            shownGroups.map(({ group, ids }) => (
+            shownGroups.map(({ group, ids, blocks }) => (
               <div key={group} style={{ marginBottom: 18 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-                  <span style={{ fontSize: 13, fontWeight: 700 }}>{IE_SETTING_GROUPS[group].label}</span>
-                  {IE_SETTING_GROUPS[group].helpPath && (
+                  <span style={{ fontSize: 13, fontWeight: 700 }}>{groupSpec(group).label}</span>
+                  {groupSpec(group).helpPath && (
                     <HelpLink
-                      path={IE_SETTING_GROUPS[group].helpPath!}
-                      label={IE_SETTING_GROUPS[group].label}
+                      path={groupSpec(group).helpPath!}
+                      label={groupSpec(group).label}
                     />
                   )}
                 </div>
-                {IE_SETTING_GROUPS[group].blurb && (
+                {groupSpec(group).blurb && (
                   <div
                     style={{
                       fontSize: 12,
@@ -456,19 +508,47 @@ export function IESettingsWidget() {
                       marginTop: 2,
                     }}
                   >
-                    {IE_SETTING_GROUPS[group].blurb}
+                    {groupSpec(group).blurb}
                   </div>
                 )}
-                {ids.filter(matches).map((id) => (
-                  <SettingRow
-                    key={id}
-                    id={id}
-                    spec={IE_SETTINGS_SCHEMA[id]}
-                    value={values[id]}
-                    onChange={(v) => onChange(id, v)}
-                    hiddenDependents={hiddenDependentsOf(id, values)}
-                  />
-                ))}
+                {(() => {
+                  const row = (id: IESettingId) => (
+                    <SettingRow
+                      key={id}
+                      id={id}
+                      spec={IE_SETTINGS_SCHEMA[id]}
+                      value={values[id]}
+                      onChange={(v) => onChange(id, v)}
+                      hiddenDependents={hiddenDependentsOf(id, values)}
+                    />
+                  );
+                  // FORK (Deviation 13): optional sub-headings inside a section.
+                  // A block whose rows are all filtered out (search, or a
+                  // showWhen rule) drops its heading too.
+                  if (!blocks) return ids.filter(matches).map(row);
+                  return blocks.map((block) => {
+                    const shown = (block.ids as IESettingId[]).filter(matches);
+                    if (shown.length === 0) return null;
+                    return (
+                      <div key={block.heading}>
+                        <div
+                          style={{
+                            fontSize: 11,
+                            fontWeight: 700,
+                            letterSpacing: '0.04em',
+                            textTransform: 'uppercase',
+                            color: 'var(--rn-clr-content-tertiary, #94a3b8)',
+                            marginTop: 14,
+                            marginBottom: 2,
+                          }}
+                        >
+                          {block.heading}
+                        </div>
+                        {shown.map(row)}
+                      </div>
+                    );
+                  });
+                })()}
               </div>
             ))
           )}
