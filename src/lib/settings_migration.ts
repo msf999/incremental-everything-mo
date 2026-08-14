@@ -50,8 +50,18 @@ export { ieSettingsValuesKey, ieSettingsMigratedKey, ieSettingsMigrationReportKe
  * v5: skip_mastery_drill renamed and inverted to enable-mastery-drill, so the
  *     opt-in reads positively like the flashcard-prioritisation gate. Handled by
  *     LEGACY_CONVERSIONS below — a rename alone would silently reset the value.
+ * v6: FORK — enable-hide-in-queue-integration moved native -> popup (2026-08-12),
+ *     so the plugin's own settings window is the single place every setting is
+ *     edited. Same case as v4, and it needs the bump for the same reason: without
+ *     it a KB already seeded at v5 never re-registers the id, so readRawSetting
+ *     takes the popup branch, finds no blob key (the seed's cleanup strips
+ *     non-popup keys), and resolves to the default `false`. Hide-in-Queue would
+ *     then silently switch off — its five powerups and commands stop registering
+ *     and rems tagged with them lose their queue filtering — and because the id
+ *     is no longer registered, plugin.settings.getSetting THROWS for it, making
+ *     the stored native value permanently unreadable rather than merely reset.
  */
-export const SEED_VERSION = 5;
+export const SEED_VERSION = 6;
 
 /**
  * Settings that changed id or polarity, and how to carry the old value across.
@@ -367,11 +377,31 @@ export async function migrateIESettingsIfNeeded(plugin: RNPlugin): Promise<void>
     return;
   }
 
-  // A KB seeded at an older version is re-read in full: values changed in
-  // RemNote's settings panel since that seed would otherwise be lost.
-  const force = doneVersion > 0;
-  if (force) {
-    console.log(`${LOG} re-seeding: stored version ${doneVersion} < ${SEED_VERSION}`);
+  // FORK (2026-08-14, pre-merge review §1.2): do NOT force a full re-read.
+  //
+  // `force` made every seed-version bump re-read all IE_POPUP_TIER_IDS from
+  // RemNote's registration records and write the result over the plugin's blob.
+  // That is data loss, not migration: `setIESetting` — the ONLY writer the IE
+  // Settings popup has — writes solely to plugin.storage.setSynced and never back
+  // to RemNote, so RemNote cannot know about any popup edit. Every such edit made
+  // since the last completed seed was therefore reverted on the next activation,
+  // silently and synced. The guaranteed casualties were the settings that never
+  // had a native panel row to be re-derived from — `queue-info-bar-mode` and
+  // `queue-toolbar-priority-mode`, both fork-added 2026-08-12.
+  //
+  // Nothing needed it: v6 exists for the enable-hide-in-queue-integration
+  // native→popup tier move, and that id migrates correctly WITHOUT force, because
+  // the v5 cleanup stripped it as a non-popup key, so its `hasOwnProperty` check
+  // is false either way and the normal path re-reads it.
+  //
+  // If a future version genuinely needs specific ids re-read from the panel, add
+  // them to a per-version allow-list here rather than flipping this back on.
+  const force = false;
+  if (doneVersion > 0) {
+    console.log(
+      `${LOG} re-seeding: stored version ${doneVersion} < ${SEED_VERSION} ` +
+        `(force disabled — popup-set values are preserved)`
+    );
   }
   await migrateIESettings(plugin, { force });
 }

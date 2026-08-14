@@ -1,3 +1,47 @@
+/**
+ * CSS selector matching THIS plugin's widget iframes.
+ *
+ * RemNote stamps `data-plugin-id` on a widget's iframe with the plugin's
+ * manifest id. Upstream hardcoded `="incremental-everything"` in every
+ * plugin-scoped stylesheet — but this fork's manifest id is
+ * `incremental-everything-mo` (Deviation 1), and attribute `=` is an exact
+ * match, so **none of that CSS ever applied here**. That is not a cosmetic
+ * detail: `QUEUE_LAYOUT_FIX_CSS` (register/callbacks.ts) is the rule set that
+ * makes the queue pane give the plugin iframe its full height, and its silent
+ * no-op is what the "queue document doesn't fill the pane" limitation in
+ * Deviation 11 was actually caused by — not, as recorded there, an SDK limit.
+ *
+ * Deliberately a PREFIX match (`^=`) rather than the fork id spelled out:
+ *   - it matches upstream's id and every `incremental-everything-*` fork id, so
+ *     the rules keep working if the manifest id changes suffix again, and
+ *   - it cannot silently desync from `public/manifest.json` the way a second
+ *     hardcoded copy of the id would.
+ * Keep every plugin-scoped selector built from this constant.
+ */
+export const pluginIframeSelector = 'iframe[data-plugin-id^="incremental-everything"]';
+
+/**
+ * THIS fork's plugin id — must equal `id` in `public/manifest.json`.
+ *
+ * Only a LAST-RESORT fallback: prefer `plugin.manifest?.id || plugin.id` and use
+ * this when neither is populated. It exists because the alternative fallback was
+ * upstream's literal `'incremental-everything'`, which is guaranteed wrong here
+ * (Deviation 1 requires the ids to differ), so falling back to it re-creates the
+ * very bug the lookup is there to avoid.
+ *
+ * Where this matters: the `pluginId` field of the queue item returned from
+ * `GetNextCard` (register/callbacks.ts). RemNote routes the item to a plugin by
+ * that id, and an id no installed plugin owns means the item is DROPPED —
+ * invisible while flashcards remain (RemNote just shows a card instead), and
+ * fatal once IncRems are all that is left, where it surfaces as RemNote's
+ * "you have finished all your cards" screen with the IncRems never appearing.
+ *
+ * A prefix match cannot be used here the way `pluginIframeSelector` does it:
+ * this is a value RemNote matches exactly, not a selector.
+ * ⚠️ If `public/manifest.json`'s id ever changes, change this with it.
+ */
+export const forkPluginId = 'incremental-everything-mo';
+
 // powerup
 export const powerupCode = 'incremental';
 export const prioritySlotCode = 'priority';
@@ -115,12 +159,10 @@ export const parentSelectorWidgetId = 'parent_selector';
 
 // css
 export const collapseTopBarId = 'collapse-top-bar';
-export const collapseTopBarKey = 'collapseTopBarState';
 
 export const queueCounterId = 'queue-counter';
 
 export const hideIncEverythingId = 'hide-inc-everything';
-export const shouldHideIncEverythingKey = 'shouldHideIncEverything';
 
 // commands
 export const dismissIncRemCommandId = 'dismiss-inc-rem';
@@ -157,10 +199,6 @@ export const queueLayoutFixId = 'incremental-everything-queue-layout-fix';
 export const queueHideElementsId = 'incremental-everything-queue-hide-elements';
 export const collapseTopBarCssId = 'incremental-everything-collapse-top-bar'; // CSS registration ID
 export const incrementalQueueActiveKey = 'incremental-queue-active';
-// Set by the Previous button right before goBackToPreviousCard(); consumed once by the
-// QueueComponent due-check so a just-reviewed (now future-dated) item revisited via Previous
-// is shown instead of auto-skipped.
-export const queueBackNavKey = 'queue-back-nav-flag';
 export const activeHighlightIdKey = 'active-highlight-id-key';
 export const currentIncrementalRemTypeKey = 'current-incremental-rem-type-key';
 export const currentScopeRemIdsKey = 'current-scope-rem-ids-key';

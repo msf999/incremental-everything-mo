@@ -13,6 +13,7 @@ import { IncRemTable, IncRemWithDetails } from '../components';
 import type { IncRemListState } from '../components';
 import '../style.css';
 import '../App.css';
+import { seedPriorityForTimer } from '../lib/incremental_rem/types';
 
 const INC_REM_LIST_STATE_KEY = 'inc-rem-list-state';
 
@@ -240,7 +241,7 @@ export function IncRemList() {
     await plugin.storage.setSession('editor-review-timer-rem-id', remId);
     await plugin.storage.setSession('editor-review-timer-start', Date.now());
     await plugin.storage.setSession('editor-review-timer-interval', interval);
-    await plugin.storage.setSession('editor-review-timer-priority', incRemInfo?.priority ?? 10);
+    await plugin.storage.setSession('editor-review-timer-priority', seedPriorityForTimer(incRemInfo));
     await plugin.storage.setSession('editor-review-timer-rem-name', remName || 'Unnamed Rem');
     await plugin.storage.setSession('editor-review-timer-from-queue', false);
     await plugin.storage.setSession('editor-review-timer-origin', 'inc-rem-list');

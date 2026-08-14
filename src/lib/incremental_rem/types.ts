@@ -220,6 +220,56 @@ export const UNREADABLE_PRIORITY_FALLBACK = 50;
 export const PrioritySource = z.enum(['slot', 'history', 'fallback']);
 export type PrioritySource = z.infer<typeof PrioritySource>;
 
+/**
+ * The `priority` field to spread into a history entry — `{}` when the value is a
+ * placeholder.
+ *
+ * FORK (2026-08-14, bug-hunt #13). The contract above says a `'fallback'`
+ * priority "means nothing; it must not be written back or stamped into history",
+ * but only `scheduler.ts` honoured it; five other writers stamped
+ * `priority: incRem.priority` unconditionally. That launders the placeholder into
+ * real data, and it is a one-way door: once 50 sits in a history entry, the next
+ * read finds it via the history tier and reports `prioritySource: 'history'` —
+ * which this same file calls "Trustworthy as a value". The rem is then
+ * permanently, silently rewritten to P50, and the older entries that might still
+ * have held the real priority are buried beneath it.
+ *
+ * Use this at EVERY history writer instead of repeating the conditional.
+ */
+/**
+ * The priority to SEED a review-timer session with, or `undefined` when there is
+ * none worth seeding.
+ *
+ * FORK (2026-08-14, gap review): the counterpart to `priorityStampFor`, and the
+ * more important half. The timer starters used to seed
+ * `editor-review-timer-priority` with `incRem?.priority ?? 10` — and for a rem
+ * whose slot is unreadable that value IS the placeholder. The timer then treats a
+ * non-null session priority as "the user chose this" and calls
+ * `setIncRemPriority` with it, writing the placeholder into the REAL Priority
+ * slot. That is the one-way door: the next read resolves `prioritySource: 'slot'`,
+ * which the contract above calls fully trustworthy, and the rem is silently and
+ * permanently rewritten to 50 with no marker left behind.
+ *
+ * Stamping a placeholder into history is recoverable; writing it to the slot is
+ * not. So the placeholder has to be stopped HERE, before it is ever seeded.
+ *
+ * The `?? 10` for a missing incRem is left as upstream had it — a separate,
+ * pre-existing fabrication, out of scope for this change.
+ */
+export function seedPriorityForTimer(
+  incRem: Pick<IncrementalRem, 'priority' | 'prioritySource'> | null | undefined
+): number | undefined {
+  if (!incRem) return 10;
+  if (incRem.prioritySource === 'fallback') return undefined;
+  return incRem.priority;
+}
+
+export function priorityStampFor(
+  incRem: Pick<IncrementalRem, 'priority' | 'prioritySource'>
+): { priority?: number } {
+  return incRem.prioritySource === 'fallback' ? {} : { priority: incRem.priority };
+}
+
 export const IncrementalRem = z.object({
   remId: z.string(),
   nextRepDate: z.number(),

@@ -73,6 +73,8 @@ import {
 // Type-only: utils.ts imports getIESetting from this module, so a value import
 // here would close a runtime require cycle. `import type` is erased.
 import type { PerformanceMode } from './utils';
+// fork_gates imports nothing local, so this cannot close a require cycle.
+import { DENIED_NATIVE_SETTINGS } from './fork_gates';
 
 /**
  * The type of every user setting. Keys are the setting ids as registered with
@@ -525,10 +527,12 @@ export const IE_SETTINGS_SCHEMA: Record<IESettingId, SettingSpec> = {
     group: 'queue',
     title: 'Queue Info Bar',
     description:
-      'A bar under the queue item showing the due-Incremental-Rem priority distribution ' +
-      '(counts in the ranges 0-10 / 11-30 / 31-60 / 61-100, lower = more important), plus ' +
-      'the item\'s own stats: priority and KB percentile for an Incremental Rem, or ' +
-      'repetitions and review time for a flashcard.',
+      'A bar under the queue item showing how many Incremental Rems are due in each ' +
+      'priority band, coloured by the same scale the priority badges use (lower = more ' +
+      'important). The band the current item sits in is ringed. Hover for the exact ' +
+      'counts and percentages. For a flashcard the bar also shows that card\'s ' +
+      'repetitions and review time. The item\'s own priority is shown by the coloured ' +
+      'chip in the queue toolbar, not here.',
     options: [
       { value: 'all', label: 'All queue items' },
       { value: 'incRemOnly', label: 'Incremental Rems only' },
@@ -815,6 +819,16 @@ function coerce<K extends IESettingId>(id: K, raw: unknown): IESettings[K] {
   if (typeof fallback === 'boolean') {
     return Boolean(raw) as IESettings[K];
   }
+  // FORK (2026-08-14, bug-hunt #38): a dropdown value must be one of the offered
+  // options. The fork narrowed `priorityEditorDisplayMode` from three options to
+  // two, so a KB still holding the retired `'all'` matched no <option>: React set
+  // selectedIndex -1 and the control painted EMPTY, with no way to see what the
+  // setting was. Falling back to the default keeps the UI truthful; the read path
+  // in priority_editor coerces the same legacy value independently.
+  const spec = IE_SETTINGS_SCHEMA[id];
+  if (spec.kind === 'dropdown' && !spec.options.some((o) => o.value === raw)) {
+    return fallback;
+  }
   return raw as IESettings[K];
 }
 
@@ -835,6 +849,13 @@ async function readRawSetting(plugin: RNPlugin, id: IESettingId): Promise<unknow
     const values = await plugin.storage.getSynced<Partial<IESettings>>(ieSettingsValuesKey);
     return values ? values[id] : undefined;
   }
+  // FORK (2026-08-14, bug-hunt #39): the fork gates drop four native settings
+  // outright, so getSetting THROWS for them on every read — and these are read on
+  // hot paths (shouldUseLightMode runs per queue item), producing a console.warn
+  // each time. Structural noise, not an edge case, and it buries real errors.
+  // Their defaults are exactly the fork's pinned values, so returning undefined
+  // here resolves identically, just quietly.
+  if (DENIED_NATIVE_SETTINGS.has(id)) return undefined;
   try {
     return await plugin.settings.getSetting<unknown>(id);
   } catch (e) {

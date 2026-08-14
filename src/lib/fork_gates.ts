@@ -360,7 +360,7 @@ const denied = (key: Exclude<keyof GateGroup, 'enabled'>): Set<string> =>
 // fall back to defaults via readRawSetting's try/catch — which are exactly the
 // fork's desired values: prioritisation off, performance 'light', light-mode
 // auto-switching on.
-const DENIED_NATIVE_SETTINGS: ReadonlySet<string> = new Set(
+export const DENIED_NATIVE_SETTINGS: ReadonlySet<string> = new Set(
   FORK_FEATURES.nativeModeSettings
     ? []
     : [
@@ -427,6 +427,18 @@ const FORK_COMMAND_OVERRIDES: Record<
 };
 
 export function installForkGates(plugin: ReactRNPlugin) {
+  // FORK (2026-08-14, bug-hunt #49): install once. Nothing untangles these
+  // wrappers (there is no onDeactivate teardown), so a second call would wrap the
+  // wrappers — permanently, for all six methods. It happens to be harmless today
+  // only because every transform is idempotent, and that is luck: add one command
+  // override whose name does not re-derive to itself and a double install
+  // silently double-prefixes. HMR in `npm run dev` is the realistic trigger.
+  const gatesHost = plugin.app as any;
+  if (gatesHost.__forkGatesInstalled) {
+    console.log('[ForkGates] already installed — skipping');
+    return;
+  }
+  gatesHost.__forkGatesInstalled = true;
   const deniedCommands = denied('commands');
   const deniedWidgets = denied('widgets');
   const deniedMenuItems = denied('menuItems');

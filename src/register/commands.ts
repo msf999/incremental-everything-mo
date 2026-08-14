@@ -1,6 +1,5 @@
 import {
   ReactRNPlugin,
-  RNPlugin,
   SelectionType,
   PluginRem,
   BuiltInPowerupCodes,
@@ -56,6 +55,8 @@ import { getHoveredReference } from './events';
 import { transferToDismissed } from '../lib/dismissed';
 import { addToIncrementalHistory, addDismissalToIncrementalHistory } from '../lib/history_utils';
 import { FORK_FEATURES } from '../lib/fork_gates';
+import { runQueueActionOnce } from '../lib/action_guard';
+import { priorityStampFor } from '../lib/incremental_rem/types';
 import { handleCardPriorityInheritance } from '../lib/card_priority/card_priority_inheritance';
 import dayjs from 'dayjs';
 import {
@@ -1564,7 +1565,11 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     name: 'Review in Editor (Execute Repetition)',
     keyboardShortcut: 'ctrl+shift+j',
     quickCode: 'er',
-    action: async () => {
+    // FORK (2026-08-15, review §2.2): the fifth mutating queue command, guarded like
+    // the other four. It reaches updateReviewRemData, so a double trigger appends two
+    // repetitions for one review — the same damage runQueueActionOnce was introduced
+    // to prevent on Dismiss / Next / Skip / Open Editor.
+    action: async () => runQueueActionOnce(async () => {
       console.log('--- Review Incremental Rem in Editor Command Triggered ---');
 
       const url = await plugin.window.getURL();
@@ -1618,7 +1623,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
           remId: focusedRem._id,
         });
       }
-    },
+    }),
   });
 
   // Set Read Point (Bookmark) for rem-type IncRems. Associates the focused rem
@@ -2305,7 +2310,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     name: 'Dismiss Incremental Rem',
     keyboardShortcut: 'ctrl+d',
     quickCode: 'dis',
-    action: async () => {
+    action: async () => runQueueActionOnce(async () => {
       const url = await plugin.window.getURL();
       const isQueue = url && url.includes('/flashcards');
 
@@ -2393,7 +2398,8 @@ export async function registerCommands(plugin: ReactRNPlugin) {
           scheduled: incRemInfo.nextRepDate,
           reviewTimeSeconds: reviewTimeSeconds,
           eventType: 'rep',
-          priority: incRemInfo.priority,
+          // FORK (#13): see priorityStampFor — never stamp a placeholder priority.
+          ...priorityStampFor(incRemInfo),
         };
 
         const updatedHistory = [...(incRemInfo.history || []), currentRep];
@@ -2479,14 +2485,17 @@ export async function registerCommands(plugin: ReactRNPlugin) {
             : `${count} Incremental Rems dismissed.`
         );
       }
-    },
+    }),
   });
 
   // Next item in the queue action.
   // Only works in the queue with an Incremental Rem active.
   // Replicates the Next button logic: PDF page history + handleNextRepetitionClick.
   // Shared by the cmd+right and opt+T bindings below.
-  const runNextInQueueAction = async () => {
+  // FORK (2026-08-14, bug-hunt #6): dropped if one of these actions is already
+  // running. Key-repeat on opt+T used to re-enter during the sleep(150) inside
+  // handleNextRepetitionClick, recording two reviews and consuming two cards.
+  const runNextInQueueAction = async () => runQueueActionOnce(async () => {
     const url = await plugin.window.getURL();
 
     if (!url || !url.includes('/flashcards')) {
@@ -2527,7 +2536,8 @@ export async function registerCommands(plugin: ReactRNPlugin) {
 
     // Handle PDF page history (same as handleNextClick in answer_buttons.tsx)
     const remType = await plugin.storage.getSession<string | null>(currentIncrementalRemTypeKey);
-    if (remType === 'pdf') {
+    // FORK (2026-08-14, bug-hunt #23): gated like the Open Editor button's capturePdfPageHistoryIfNeeded — without it the keyboard paths kept writing pdfState on every advance despite the reader being disabled.
+    if (FORK_FEATURES.pdfReader && remType === 'pdf') {
       const pdfRem = await getActivePdfForIncRem(plugin, rem);
       if (pdfRem) {
         const currentPage = await getIncrementalReadingPosition(plugin, rem._id, pdfRem._id);
@@ -2539,7 +2549,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
 
     // Advance the queue (updates SRS data + removes current card)
     await handleNextRepetitionClick(plugin, incRemInfo);
-  };
+  });
 
   // Primary binding: Cmd+Right (Mac) / Ctrl+Right (Win/Linux).
   plugin.app.registerCommand({
@@ -2568,14 +2578,28 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     id: 'skip-in-queue',
     name: 'Skip Item in Queue',
     keyboardShortcut: 'opt+b',
-    action: async () => {
+    action: async () => runQueueActionOnce(async () => {
       const url = await plugin.window.getURL();
       if (!url || !url.includes('/flashcards')) {
         await plugin.app.toast('This command only works in the queue.');
         return;
       }
+      // FORK (2026-08-14, bug-hunt #24): only act on an Incremental Rem. This
+      // mirrors the Skip BUTTON, which lives in FlashcardAnswerButtons with
+      // queueItemTypeFilter: Plugin and so can never fire on a flashcard — but the
+      // command checked only the URL, so opt+B on a regular flashcard silently
+      // removed a due card from the session with no review, no reschedule and no
+      // feedback. Its two sibling commands already guard this way.
+      const currentCard = await plugin.queue.getCurrentCard();
+      const remId =
+        currentCard?.remId || (await plugin.storage.getSession<string>(currentIncRemKey)) || undefined;
+      const rem = remId ? await plugin.rem.findOne(remId) : undefined;
+      if (!rem || !(await rem.hasPowerup(powerupCode))) {
+        await plugin.app.toast('Skip only works on Incremental Rems, not regular flashcards.');
+        return;
+      }
       await plugin.queue.removeCurrentCardFromQueue();
-    },
+    }),
   });
 
   // Open Incremental Editor command (Ctrl+G)
@@ -2584,7 +2608,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     id: 'open-incremental-editor',
     name: 'Open Incremental Editor',
     keyboardShortcut: 'ctrl+g',
-    action: async () => {
+    action: async () => runQueueActionOnce(async () => {
       const url = await plugin.window.getURL();
 
       if (!url || !url.includes('/flashcards')) {
@@ -2633,7 +2657,8 @@ export async function registerCommands(plugin: ReactRNPlugin) {
 
       const skipRemDocument = titleEndsWithOpenLinkTag && uniqueUrls.length > 0;
       const remType = await plugin.storage.getSession<string | null>(currentIncrementalRemTypeKey);
-      if (remType === 'pdf') {
+      // FORK (2026-08-14, bug-hunt #23): gated like the Open Editor button's capturePdfPageHistoryIfNeeded — without it the keyboard paths kept writing pdfState on every advance despite the reader being disabled.
+      if (FORK_FEATURES.pdfReader && remType === 'pdf') {
         const pdfRem = await getActivePdfForIncRem(plugin, rem);
         if (pdfRem) {
           const currentPage = await getIncrementalReadingPosition(plugin, rem._id, pdfRem._id);
@@ -2646,14 +2671,23 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       await handleNextRepetitionClick(plugin, incRemInfo);
 
       if (!skipRemDocument) {
-        const incRemType = await determineIncRemType(plugin, rem);
-        if (incRemType === 'pdf-note') {
-          await rem.openRemAsPage();
-        } else {
-          await plugin.window.openRem(rem);
+        // FORK (2026-08-14, bug-hunt #36): the button's openEditorAction wraps this
+        // and toasts on failure; the command did not, so a throw here rejected the
+        // action AFTER the review had been recorded and the card removed — silent
+        // to the user, who is left wondering why nothing opened.
+        try {
+          const incRemType = await determineIncRemType(plugin, rem);
+          if (incRemType === 'pdf-note') {
+            await rem.openRemAsPage();
+          } else {
+            await plugin.window.openRem(rem);
+          }
+        } catch (error) {
+          console.error('[open-incremental-editor] failed to open document', error);
+          await plugin.app.toast('Error opening document');
         }
       }
-    },
+    }),
   });
 
   // ─── Copy / Paste Rem Sources ────────────────────────────────────────────

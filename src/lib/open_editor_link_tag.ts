@@ -15,11 +15,21 @@ export const REM_TITLE_ENDS_WITH_OPEN_LINK_TAG = /\(\s*OpenLink\s*\)\s*$/;
 
 /** Normalize so titles like `Article （OpenLink）` (fullwidth parens) still match. */
 export function normalizeVisibleTitleForLinkCheck(s: string): string {
-  return s
-    .normalize('NFKC')
-    .replace(/\uFF08/g, '(')
-    .replace(/\uFF09/g, ')')
-    .trim();
+  return (
+    s
+      .normalize('NFKC')
+      // FORK (2026-08-14, bug-hunt #34): strip zero-width and bidi control marks
+      // BEFORE trimming. `trim()` and `\s` do not cover U+200B/200E/200F etc., so a
+      // title pasted from RTL or web content carrying a trailing LRM/RLM/ZWSP
+      // failed the `$`-anchored suffix test and the whole (OpenLink) policy
+      // silently stopped applying to it.
+      .replace(/[\u200B-\u200F\u202A-\u202E\u2060\uFEFF]/g, '')
+      // NFKC already folds fullwidth parens; kept for clarity and for input that
+      // skips normalisation.
+      .replace(/\uFF08/g, '(')
+      .replace(/\uFF09/g, ')')
+      .trim()
+  );
 }
 
 /**
@@ -39,15 +49,26 @@ export async function extractExternalHttpUrlsFromRem(
       BuiltInPowerupCodes.Link,
       'URL'
     );
-    if (urlProp && typeof urlProp === 'string') urls.push(urlProp);
+    // FORK (2026-08-14, bug-hunt #35): this function promises HTTP(S) URLs, and
+    // its output is handed straight to window.open. A Link powerup holding a
+    // mailto:/file:/javascript: URL was passed through unvalidated — and it also
+    // made the list non-empty, which suppressed the Rem document.
+    if (urlProp && typeof urlProp === 'string' && /^https?:\/\//i.test(urlProp)) {
+      urls.push(urlProp);
+    }
   }
 
   const seen = new Set<unknown>();
   const traverseSafe = (node: unknown): void => {
     if (node == null) return;
     if (typeof node === 'string') {
-      const matches = node.match(/https?:\/\/[^\s"'<\[\]{}()]+/g);
-      if (matches) urls.push(...matches);
+      // FORK (2026-08-14, bug-hunt #33): allow BALANCED parentheses inside a URL
+      // and strip trailing sentence punctuation. The old class excluded `(` and
+      // `)` outright, so `…/wiki/Mercury_(planet)` was truncated to `…/Mercury_`
+      // — a wrong page opened AND, because the truncated string is non-empty,
+      // skipRemDocument became true so the Rem document was suppressed too.
+      const matches = node.match(/https?:\/\/(?:\([^\s()]*\)|[^\s"'<\[\]{}()])+/g);
+      if (matches) urls.push(...matches.map((u) => u.replace(/[.,;:!?]+$/, '')));
       return;
     }
     if (typeof node !== 'object') return;
@@ -67,7 +88,17 @@ export async function extractExternalHttpUrlsFromRem(
   traverseSafe(await rem.text);
   if (rem.backText != null) traverseSafe(await rem.backText);
 
-  return Array.from(new Set(urls)).filter((u) => !u.includes('remnote.com'));
+  // FORK (#33): match the HOSTNAME, not a substring. `includes('remnote.com')`
+  // also dropped legitimate external URLs that merely mention it anywhere in the
+  // string, e.g. `https://example.com/?ref=remnote.com`.
+  return Array.from(new Set(urls)).filter((u) => {
+    try {
+      const host = new URL(u).hostname.toLowerCase();
+      return host !== 'remnote.com' && !host.endsWith('.remnote.com');
+    } catch {
+      return false; // unparseable — not something to open
+    }
+  });
 }
 
 /**

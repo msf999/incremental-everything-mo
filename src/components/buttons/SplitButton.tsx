@@ -20,6 +20,8 @@ interface SplitButtonProps {
   chevronActive?: boolean;
   style?: React.CSSProperties;
   title?: string;
+  /** Greys out and blocks the main click area (the chevron stays usable). */
+  disabled?: boolean;
 }
 
 export function SplitButton({
@@ -31,6 +33,7 @@ export function SplitButton({
   chevronActive = false,
   style,
   title,
+  disabled = false,
 }: SplitButtonProps) {
   const [menuOpen, setMenuOpen] = React.useState(false);
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -80,11 +83,13 @@ export function SplitButton({
     <div ref={containerRef} style={{ position: 'relative', display: 'inline-flex' }}>
       {/* Main button */}
       <button
-        onClick={async () => { await onClick(); }}
+        onClick={async () => { if (!disabled) await onClick(); }}
+        disabled={disabled}
         title={title}
         style={{
           ...styles.base,
           ...variantStyles,
+          ...(disabled ? { opacity: 0.5, cursor: 'not-allowed' } : {}),
           borderTopRightRadius: 0,
           borderBottomRightRadius: 0,
           borderRight: 'none',

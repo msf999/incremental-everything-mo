@@ -52,7 +52,6 @@ import {
   saveKBShield,
   saveDocumentShield,
   isIncRemDue,
-  isCardDue,
   isCardDueOverdue,
   VerifyOptions,
 } from '../lib/shield_history';
@@ -163,6 +162,17 @@ export function registerQueueExitListener(
     await flushCacheUpdatesNow(plugin);
     console.log('QueueExit triggered, subQueueId:', subQueueId);
 
+    // FORK (2026-08-15, review §2.8): reset the session state FIRST.
+    //
+    // This used to run at the very END of the handler, after the scope read and the
+    // shield block — and nothing sequences this handler's tail against the QueueEnter
+    // listener. Re-entering the queue quickly meant the reset could land inside the
+    // session that had already started: a scoped queue lost its scope (so GetNextCard
+    // injected KB-wide) and incrementalQueueActiveKey went false, which stops
+    // queue_info_bar bailing and draws a second info bar under IncRems. Both failures
+    // are silent. Nothing below this point reads the keys it clears.
+    await resetQueueSession(plugin);
+
     const originalScopeId = await plugin.storage.getSession<string | null>('originalScopeId');
     const priorityCalcScopeRemIds = await plugin.storage.getSession<RemId[] | null>(priorityCalcScopeRemIdsKey);
     console.log('[QueueExit] Priority calculation scope:', priorityCalcScopeRemIds?.length || 0, 'rems');
@@ -249,7 +259,9 @@ export function registerQueueExitListener(
       console.log('[QueueExit] Light mode. Skipping Priority Shield history save.');
     }
 
-    await resetQueueSession(plugin);
+    // FORK (2026-08-15, review §2.8): see the note at the top of this handler — the
+    // reset now runs FIRST, so it cannot land inside an already-started next session.
+    // (Kept here as a no-op comment marker; the call itself moved up.)
     resetSessionItemCounter();
 
     // console.log('Session state reset complete');
@@ -894,8 +906,30 @@ export function registerGlobalRemChangedListener(plugin: ReactRNPlugin) {
             const currentIncRem = await getIncrementalRemFromRem(plugin, rem);
 
             if (currentIncRem && dayjs(currentIncRem.nextRepDate).startOf('day').valueOf() !== oldNextRepDate) {
-              // Check if this change was made by the plugin using a session flag
-              const pluginIsUpdating = await plugin.storage.getSession<boolean>('plugin_updating_srs_data');
+              // Check if this change was made by the plugin using a session flag.
+              //
+              // FORK (2026-08-15, review §2.6): expire the flag at the READ site. Its
+              // only clearer is a setTimeout living in the writing context, which the
+              // Open-Editor / Ctrl+G / reschedule paths destroy before it fires — so
+              // the flag could stick true for the whole session and silently disable
+              // manual-date-reset detection from then on. scheduler.ts now stamps
+              // when it was raised; anything older than the 3s it was meant to last
+              // (plus headroom) is treated as stale.
+              const PLUGIN_SRS_FLAG_MAX_AGE_MS = 5000;
+              const rawPluginIsUpdating = await plugin.storage.getSession<boolean>(
+                'plugin_updating_srs_data'
+              );
+              const pluginUpdatingAt = await plugin.storage.getSession<number>(
+                'plugin_updating_srs_data_at'
+              );
+              const pluginIsUpdating =
+                !!rawPluginIsUpdating &&
+                (typeof pluginUpdatingAt !== 'number' ||
+                  Date.now() - pluginUpdatingAt < PLUGIN_SRS_FLAG_MAX_AGE_MS);
+              if (rawPluginIsUpdating && !pluginIsUpdating) {
+                console.warn('[GlobalRemChanged] clearing stale plugin_updating_srs_data flag');
+                await plugin.storage.setSession('plugin_updating_srs_data', false);
+              }
 
               if (!pluginIsUpdating) {
                 // Date was changed manually! Add manualDateReset event
@@ -969,7 +1003,14 @@ export function registerGlobalRemChangedListener(plugin: ReactRNPlugin) {
           // for the next cache rebuild to pick up the correct value.
           // Only handles cards on the IncRem itself — cards on descendants are covered
           // by handleCardPriorityInheritance when Dismiss is clicked.
-          if (hasIncremental) {
+          // FORK (2026-08-15, user decision): the sharpest of the three CardPriority
+          // writers — it needs no user intent at all. Editing an IncRem into a
+          // flashcard during a queue session silently tagged it with the cardPriority
+          // powerup for an engine this fork disables (Deviation 13), and
+          // `enable-flashcard-prioritisation` does not stop it because
+          // mayWriteCardPrioritySource allows the 'incremental' source unconditionally.
+          // Gated alongside the two priority popups' card sections.
+          if (FORK_FEATURES.cardSurface && hasIncremental) {
             try {
               const cards = await rem.getCards();
               if (cards && cards.length > 0) {
@@ -1230,7 +1271,12 @@ export function registerEventListeners(
   registerDrillCardRatingListener(plugin);
 
   if (FORK_FEATURES.pdfReader) registerHoveredReferenceTracking(plugin); // FORK (Deviation 13): feeds only the source popups
-  registerQueueDashboardRefocusListener(plugin);
+  // FORK (2026-08-14, bug-hunt #50): this listener's whole job is to reopen the
+  // `practiced_queues` sidebar, which the gates deny. Left unconditional it fired
+  // on every Next/Dismiss/Reschedule for any KB that had `auto-focus-queue-dashboard`
+  // stored as true — attempting a sidebar open that can never succeed. That
+  // setting is also hidden from the popup, so it could not be turned off.
+  if (FORK_FEATURES.practicedQueues) registerQueueDashboardRefocusListener(plugin);
 }
 
 /**

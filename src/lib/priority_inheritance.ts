@@ -45,9 +45,20 @@ export async function findClosestIncrementalAncestor(
   try {
     // Get the parent ID of the current rem
     let currentParentId = rem.parent;
+    const seen = new Set<string>();
+    let depth = 0;
 
     // Walk up the ancestor chain
     while (currentParentId) {
+      if (seen.has(currentParentId)) {
+        console.warn('[findClosestIncrementalAncestor] cyclic parent chain at', currentParentId);
+        break;
+      }
+      seen.add(currentParentId);
+      if (++depth > MAX_ANCESTOR_DEPTH) {
+        console.warn('[findClosestIncrementalAncestor] walk exceeded', MAX_ANCESTOR_DEPTH, 'from', rem._id);
+        break;
+      }
       // Get the parent rem
       const currentRem = await plugin.rem.findOne(currentParentId);
       if (!currentRem) break;
@@ -59,7 +70,19 @@ export async function findClosestIncrementalAncestor(
         // Get the priority of this incremental ancestor
         const incRemInfo = await getIncrementalRemFromRem(plugin, currentRem);
 
-        if (incRemInfo && incRemInfo.priority !== undefined) {
+        // FORK (2026-08-14, bug-hunt #13): skip an ancestor whose priority could
+        // not be read. `prioritySource: 'fallback'` means the number is the
+        // UNREADABLE_PRIORITY_FALLBACK placeholder and "means nothing" (see
+        // incremental_rem/types.ts) — inheriting it would fabricate a priority
+        // into a brand-new rem from an ancestor that simply has a damaged slot.
+        // Keep walking instead: a higher ancestor with a readable priority is a
+        // far better guess, and failing that the caller's default is honest.
+        if (incRemInfo && incRemInfo.prioritySource === 'fallback') {
+          console.warn(
+            '[findClosestIncrementalAncestor] skipping ancestor with unreadable priority',
+            currentRem._id
+          );
+        } else if (incRemInfo && incRemInfo.priority !== undefined) {
           // Get the name/text of the ancestor for display
           const ancestorText = await resolveRemTextForBreadcrumb(plugin, currentRem.text);
           const ancestorName = ancestorText.slice(0, 50) + (ancestorText.length > 50 ? '...' : '');
@@ -151,7 +174,17 @@ export async function findClosestAncestorWithAnyPriority(
     level: number;
   } | null = null;
 
+  const seen = new Set<string>();
   while (currentParentId) {
+    if (seen.has(currentParentId)) {
+      console.warn('[findClosestAncestorWithAnyPriority] cyclic parent chain at', currentParentId);
+      break;
+    }
+    seen.add(currentParentId);
+    if (currentLevel >= MAX_ANCESTOR_DEPTH) {
+      console.warn('[findClosestAncestorWithAnyPriority] walk exceeded', MAX_ANCESTOR_DEPTH, 'from', rem._id);
+      break;
+    }
     const parent = await plugin.rem.findOne(currentParentId);
     if (!parent) break;
 
@@ -263,7 +296,30 @@ export async function findClosestAncestorWithAnyPriority(
  *   2. Closest ancestor with an IncRem priority (preferred).
  *   3. Closest ancestor with an explicit Card priority (fallback).
  *   4. defaultPriority from the plugin setting.
+ *
+ * FORK (2026-08-14, bug-hunt #10): the result is CLAMPED to 0-100. Slot values are
+ * only `parseInt`-checked, so a hand-edited, imported or sync-corrupted priority
+ * could return e.g. 150 — which `initIncrementalRem` then wrote into the rem's
+ * `madeIncremental` history marker. Both Zod schemas bound priority to 0-100, so
+ * that single entry made every later `IncrementalRem.safeParse` fail and
+ * `getIncrementalRemFromRem` return null: the rem became permanently invisible to
+ * the cache, queue, counter and distribution while still looking tagged in the
+ * editor. Clamping here covers every caller, not just the extraction path.
  */
+const clampPriority = (p: number) => Math.min(100, Math.max(0, p));
+
+/**
+ * FORK (2026-08-14, bug-hunt #12): ceiling for the ancestor walks below.
+ *
+ * Both walks exit only on finding what they want, a falsy parent, or a missing
+ * rem — none of which a cyclic parent chain satisfies (a self-parent, or A->B->A
+ * from conflict-merged sync data), so they looped forever issuing SDK calls. The
+ * visited Set in each is the real cycle guard; this bounds the other shape, an
+ * acyclic but absurdly deep chain. `getInitialPriority` calls the second walk
+ * during extraction, so a hang here freezes tagging a rem, not just a display.
+ */
+const MAX_ANCESTOR_DEPTH = 100;
+
 export async function getInitialPriority(
   plugin: RNPlugin,
   rem: PluginRem,
@@ -281,7 +337,7 @@ export async function getInitialPriority(
     const parsed = parseInt(ownPriorityValue as string);
     if (!isNaN(parsed)) {
       console.log(`[getInitialPriority] Using own cardPriority (source=${ownSource}): ${parsed}`);
-      return parsed;
+      return clampPriority(parsed);
     }
   }
 
@@ -290,7 +346,7 @@ export async function getInitialPriority(
   const ancestorInfo = await findClosestAncestorWithAnyPriority(plugin, rem, 'IncRem', explicitParentId);
   if (ancestorInfo) {
     console.log(`[getInitialPriority] Inheriting ${ancestorInfo.priority} from ${ancestorInfo.sourceType} ancestor: ${ancestorInfo.ancestorName}`);
-    return ancestorInfo.priority;
+    return clampPriority(ancestorInfo.priority);
   }
 
   // 4. Plugin default.

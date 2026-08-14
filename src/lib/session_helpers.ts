@@ -7,8 +7,9 @@ import {
   currentSubQueueIdKey,
   queueSessionCacheKey,
   incrementalQueueActiveKey,
+  incremReviewStartTimeKey,
+  incremNotesSidebarRemIdKey,
   currentIncrementalRemTypeKey,
-  queueBackNavKey,
 } from './consts';
 import { IncrementalRem } from './incremental_rem';
 import { QueueSessionCache } from './card_priority';
@@ -31,7 +32,22 @@ export async function resetQueueSession(plugin: ReactRNPlugin): Promise<void> {
   await plugin.storage.setSession('skipIncRemHistorySave', null);
   await plugin.storage.setSession(incrementalQueueActiveKey, false);
   await plugin.storage.setSession(currentIncrementalRemTypeKey, undefined);
-  await plugin.storage.setSession(queueBackNavKey, false);
+
+  // FORK (2026-08-14, bug-hunt #17): the review clock must not survive the
+  // session. It is set on every IncRem injection and consumed by
+  // updateReviewRemData as `now - startTime`, with no clamp and no check that we
+  // are still in the queue — so reviewing at 09:00, leaving, and running
+  // Review-in-Editor at 14:00 stamped a five-hour reviewTimeSeconds into history
+  // and inflated the Study Dashboard. reschedule.tsx already nulls this key for
+  // exactly this reason; QueueExit did not.
+  await plugin.storage.setSession(incremReviewStartTimeKey, null);
+
+  // FORK (2026-08-14, bug-hunt #19): the ✎ notes-sidebar target doubles as its
+  // open-flag, and nothing else clears it on the way out — clearStaleIncRemSignals
+  // only runs on flashcard turns, which an all-IncRem queue may never have. Left
+  // set, re-entering the queue showed that rem's ExtractViewer stuck in the
+  // "editing in the sidebar" hint with no sidebar open.
+  await plugin.storage.setSession(incremNotesSidebarRemIdKey, null);
 }
 
 /**

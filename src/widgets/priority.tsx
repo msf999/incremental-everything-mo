@@ -47,6 +47,7 @@ import { PriorityBadge, PrioritySlider, PrioritySliderRef } from '../components'
 import { useAcceleratedKeyboardHandler } from '../lib/keyboard_utils';
 import * as _ from 'remeda';
 import { useIESettingOptional } from '../lib/settings';
+import { FORK_FEATURES } from '../lib/fork_gates';
 
 type Scope = { remId: string | null; name: string; };
 type ScopeMode = 'all' | 'document';
@@ -652,9 +653,19 @@ function Priority() {
     ? (batchScan?.incCount ?? 0) > 0
     : !!incRemInfo; // Converts to boolean - undefined/null become false
   // UPDATED: Only show card section if strictly has cards. If powerup exists but no cards, show Inheritance section.
-  const showCardSection = isBatchMode
-    ? (batchScan?.cardCount ?? 0) > 0
-    : hasCards === true || (cardInfo && cardInfo.cardCount > 0);
+  // FORK (2026-08-15, user decision): the card-priority surface is disabled in this
+  // fork (Deviation 13), so these popups must not offer to create CardPriority tags.
+  // fork_gates.ts justifies HIDING the CardPriority settings on the premise that
+  // nothing writes those tags any more — this is one of the three writers that made
+  // that premise false. Saving here routes through pendingPrioritySaveKey into
+  // tracker.ts, which calls rem.addPowerup('cardPriority') + setCardPriority, and
+  // `enable-flashcard-prioritisation` does NOT stop it (mayWriteCardPrioritySource
+  // allows 'manual' unconditionally). Flip FORK_FEATURES.cardSurface to restore.
+  const showCardSection =
+    FORK_FEATURES.cardSurface &&
+    (isBatchMode
+      ? (batchScan?.cardCount ?? 0) > 0
+      : hasCards === true || (cardInfo && cardInfo.cardCount > 0));
 
   const saveIncPriority = useCallback(async (priority: number) => {
     if (!rem) return;
@@ -663,26 +674,23 @@ function Priority() {
     // All SDK network writes are gracefully deferred to the background tracker via `pendingPrioritySaveKey`.
     // This function now solely focuses on instantaneous optimistic cache updates.
 
-    // Construct Optimistic IncRem Object
-    const currentNow = Date.now();
-    const optimisticIncRem: IncrementalRem = incRemInfo ? {
-      ...incRemInfo,
-      priority: priority,
-      // If we are just updating priority, nextRepDate etc shouldn't change unless it was new
-    } : {
-      // Fallback for newly initialized inc rem
-      remId: rem._id,
-      nextRepDate: currentNow, // Approximate
-      priority: priority,
-      history: [],
-      // Other fields might be missing if we construct from scratch, but updateIncrementalRemCache 
-      // mainly needs remId and priority for sorting/percentiles if it does a light update.
-      // However, for full correctness, initIncrementalRem above handles the DB side.
-      // The cache update might need more fields.
-      // Let's rely on the fact that if !incRemInfo, the cache probably doesn't have it either, 
-      // so a full refresh might be safer or we construct a minimal valid object.
-      // For now, let's assume if it exists we use it, if not we rely on background sync or a minimal object.
-    } as IncrementalRem;
+    // Construct the optimistic cache patch.
+    //
+    // FORK (2026-08-13, issue #8): the `!incRemInfo` branch used to fabricate
+    // `nextRepDate: Date.now()` and label it "Approximate". It is not
+    // approximate — it is a real, wrong value: for a rem already scheduled into
+    // the future, writing it makes the rem due immediately. A failed read is no
+    // evidence about the schedule.
+    //
+    // Only the priority actually changed here, so send only the priority.
+    // updateIncrementalRemCache merges onto the cached entry (keeping the real
+    // nextRepDate / history / rotation), and when the rem is not in the cache at
+    // all its safeParse gate skips the write — the DB side is handled by
+    // initIncrementalRem above, and the tracker inserts the real entry on its
+    // next read.
+    const optimisticIncRem: Partial<IncrementalRem> & { remId: string } = incRemInfo
+      ? { ...incRemInfo, priority }
+      : { remId: rem._id, priority };
 
     // Fire-and-forget cache update
     updateIncrementalRemCache(plugin, optimisticIncRem);
@@ -816,7 +824,11 @@ function Priority() {
   // Hidden in batch mode: this section exists to set a rem up as an inheritance
   // anchor, which a bulk edit should never do implicitly (and its state is read
   // from rem #1 anyway, so it would misdescribe the rest of the selection).
+  // FORK (2026-08-15): hidden with the card section — this section exists to
+  // configure CARD priority inheritance. Gating it explicitly also stops it from
+  // appearing as a side effect of showCardSection now being false.
   const showInheritanceSection =
+    FORK_FEATURES.cardSurface &&
     !isBatchMode &&
     ((!showIncSection && !showCardSection) ||
       (showIncSection && !hasCards && cardInfo?.source === 'manual') ||

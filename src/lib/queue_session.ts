@@ -11,6 +11,7 @@ import type { PracticedQueueSession } from '../widgets/practiced_queues';
 import { PRACTICED_QUEUES_HISTORY_KEY, rollOverOldSessions } from './queue_aggregates';
 import { computeFSRSState, parseWeightsString } from './fsrs';
 import { getIESetting } from './settings';
+import { FORK_FEATURES } from './fork_gates';
 
 const ACTIVE_SESSION_KEY = 'activeQueueSession';
 
@@ -144,6 +145,14 @@ type IncRemEvent =
   | { type: 'force_save'; ts: number };
 
 async function pushIncRemEvent(plugin: RNPlugin, event: IncRemEvent) {
+  // FORK (2026-08-14, bug-hunt #21): with sessionAnalytics off, the only DRAIN of
+  // this log — inside registerQueueSessionTracking — is never registered, so the
+  // array grew unbounded for the whole session with nothing consuming it.
+  // queue.tsx already guarded its own two producers with a comment stating the
+  // invariant ("nothing drains the event queue, so don't produce them"); three
+  // other call sites in the editor-review paths missed it. Gating the single
+  // producer covers all of them and cannot be missed again.
+  if (!FORK_FEATURES.sessionAnalytics) return;
   const log = ((await plugin.storage.getSession<IncRemEvent[]>(INC_REM_EVENT_LOG_KEY)) || []).slice();
   log.push(event);
   await plugin.storage.setSession(INC_REM_EVENT_LOG_KEY, log);

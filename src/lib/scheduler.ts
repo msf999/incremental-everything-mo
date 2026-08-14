@@ -95,8 +95,16 @@ export function timeWhenCardAppearsInQueueFromScheduled(
 
   const prevInteraction = history[index - 1];
 
+  // FORK (2026-08-14, bug-hunt #40): `new Date(a) == new Date(b)` compares two
+  // distinct Date OBJECTS by reference and is therefore always false, so this
+  // whole condition was dead and `useRealScheduledTime` collapsed to
+  // `!prevInteraction` — every entry past the first was compared at day
+  // granularity, changing which reps removeResponsesBeforeEarlyResponses cleanses
+  // and so the computed interval. Comparing calendar days is what the name says.
   const interactionOnSameDay =
-    scheduled && prevInteraction?.date && new Date(scheduled) == new Date(prevInteraction.date);
+    !!scheduled &&
+    !!prevInteraction?.date &&
+    dayjs(scheduled).isSame(dayjs(prevInteraction.date), 'day');
 
   const useRealScheduledTime = !prevInteraction || interactionOnSameDay;
 
@@ -208,20 +216,52 @@ export async function getNextSpacingDateForRem(
   };
 }
 
+/**
+ * Persists a review: writes the next-rep date reference and the history back to
+ * the Rem.
+ *
+ * FORK (2026-08-14, bug-hunt #9) — returns whether the write actually happened.
+ * Upstream returns void and bails silently when the Daily Doc reference cannot be
+ * resolved, so callers could not tell a total failure from a success: they patched
+ * the session cache with the new date and advanced the queue anyway, and the
+ * IncRem left the queue looking reviewed while NOTHING was written to it. Next
+ * session it was due again with no record of the repetition, its review time or
+ * its interval. The reference failing is not theoretical — `getDailyDocReferenceForDate`
+ * goes through `plugin.date.getDailyDoc`, whose concurrent-call race is documented
+ * at lib/incremental_rem/index.ts (two in flight, one resolves undefined).
+ *
+ * The missing-rem case was silent for the same reason: `rem?.setPowerupProperty`
+ * no-ops when findOne returned nothing.
+ *
+ * FORK (2026-08-14, bug-hunt #41): returns the STAMPED history it actually wrote,
+ * not just a success flag. `nextRepMs` is added to the last entry here, so a
+ * caller returning its own pre-stamp array — as updateReviewRemData did — left
+ * the session cache and the rem disagreeing about that field.
+ *
+ * @returns the persisted history when both slot writes were issued; null when
+ *          nothing was written.
+ */
 export async function updateSRSDataForRem(
   plugin: RNPlugin,
   remId: string,
   newNextRepDate: number,
   newHistory: IncrementalRep[]
-) {
+): Promise<IncrementalRep[] | null> {
   const rem = await plugin.rem.findOne(remId);
   console.log('updating srs data for rem', remId, newNextRepDate, newHistory);
   console.log('next rep due in ', dayjs(newNextRepDate).fromNow());
+  if (!rem) {
+    console.error('[updateSRSDataForRem] rem not found — review NOT saved', remId);
+    return null;
+  }
   const date = new Date(newNextRepDate);
   const dateReference = await getDailyDocReferenceForDate(plugin, date);
   if (!dateReference) {
-    console.log('failed to create date reference for date', date);
-    return;
+    console.error(
+      '[updateSRSDataForRem] failed to create date reference — review NOT saved',
+      date
+    );
+    return null;
   }
 
   // Stamp the authoritative scheduling date onto the most-recent history entry. The
@@ -237,12 +277,23 @@ export async function updateSRSDataForRem(
   // Set flag to indicate plugin is making the update (prevents manual date reset detection)
   await plugin.storage.setSession('plugin_updating_srs_data', true);
 
-  await rem?.setPowerupProperty(powerupCode, nextRepDateSlotCode, dateReference);
-  await rem?.setPowerupProperty(powerupCode, repHistorySlotCode, [JSON.stringify(stampedHistory)]);
+  await rem.setPowerupProperty(powerupCode, nextRepDateSlotCode, dateReference);
+  await rem.setPowerupProperty(powerupCode, repHistorySlotCode, [JSON.stringify(stampedHistory)]);
 
   // Clear flag after a delay longer than the GlobalRemChanged debounce (1000ms)
-  // to prevent false-positive manual date reset detection
+  // to prevent false-positive manual date reset detection.
+  //
+  // FORK (2026-08-15, review §2.6): ALSO store the timestamp, because this timeout
+  // lives in the calling context and the Open-Editor, Ctrl+G and reschedule.tsx paths
+  // all destroy that context before it fires. The flag then stuck true for the rest of
+  // the session, and events.ts reads it to skip the manual-date-reset block entirely —
+  // so after one Open-Editor review, hand-editing an IncRem's date chip silently
+  // stopped recording a manualDateReset entry. Readers can now expire it themselves
+  // instead of trusting a timer that may never run.
+  await plugin.storage.setSession('plugin_updating_srs_data_at', Date.now());
   setTimeout(async () => {
     await plugin.storage.setSession('plugin_updating_srs_data', false);
   }, 3000);
+
+  return stampedHistory;
 }

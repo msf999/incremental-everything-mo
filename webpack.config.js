@@ -17,11 +17,90 @@ const fastRefresh = isDevelopment ? new ReactRefreshWebpackPlugin() : null;
 
 const SANDBOX_SUFFIX = '-sandbox';
 
+/**
+ * FORK (2026-08-14, bug-hunt #26): don't bundle widgets the fork gates deny.
+ *
+ * Entries are globbed from every src/widgets/*.tsx, so a widget whose ONLY
+ * registration id sits on the deny-list in src/lib/fork_gates.ts still shipped a
+ * full bundle (plus a -sandbox twin) — 23 widgets, ~22 MB, over 40% of dist/.
+ *
+ * The list is PARSED FROM fork_gates.ts rather than restated here, so flipping a
+ * FORK_FEATURES boolean automatically restores that widget's bundle and the two
+ * can never disagree. If the parse finds nothing — an upstream restructure, a
+ * renamed const — it returns an empty set and everything is built, which is the
+ * safe direction to fail in.
+ *
+ * Excluding an entry does NOT remove the file: `history_sidebar` imports the
+ * three history components, and `practiced_queues` is imported for its types.
+ * Module resolution is unaffected; only the standalone bundle goes away.
+ */
+function deniedWidgetIds() {
+  try {
+    const src = require('fs').readFileSync(
+      path.resolve(__dirname, 'src/lib/fork_gates.ts'),
+      'utf8'
+    );
+    // FORK (2026-08-15, review §2.9): scope the flag scan to the FORK_FEATURES
+    // literal. A bare /^ {2}(\w+): (true|false),/ over the whole file also matched
+    // any other two-space boolean property, so an unrelated edit could inject a
+    // phantom flag.
+    const flagBlock = src.match(/FORK_FEATURES[^=]*=\s*\{([\s\S]*?)\n\};/);
+    const flags = {};
+    if (flagBlock) {
+      for (const m of flagBlock[1].matchAll(/^ {2}(\w+): (true|false),/gm)) {
+        flags[m[1]] = m[2] === 'true';
+      }
+    }
+    const denied = new Set();
+    for (const g of src.matchAll(/enabled:\s*FORK_FEATURES\.(\w+),([\s\S]*?)\n {2}\}/g)) {
+      if (flags[g[1]] !== false) continue;
+      const w = g[2].match(/widgets:\s*\[([\s\S]*?)\]/);
+      if (!w) continue;
+      for (const id of w[1].matchAll(/'([^']+)'/g)) denied.add(id[1]);
+    }
+
+    // §2.9: the "fail safe = build everything" claim only holds for a rename or a
+    // missing file. A FORMATTING change is different: the lazy body regex above
+    // terminates at the first 2-space `}` line, so a group whose closing brace moves
+    // (a Prettier run is enough) can spill into the NEXT group and deny ITS widgets —
+    // producing a registered widget with no bundle, i.e. a blank iframe and nothing in
+    // the logs. Assert every denied id still has a source file; if one does not, the
+    // parse has drifted, so build everything rather than silently dropping entries.
+    const fs = require('fs');
+    for (const id of denied) {
+      const f = path.resolve(__dirname, 'src/widgets/' + id + '.tsx');
+      if (!fs.existsSync(f)) {
+        console.warn(
+          '[fork] deny-list parse looks wrong — no src/widgets/' + id + '.tsx. ' +
+            'Building ALL widgets.'
+        );
+        return new Set();
+      }
+    }
+    return denied;
+  } catch (e) {
+    console.warn('[fork] could not parse fork_gates.ts — building all widgets:', e.message);
+    return new Set();
+  }
+}
+
+const DENIED_WIDGETS = deniedWidgetIds();
+if (DENIED_WIDGETS.size) {
+  // §2.9: log the full list, not a count — a count cannot reveal that the WRONG
+  // widget was excluded, which is the failure mode that produces a blank iframe.
+  console.log(
+    `[fork] skipping ${DENIED_WIDGETS.size} denied widget bundles: ` +
+      [...DENIED_WIDGETS].sort().join(', ')
+  );
+}
+
 const config = {
   mode: isProd ? 'production' : 'development',
   entry: glob.sync('./src/widgets/**.tsx').reduce(function (obj, el) {
-    obj[path.parse(el).name] = el;
-    obj[path.parse(el).name + SANDBOX_SUFFIX] = el;
+    const name = path.parse(el).name;
+    if (DENIED_WIDGETS.has(name)) return obj; // FORK (#26)
+    obj[name] = el;
+    obj[name + SANDBOX_SUFFIX] = el;
     return obj;
   }, {}),
 

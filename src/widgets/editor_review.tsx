@@ -9,6 +9,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { getIncrementalRemFromRem, setIncRemPriority } from '../lib/incremental_rem';
 import { updateIncrementalRemCache } from '../lib/incremental_rem/cache';
 import { getNextSpacingDateForRem, updateSRSDataForRem } from '../lib/scheduler';
+import { priorityStampFor } from '../lib/incremental_rem/types';
 import { powerupCode, prioritySlotCode, pageRangeWidgetId } from '../lib/consts';
 import { IncrementalRep } from '../lib/incremental_rem';
 import dayjs from 'dayjs';
@@ -22,6 +23,7 @@ import { usePdfPageControls } from '../components/reader/usePdfPageControls';
 import { recordIncRemRep } from '../lib/queue_session';
 import { setPendingReviewNote, stampNoteAndContext, MAX_NOTE_LENGTH } from '../lib/history_notes';
 import { PrioritySlider, PriorityBadge } from '../components';
+import { FORK_FEATURES } from '../lib/fork_gates';
 
 // ─── Core Review Handler ────────────────────────────────────────────────────
 
@@ -79,7 +81,14 @@ async function handleEditorReview(
     wasEarly: wasEarly,
     daysEarlyOrLate: daysEarlyOrLate,
     reviewTimeSeconds: reviewTimeSeconds,
-    priority: incRem.priority, // Record priority at time of rep
+    // FORK (#13, corrected 2026-08-14): stamp the priority this function just
+    // WROTE, not the one it read beforehand. `setIncRemPriority(plugin, rem,
+    // newPriority)` runs above, while `incRem` was read before it — so spreading
+    // priorityStampFor(incRem) recorded the OLD value, and when the slot had been
+    // unreadable it recorded nothing at all, losing the repair `setIncRemPriority`
+    // had just made. newPriority is the user's explicit slider value and is
+    // unconditionally persisted, so it is always the truthful stamp.
+    priority: newPriority,
     eventType: 'executeRepetition' as const,
   };
 
@@ -872,7 +881,16 @@ const EditorReviewInput: React.FC<{ plugin: RNPlugin; remId: string }> = ({ plug
           )}
 
           {/* ─── PDF Page Controls ─── */}
-          {isPdfNote && pdfRemId && (
+                    {/* FORK (2026-08-14, gap review): gated on pdfReader like
+              priority_editor.tsx does. Without it these controls render live on
+              every PDF-hosted IncRem reviewed in the editor: the 📄 Range button
+              opens `page-range`, which the gates DENY, so it silently does nothing
+              — no popup, no toast, no error — and the ← / → steppers still write
+              the pdfState slot, contradicting Deviation 13's claim that the fork
+              stops pdfState writes. Bug-hunt #20 fixed this shape in
+              priority_editor only; these two widgets reach the same opener
+              indirectly through PageControls. */}
+          {FORK_FEATURES.pdfReader && isPdfNote && pdfRemId && (
             <div
               className="flex justify-center p-2.5 rounded-lg"
               style={{

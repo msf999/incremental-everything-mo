@@ -9,6 +9,7 @@ import { IncrementalRep } from './incremental_rem/types';
 import { getIncrementalRemFromRem } from './incremental_rem';
 import { updateIncrementalRemCache } from './incremental_rem/cache';
 import { updateSRSDataForRem } from './scheduler';
+import { priorityStampFor } from './incremental_rem/types';
 import { sanitizeNote } from './history_notes';
 import { tryParseJson } from './utils';
 
@@ -251,7 +252,8 @@ export async function addExternalSessionRep(
       scheduled,
       reviewTimeSeconds: input.reviewTimeSeconds > 0 ? input.reviewTimeSeconds : undefined,
       eventType: 'externalRep',
-      ...(incRem ? { priority: incRem.priority } : {}),
+      // FORK (#13): see priorityStampFor — never stamp a placeholder priority.
+      ...(incRem ? priorityStampFor(incRem) : {}),
     },
     input.date
   );

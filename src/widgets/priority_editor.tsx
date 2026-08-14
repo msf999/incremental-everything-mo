@@ -30,6 +30,7 @@ import {
 } from '../lib/pdfUtils';
 import { openAndScrollToHighlight } from '../lib/remHelpers';
 import { getIESetting } from '../lib/settings';
+import { FORK_FEATURES } from '../lib/fork_gates';
 
 // Move styles outside component to avoid recreation on every render
 const adjustButtonStyle: React.CSSProperties = {
@@ -654,7 +655,13 @@ export function PriorityEditor() {
           )}
 
           {/* PDF Range Section */}
-          {hostKind === 'pdf' && hostPdfRemId && (
+          {/* FORK (2026-08-14, bug-hunt #20): gated on pdfReader. Both controls in
+              here (📄 Range, PDF Control Panel ↗) open the `page-range` widget,
+              which the fork gates deny — so on every PDF-hosted IncRem they were
+              dead buttons: click, nothing opens, no toast, no error. The other
+              three openers of that widget are correctly denied already; this
+              widget is kept, so it needed its own guard. */}
+          {FORK_FEATURES.pdfReader && hostKind === 'pdf' && hostPdfRemId && (
             <div
               className="p-3 rounded-lg"
               style={{

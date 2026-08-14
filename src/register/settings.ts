@@ -6,6 +6,7 @@ import {
   showLeftBorderForIncRemsSettingId,
   showDismissedIndicatorSettingId,
   hideDismissedTagSettingId,
+  pluginIframeSelector,
 } from '../lib/consts';
 import { PRIORITY_BAND_TAG_HIDE_CSS } from '../lib/priority_bands';
 import {
@@ -67,20 +68,20 @@ const COLLAPSE_TOP_BAR_CSS = `
      2. Hide .rn-queue__progress-bar — the progress bar sits immediately below and has
         an invisible absolute overlay that steals hover events. It also shows flashcard
         queue progress which is not meaningful during IncRem turns. */
-  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]) .queue__title {
+  .rn-queue:has(${pluginIframeSelector}[src*="widgetName=queue&"]) .queue__title {
     max-height: 3px;
     overflow: hidden;
     /* collapse: wait 0.6s after mouse leaves, then animate over 0.4s */
     transition: max-height 0.4s ease 0.6s;
     cursor: pointer;
   }
-  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]) .queue__title:hover {
+  .rn-queue:has(${pluginIframeSelector}[src*="widgetName=queue&"]) .queue__title:hover {
     max-height: 180px;
     overflow: visible;
     /* expand: start immediately, smooth over 0.25s */
     transition: max-height 0.25s ease 0s;
   }
-  .rn-queue:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]) .rn-queue__progress-bar {
+  .rn-queue:has(${pluginIframeSelector}[src*="widgetName=queue&"]) .rn-queue__progress-bar {
     display: none !important;
   }
 `;

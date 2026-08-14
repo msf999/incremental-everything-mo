@@ -5,30 +5,27 @@ import {
   useTrackerPlugin,
   WidgetLocation,
 } from '@remnote/plugin-sdk';
-import React, { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Reader } from '../components/Reader';
 import { VideoViewer } from '../components/Video';
 import { VideoExtractViewer } from '../components/VideoExtractViewer';
 import { NativeVideoViewer } from '../components/NativeVideoViewer';
 import { ExtractViewer } from '../components/ExtractViewer';
 import { IsolatedCardViewer } from '../components/IsolatedCardViewer';
-import { remToActionItemType, getIncrementalRemFromRem } from '../lib/incremental_rem';
+import { remToActionItemType } from '../lib/incremental_rem';
 import {
   incrementalQueueActiveKey,
-  shouldHideIncEverythingKey,
   currentIncrementalRemTypeKey,
+  forkPluginId,
   activeHighlightIdKey,
   isolatedQueueModeId,
-  IsolatedQueueMode,
   powerupCode,
   currentHostDocumentIdKey,
-  queueBackNavKey,
 } from '../lib/consts';
 import { setCurrentIncrementalRem } from '../lib/incremental_rem';
 import { safeRemTextToString } from '../lib/pdfUtils';
 import { startIncRemEngagement, endIncRemEngagement } from '../lib/queue_session';
 import { FORK_FEATURES } from '../lib/fork_gates';
-import { isIncRemDue } from '../lib/shield_history';
 import { useIESettingOptional } from '../lib/settings';
 
 type ViewMode = 'isolated' | 'context';
@@ -43,6 +40,14 @@ export function QueueComponent() {
     async () => plugin.widget.getWidgetContext<WidgetLocation.Flashcard>(),
     []
   );
+
+  // FORK (2026-08-14, bug-hunt #18): guards the auto-advance effects below so at
+  // most one of them can remove a card. Reset per item, since a fresh queue item
+  // may legitimately need its own advance.
+  const autoAdvancedRef = useRef(false);
+  useEffect(() => {
+    autoAdvancedRef.current = false;
+  }, [ctx?.remId]);
 
   // All hooks must run before any early return — keep this block above the
   // `if (!ctx?.remId) return null` guard further down.
@@ -157,6 +162,15 @@ export function QueueComponent() {
     });
 
     if (remAndType === null) {
+      // FORK (2026-08-14, bug-hunt #18): at most ONE auto-advance per widget
+      // instance. This effect and the powerup one below both derive from the same
+      // `rp.rem.findOne(ctx.remId)`: when the current item's Rem is deleted mid-
+      // session, `remAndType` resolves null AND `hasIncrementalPowerup` resolves
+      // false, in the same render — so both fired and the queue skipped the
+      // deleted item AND the next card, unreviewed. The render-level bail comes
+      // too late; the effects have already run.
+      if (autoAdvancedRef.current) return;
+      autoAdvancedRef.current = true;
       plugin.queue.removeCurrentCardFromQueue(false);
     }
 
@@ -171,19 +185,51 @@ export function QueueComponent() {
     if (remAndType?.type !== 'rem') {
       return false;
     }
-    const widgetsAtLocation = (
-      await plugin.widget.getWidgetsAtLocation(WidgetLocation.Flashcard, remAndType.rem._id)
-    ).filter((w) => w.pluginId !== 'incremental-everything');
-    return widgetsAtLocation.length === 0;
+    // FORK (2026-08-14): filter by OUR manifest id, not upstream's.
+    //
+    // The intent is "is any OTHER plugin claiming this Flashcard slot?" — so the
+    // filter has to drop THIS plugin's own widget. Upstream hardcodes
+    // 'incremental-everything'; this fork's id is 'incremental-everything-mo'
+    // (Deviation 1), so the filter matched nothing, our own widget counted as a
+    // foreign one, and the check below could conclude the slot was taken —
+    // making line ~293 render NOTHING for a plain rem-type IncRem.
+    //
+    // Second instance of the hardcoded-upstream-id bug found alongside the
+    // GetNextCard `pluginId` (see register/callbacks.ts).
+    // The `|| forkPluginId` fallback matters as much as the id itself: both SDK
+    // properties are typed `| undefined`, and if both were empty here the filter
+    // would keep EVERY widget, `widgetsAtLocation.length === 0` would be false, and
+    // the render bail below would blank the queue body for every rem-type IncRem —
+    // a strictly worse failure than the upstream-id bug this line fixes.
+    // register/callbacks.ts already defends this way; keep the two in step.
+    const ownPluginId = plugin.manifest?.id || plugin.id || forkPluginId;
+    // FORK (2026-08-15, review): fail OPEN, not closed.
+    //
+    // A rejected getWidgetsAtLocation used to propagate out of this tracker, leaving
+    // shouldRenderEditorForRemType undefined forever — and the render bail below
+    // treats anything falsy as "another plugin owns this slot", so the queue body
+    // went permanently blank for every rem-type IncRem, with no error and no retry.
+    // Rendering our own body when the probe fails is the safe direction: the worst
+    // case is two widgets in one slot, versus showing the user nothing at all.
+    let widgetsAtLocation;
+    try {
+      widgetsAtLocation = await plugin.widget.getWidgetsAtLocation(
+        WidgetLocation.Flashcard,
+        remAndType.rem._id
+      );
+    } catch (err) {
+      console.warn('[queue] getWidgetsAtLocation failed — rendering our own body', err);
+      return true;
+    }
+    return (widgetsAtLocation || []).filter((w) => w.pluginId !== ownPluginId).length === 0;
   }, [remAndType?.type, remAndType?.rem?._id, plugin]);
 
-  useEffect(() => {
-    const shouldHide = remAndType?.type === 'rem' && !shouldRenderEditorForRemType;
-    plugin.storage.setSession(shouldHideIncEverythingKey, shouldHide);
-    return () => {
-      plugin.storage.setSession(shouldHideIncEverythingKey, false);
-    };
-  }, [remAndType?.type, shouldRenderEditorForRemType, plugin]);
+  // FORK (2026-08-14, bug-hunt #54): the effect that used to live here wrote
+  // `shouldHideIncEverythingKey` on every card and cleared it on unmount. Nothing
+  // in the codebase ever read that key (verified: 2 writes, 0 reads), so it was
+  // pure per-card session-storage churn. The `shouldRenderEditorForRemType`
+  // tracker above is NOT dead and stays — the render bail further down depends on
+  // it.
 
   // Track if this Rem still has the incremental powerup.
   // When a user presses "Dismiss", the powerup is removed and we should proactively advance.
@@ -197,52 +243,26 @@ export function QueueComponent() {
   // If the powerup goes missing while we're mounted, immediately advance the queue.
   useEffect(() => {
     if (hasIncrementalPowerup === false) {
+      // FORK (#18): shares the one-advance guard with the effect above.
+      if (autoAdvancedRef.current) return;
+      autoAdvancedRef.current = true;
       plugin.queue.removeCurrentCardFromQueue(true);
     }
   }, [hasIncrementalPowerup, plugin]);
 
-  // Verify the encountered item is still due. The queue's item list is built once at
-  // session start, so an item rescheduled to a future date on another device can linger
-  // in this session's queue (e.g. reviewed on a laptop, then back to the desktop whose
-  // list was made earlier). Read the item's CURRENT scheduled date straight from the Rem
-  // (fresh after sync) on first encounter, and if it is no longer due, advance past it.
+  // FORK (2026-08-14): items that are no longer due are SHOWN, not skipped.
   //
-  // Keyed on ctx.remId (NOT a reactive tracker) so it runs exactly once per item: it must
-  // not react to the future nextRepDate the user themselves writes when reviewing the
-  // current item (Next/Reschedule), which would skip the wrong card — yet it re-fires for
-  // each new item so consecutive stale entries chain-skip until a due one is reached.
-  useEffect(() => {
-    if (!ctx?.remId) return;
-    let cancelled = false;
-    (async () => {
-      // Exception: when the user navigates BACK to an item (Previous button), don't auto-skip
-      // it even if it's no longer due — e.g. they just reviewed it and want to revisit. The
-      // Previous button sets this flag right before goBackToPreviousCard(); consume it once.
-      const cameFromBackNav = await plugin.storage.getSession<boolean>(queueBackNavKey);
-      if (cameFromBackNav) {
-        await plugin.storage.setSession(queueBackNavKey, false);
-        return;
-      }
-      const rem = await plugin.rem.findOne(ctx.remId);
-      if (!rem) return;
-      // A removed powerup is handled by the hasIncrementalPowerup effect above.
-      if (!(await rem.hasPowerup(powerupCode))) return;
-      const incRem = await getIncrementalRemFromRem(plugin, rem);
-      if (!incRem || cancelled) return;
-      if (!isIncRemDue(incRem)) {
-        console.log(
-          '[QueueComponent] Stale queue entry no longer due — advancing past it:',
-          ctx.remId,
-          'nextRepDate:',
-          incRem.nextRepDate
-        );
-        plugin.queue.removeCurrentCardFromQueue(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [ctx?.remId, plugin]);
+  // This used to be a due-on-encounter effect calling removeCurrentCardFromQueue()
+  // whenever an item's freshly-read nextRepDate had moved into the future — a stale
+  // queue entry (reviewed on another device mid-session) or an item revisited with
+  // Previous. It needed a one-shot `queueBackNavKey` session flag so that going back
+  // did not instantly skip the item you had just returned to.
+  //
+  // Silently advancing hides information: you cannot tell a stale entry from an item
+  // that was never in the queue. The answer buttons now detect the same condition
+  // (Date.now() < incRemInfo.nextRepDate) and render an 'already processed' state —
+  // the item stays visible, showing when it is next due, with Continue / Review anyway.
+  // Nothing auto-advances any more, so the back-nav flag is gone with it.
 
   // Reset view mode when switching to a new rem.
   // The default view mode is computed once `remAndType` and the user setting

@@ -9,7 +9,7 @@
 // bandForPriority + bandColorPercentile + percentileToHslColor, so a band reads
 // the same colour here as its badge does in a table cell. Priority 0-100 with
 // LOWER = more important, hence the red-to-blue ramp left to right.
-import React from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import { useTrackerPlugin } from '@remnote/plugin-sdk';
 import { allIncrementalRemKey } from '../lib/consts';
 import { IncrementalRem } from '../lib/incremental_rem';
@@ -33,6 +33,24 @@ function bandColor(band: number): string {
 }
 
 const BAND_GAP_PX = 2;
+/**
+ * The band marker: the LOWEST priority the band contains — 0, 10, 20 … 90. Reads
+ * as "this segment starts here", and being round tens it is both narrower and
+ * easier to scan than the maxima (9, 19 … 100) this briefly showed instead.
+ */
+function bandMinLabel(band: number): number {
+  return band * 10;
+}
+
+/**
+ * Width the band marker needs at the segment's left edge: its own digits at 7px,
+ * plus the inset and a gap so it never touches the centred count. A segment only
+ * draws the marker when it is measured wider than its count's floor plus this.
+ * Derived from the same label that is rendered, so the two cannot disagree.
+ */
+function bandLabelPx(band: number): number {
+  return String(bandMinLabel(band)).length * 5 + 8;
+}
 
 /**
  * Floor width of a band segment: just enough for the count it has to show, at
@@ -69,6 +87,30 @@ export function QueueDistribution(props: {
     return counts;
   }, []);
 
+  // Measure each segment so the rotated band label is only drawn where it fits.
+  // There is no way to know this from the data: widths come from flex-grow over
+  // the counts and the container's actual width, so "wide enough" is a rendered
+  // fact, not a computable one. Measuring is cheap — ten rects on resize — and
+  // cannot loop, because a segment's width is driven by its flex settings and
+  // min-width, never by its content.
+  const stripRef = useRef<HTMLDivElement>(null);
+  const [segWidths, setSegWidths] = useState<number[]>([]);
+  useLayoutEffect(() => {
+    const el = stripRef.current;
+    if (!el) return;
+    const measure = () => {
+      const next = Array.from(el.children).map((c) => (c as HTMLElement).getBoundingClientRect().width);
+      setSegWidths((prev) =>
+        prev.length === next.length && prev.every((w, i) => Math.abs(w - next[i]) < 1) ? prev : next
+      );
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    Array.from(el.children).forEach((c) => ro.observe(c));
+    return () => ro.disconnect();
+  }, [bands?.join(',')]);
+
   if (!bands) return null;
   const total = bands.reduce((a, b) => a + b, 0);
   const highlightBand =
@@ -102,10 +144,22 @@ export function QueueDistribution(props: {
 
   return (
     <div
-      style={{ display: 'flex', alignItems: 'center', flex: '1 1 auto', minWidth: 0 }}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        flex: '1 1 auto',
+        // FORK (2026-08-14, bug-hunt #53): the strip cannot shrink below the sum
+        // of its ten per-band floors, so on a narrow pane (split view, small
+        // window, mobile with the bar on) it used to spill past the pane edge.
+        // minWidth:0 + overflow-x here lets the WRAPPER shrink and scroll the
+        // strip instead, which keeps every band intact and legible.
+        minWidth: 0,
+        overflowX: 'auto',
+      }}
       title={tooltip}
     >
       <div
+        ref={stripRef}
         style={{
           display: 'flex',
           alignItems: 'stretch',
@@ -122,6 +176,17 @@ export function QueueDistribution(props: {
         {bands.map((n, band) => (
           <div
             key={band}
+            // Per-segment tooltip. The bar's widths are proportional to COUNTS, not
+            // to priority, so a fixed axis underneath ("10, 20, 30…") would be
+            // actively wrong — the 20 mark is not a fifth of the way across. A label
+            // has to travel with its own segment, and at 18px tall there is no room
+            // for ten of them, so the range lives on hover instead.
+            title={
+              `Priority ${bandRange(band)}\n` +
+              `${n} due Incremental Rem${n === 1 ? '' : 's'}` +
+              (total > 0 ? ` — ${((n / total) * 100).toFixed(1)}% of the ${total} due` : '') +
+              (band === highlightBand ? '\n\nThis is where the current item sits.' : '')
+            }
             style={{
               // Floor = just wide enough for THIS band's number, so all ten
               // counts stay legible (zeros included) without an empty band
@@ -130,6 +195,7 @@ export function QueueDistribution(props: {
               // with 0 has grow 0 and stays a tight `0` chip.
               flex: `${n} 1 ${bandFloorPx(n)}px`,
               minWidth: `${bandFloorPx(n)}px`,
+              position: 'relative',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -157,10 +223,34 @@ export function QueueDistribution(props: {
               fontVariantNumeric: 'tabular-nums',
             }}
           >
-            {/* The count only — never the range. Ranges inside the segments made
-                the bar unreadable and truncated ("-19 4"); the band a segment
-                stands for is carried by its colour and position, and spelled out
-                in the tooltip. */}
+            {/* A tiny band marker at the segment's LEFT EDGE — "0", "10" … "90",
+                i.e. the lowest priority it holds — drawn only in segments wide
+                enough to hold it without crowding their count. Just the start
+                value, not the full "10-19": the range needs ~28px and was tried
+                and removed for truncating to things like "-19 4". Narrow bands
+                omit the marker; every segment's tooltip carries the full range
+                regardless. */}
+            {segWidths[band] !== undefined &&
+              segWidths[band] >= bandFloorPx(n) + bandLabelPx(band) && (
+                <span
+                  style={{
+                    // Absolutely positioned so it pins to the left edge without
+                    // shifting the count off centre. The segment is position:
+                    // relative for this.
+                    position: 'absolute',
+                    left: '3px',
+                    top: '1px',
+                    fontSize: '7px',
+                    fontWeight: 700,
+                    lineHeight: 1,
+                    opacity: 0.75,
+                    letterSpacing: '-0.3px',
+                    pointerEvents: 'none',
+                  }}
+                >
+                  {bandMinLabel(band)}
+                </span>
+              )}
             {n}
           </div>
         ))}

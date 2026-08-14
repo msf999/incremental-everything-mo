@@ -17,7 +17,7 @@
 // the queue's own "⚡ Change Priority" button. A flashcard's chip is inert: the
 // priority it displays belongs to the item's document, not to the card, so
 // offering to edit it here would silently retarget the click.
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { renderWidget, usePlugin, useTrackerPlugin } from '@remnote/plugin-sdk';
 import {
   queueToolbarPriorityModeId,
@@ -28,7 +28,7 @@ import {
   isWebPlatformKey,
   queueSessionCacheKey,
 } from '../lib/consts';
-import { getQueuePriorityBadgeStyle } from '../components/QueueDistribution';
+import { getQueuePriorityBadgeStyle, QUEUE_PRIORITY_NEUTRAL_COLOR } from '../components/QueueDistribution';
 import { IncrementalRem } from '../lib/incremental_rem';
 import { resolveQueuePriority } from '../lib/queue_priority_source';
 import { calculateRelativePercentile, percentileToHslColor } from '../lib/utils';
@@ -65,6 +65,13 @@ function QueuePriorityChip() {
     useTrackerPlugin(async (rp) => !!(await rp.storage.getSession<boolean>(isMobileDeviceKey)), []) ??
     false;
 
+  // FORK (2026-08-14, bug-hunt #28): decide visibility BEFORE the expensive hooks,
+  // and gate their bodies. The early return sits after every hook (it must —
+  // Rules of Hooks), so switching the chip off used to stop it RENDERING while
+  // the 500ms poll kept running and the resolver kept doing its full ancestor
+  // walk plus ~12 SDK round trips on every card, all to produce null.
+  const shouldShow = shouldShowQueuePriorityChip(mode, isWeb, isMobile);
+
   // Which queue item is on screen. `incrementalQueueActiveKey` is the reliable
   // discriminator: while a plugin item shows, plugin.queue.getCurrentCard() can
   // still be reporting the previous flashcard.
@@ -80,6 +87,7 @@ function QueuePriorityChip() {
   // Toolbar widgets get no per-item context, so the visible card is polled.
   const [polledCardRemId, setPolledCardRemId] = useState<string | undefined>();
   useEffect(() => {
+    if (!shouldShow) return; // FORK (#28)
     let isMounted = true;
     const checkCard = async () => {
       try {
@@ -95,7 +103,9 @@ function QueuePriorityChip() {
       isMounted = false;
       clearInterval(intervalId);
     };
-  }, [plugin]);
+    // shouldShow in the deps so toggling the setting starts/stops the poll
+    // without needing a reload.
+  }, [plugin, shouldShow]);
 
   const allIncRems =
     useTrackerPlugin((rp) => rp.storage.getSession<IncrementalRem[]>(allIncrementalRemKey), []) || [];
@@ -112,6 +122,7 @@ function QueuePriorityChip() {
 
   const data = useTrackerPlugin(
     async (rp) => {
+      if (!shouldShow) return null; // FORK (#28)
       const remId = isIncrementalQueueActive
         ? currentIncRemId ?? polledCardRemId
         : polledCardRemId ?? currentIncRemId;
@@ -130,13 +141,15 @@ function QueuePriorityChip() {
     [isIncrementalQueueActive, currentIncRemId, polledCardRemId]
   );
 
-  if (!shouldShowQueuePriorityChip(mode, isWeb, isMobile)) return null;
+  if (!shouldShow) return null;
   if (!data) return null;
 
   const { resolved, editRemId } = data;
   // A dismissed source is not in the IncRem set, so it has no rank; the chip
   // then shows the bare number and is coloured by the value itself.
-  const percentile = resolved.sourceRemId
+  // FORK (#13): an unreadable priority has no meaningful rank — the number is a
+  // placeholder, so ranking it would dress a guess up as a measurement.
+  const percentile = resolved.sourceRemId && !resolved.unreadable
     ? calculateRelativePercentile(allIncRems, resolved.sourceRemId)
     : null;
   const color = percentileToHslColor(percentile ?? resolved.priority);
@@ -144,11 +157,17 @@ function QueuePriorityChip() {
 
   // Everything that used to sit in the info bar — where the priority comes from,
   // and what the percentage actually means — now lives here on hover.
-  const lines: string[] = [
-    resolved.origin === 'own'
-      ? `Priority ${resolved.priority} — this item's own.`
-      : `Priority ${resolved.priority} — from its document "${resolved.sourceName}".`,
-  ];
+  const lines: string[] = resolved.unreadable
+    ? [
+        'This item’s priority could not be read.',
+        'Its Priority slot is unreadable and its history holds no recorded priority, so there is no value to show — the plugin is NOT treating it as 50.',
+        'Setting a priority on it will repair the slot.',
+      ]
+    : [
+        resolved.origin === 'own'
+          ? `Priority ${resolved.priority} — this item's own.`
+          : `Priority ${resolved.priority} — from its document "${resolved.sourceName}".`,
+      ];
   if (resolved.origin === 'document') {
     lines.push(
       'This item has no priority of its own. Only its own document counts — a ' +
@@ -164,10 +183,14 @@ function QueuePriorityChip() {
   if (percentile !== null) {
     lines.push(
       '',
+      // FORK (2026-08-14, bug-hunt #32): the derived clause used to read
+      // "sits in the least-important {100-p}%", which inverts the meaning — a
+      // percentile of 2 means 2nd-most-important of 100, i.e. the MOST-important
+      // 2%, not the least-important 98%.
       `${percentile}% KB — this is a RANK, not a share: ${percentile}% of the ` +
         'Incremental Rems in your knowledge base are at least as important as this one ' +
-        '(a lower priority number means more important), so it sits in the ' +
-        `least-important ${Math.round((100 - percentile) * 10) / 10}%. Ranked against ` +
+        '(a lower priority number means more important), so it is more important than ' +
+        `the other ${Math.round((100 - percentile) * 10) / 10}%. Ranked against ` +
         'every Incremental Rem, not only the ones due today.'
     );
     if (doc !== null && doc !== undefined) {
@@ -194,8 +217,13 @@ function QueuePriorityChip() {
       }
       title={lines.join('\n')}
     >
-      <div style={{ ...getQueuePriorityBadgeStyle(color), padding: '3px 10px' }}>
-        <span>P{resolved.priority}</span>
+      <div
+        style={{
+          ...getQueuePriorityBadgeStyle(resolved.unreadable ? QUEUE_PRIORITY_NEUTRAL_COLOR : color),
+          padding: '3px 10px',
+        }}
+      >
+        <span>{resolved.unreadable ? 'P?' : `P${resolved.priority}`}</span>
       </div>
       {percentile !== null && (
         <span

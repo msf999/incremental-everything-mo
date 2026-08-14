@@ -5,6 +5,7 @@ import { getIncrementalRemFromRem, updateReviewRemData } from './incremental_rem
 import { incremReviewStartTimeKey } from './consts';
 import { determineIncRemType } from './incRemHelpers';
 import { markIncRemTransition } from './queue_session';
+import { seedPriorityForTimer } from './incremental_rem/types';
 
 export const handleReviewInEditorRem = async (
     plugin: RNPlugin,
@@ -43,7 +44,7 @@ export const handleReviewInEditorRem = async (
     await plugin.storage.setSession('editor-review-timer-start', existingStartTime || Date.now());
     // We do not set an interval since the repetition was already recorded above
     await plugin.storage.setSession('editor-review-timer-interval', null);
-    await plugin.storage.setSession('editor-review-timer-priority', incRemInfo?.priority ?? 10);
+    await plugin.storage.setSession('editor-review-timer-priority', seedPriorityForTimer(incRemInfo));
     await plugin.storage.setSession('editor-review-timer-rem-name', remName || 'Unnamed Rem');
     await plugin.storage.setSession('editor-review-timer-from-queue', true);
     await plugin.storage.setSession('editor-review-timer-origin', 'queue');

@@ -24,7 +24,7 @@ import {
 import parseDuration from 'parse-duration';
 import { readRawPdfState, writeRawPdfState } from '../pdf_state';
 import { getNextSpacingDateForRem, updateSRSDataForRem } from '../scheduler';
-import { IncrementalRem, IncrementalRep, UNREADABLE_PRIORITY_FALLBACK } from './types';
+import { IncrementalRem, IncrementalRep, UNREADABLE_PRIORITY_FALLBACK, priorityStampFor } from './types';
 import { tryParseJson, getDailyDocReferenceForDate, sleep } from '../utils';
 import { getInitialPriority } from '../priority_inheritance';
 import { stampNoteAndContext } from '../history_notes';
@@ -73,6 +73,26 @@ type ReviewOverrideOptions = {
  * which dies on `import.meta` (see the note atop register/tracker.ts).
  * priority_bands imports only consts + card_priority/types, so there is no cycle.
  */
+/**
+ * The rem's history slot as currently stored, unparsed by Zod.
+ *
+ * FORK (2026-08-14, bug-hunt #43). The paths that append a single entry used to
+ * build their new array from `incRem.history` — the output of
+ * `getIncrementalRemFromRem`, i.e. already Zod-parsed, so any key the schema does
+ * not declare has been stripped from it. Writing that back persisted the loss and
+ * clobbered anything appended since the object was read. Returns null when the
+ * slot is missing or unparseable, so callers can fall back rather than wipe it.
+ */
+async function readRemHistory(
+  plugin: RNPlugin,
+  remId: string
+): Promise<IncrementalRep[] | null> {
+  const rem = await plugin.rem.findOne(remId);
+  if (!rem) return null;
+  const raw = tryParseJson(await rem.getPowerupProperty(powerupCode, repHistorySlotCode));
+  return Array.isArray(raw) ? (raw as IncrementalRep[]) : null;
+}
+
 export async function setIncRemPriority(
   plugin: RNPlugin,
   rem: PluginRem,
@@ -166,9 +186,20 @@ export async function updateReviewRemData(
     }
   }
 
-  await updateSRSDataForRem(plugin, incRem.remId, nextRepDateToUse, newHistory);
+  // FORK (2026-08-14, bug-hunt #9): a failed write must not look like a review.
+  // Returning null here is what stops callers patching the cache and advancing
+  // the queue on an IncRem whose Rem never received the new date or history.
+  const saved = await updateSRSDataForRem(plugin, incRem.remId, nextRepDateToUse, newHistory);
+  if (!saved) {
+    await plugin.app.toast('Could not save that review — the item stays due. Please try again.');
+    return null;
+  }
 
-  return { ...nextSpacing, newNextRepDate: nextRepDateToUse, newHistory };
+  // FORK (#41): return what was PERSISTED, not the pre-stamp array. The last
+  // entry gains `nextRepMs` inside updateSRSDataForRem, and callers put this
+  // straight into the session cache — returning `newHistory` left the cache and
+  // the rem disagreeing about that field.
+  return { ...nextSpacing, newNextRepDate: nextRepDateToUse, newHistory: saved };
 }
 
 // Request that the Practiced Queues dashboard be restored in the right sidebar
@@ -205,17 +236,22 @@ export async function handleNextRepetitionClick(
     // 1. Capture the exact new data calculated by the review
     const reviewResult = await updateReviewRemData(plugin, incRem);
 
-    if (reviewResult) {
-      // 2. Manually patch the object using the new data
-      const updatedIncRem: IncrementalRem = {
-        ...incRem,
-        nextRepDate: reviewResult.newNextRepDate,
-        history: reviewResult.newHistory,
-      };
+    // FORK (2026-08-14, bug-hunt #9): null means nothing was written to the Rem.
+    // Upstream fell through here and advanced anyway, so the IncRem left the queue
+    // looking reviewed while its date and history were unchanged — due again next
+    // session with no record of the repetition. Leave it in place instead;
+    // updateReviewRemData has already toasted.
+    if (!reviewResult) return;
 
-      // 3. Update the cache with guaranteed fresh data
-      await updateIncrementalRemCache(plugin as any, updatedIncRem);
-    }
+    // 2. Manually patch the object using the new data
+    const updatedIncRem: IncrementalRem = {
+      ...incRem,
+      nextRepDate: reviewResult.newNextRepDate,
+      history: reviewResult.newHistory,
+    };
+
+    // 3. Update the cache with guaranteed fresh data
+    await updateIncrementalRemCache(plugin as any, updatedIncRem);
 
     // Keep the sleep to be safe
     await sleep(150);
@@ -253,6 +289,12 @@ export async function handleNextRepetitionManualOffset(
       date: Date.now(),
       scheduled: targetDay,
       interval: Math.max(offsetDays, 0),
+      // FORK (#42): every other review writer records the priority at the time of
+      // the rep; this one did not, so a user who reviews only via the offset
+      // picker left nothing for the history-recovery tier to fall back on if the
+      // priority slot ever became unreadable. priorityStampFor omits it when the
+      // value is the unreadable placeholder (#13).
+      ...priorityStampFor(incRem),
     };
     // Same note/context stamping as the regular review funnel.
     const remForStamp = await plugin.rem.findOne(incRem.remId);
@@ -260,9 +302,21 @@ export async function handleNextRepetitionManualOffset(
       await stampNoteAndContext(plugin, remForStamp, manualEntry);
     }
 
-    const newHistory = [...(incRem.history || []), manualEntry];
+    // FORK (#43): append to the rem's CURRENT history, not to the in-memory
+    // `incRem.history` — that array is Zod-parsed output, so any field the schema
+    // does not know is already stripped from it, and writing it back would
+    // persist the loss and clobber anything written since this object was built.
+    // The regular Next path avoids this by re-reading inside getNextSpacingDateForRem.
+    const freshHistory = await readRemHistory(plugin, incRem.remId);
+    const newHistory = [...(freshHistory ?? incRem.history ?? []), manualEntry];
 
-    await updateSRSDataForRem(plugin, incRem.remId, targetDay, newHistory);
+    // FORK (2026-08-14, bug-hunt #9): see updateReviewRemData — do not advance
+    // past an item whose write failed.
+    const saved = await updateSRSDataForRem(plugin, incRem.remId, targetDay, newHistory);
+    if (!saved) {
+      await plugin.app.toast('Could not save that review — the item stays due. Please try again.');
+      return;
+    }
 
     // MANUALLY CONSTRUCT THE UPDATED OBJECT
     const updatedIncRem: IncrementalRem = {
@@ -297,10 +351,32 @@ export async function rescheduleWithoutReview(
 
     const targetDay = dayjs().startOf('day').add(Math.max(offsetDays, 0), 'day').valueOf();
 
-    await updateSRSDataForRem(plugin, incRem.remId, targetDay, incRem.history || []);
+    // FORK (2026-08-14, bug-hunt #9): same rule — a failed reschedule must leave
+    // the item in the queue rather than silently consuming it.
+    // FORK (#43): write the rem's CURRENT history, not the Zod-stripped in-memory copy.
+    const freshHistory = await readRemHistory(plugin, incRem.remId);
+    const saved = await updateSRSDataForRem(
+      plugin,
+      incRem.remId,
+      targetDay,
+      freshHistory ?? incRem.history ?? []
+    );
+    if (!saved) {
+      await plugin.app.toast('Could not reschedule that item — it stays due. Please try again.');
+      return;
+    }
 
-    const updatedIncRem = await getIncrementalRemFromRem(plugin, await plugin.rem.findOne(incRem.remId));
-    if (updatedIncRem) await updateIncrementalRemCache(plugin as any, updatedIncRem);
+    // FORK (#25): patch the cache from the values we just wrote instead of
+    // re-reading the rem. reschedule.tsx documents why: a read straight after the
+    // write can return stale data before the remote DB confirms it, leaving the
+    // cache holding the OLD due date — so the item we just skipped still counts
+    // as due for the rest of the session. The sibling Next path uses a sleep(150)
+    // for the same hazard; constructing the entry needs neither.
+    await updateIncrementalRemCache(plugin as any, {
+      ...incRem,
+      nextRepDate: targetDay,
+      history: saved,
+    });
 
     await plugin.queue.removeCurrentCardFromQueue();
   } finally {
@@ -367,7 +443,33 @@ export const getIncrementalRemFromRem = async (
   // Read the original incremental date slot (Daily Document reference)
   let createdAt = await resolveDailyDocSlot(originalIncrementalDateSlotCode);
 
-  const history = tryParseJson(await r.getPowerupProperty(powerupCode, repHistorySlotCode));
+  const rawHistory = tryParseJson(await r.getPowerupProperty(powerupCode, repHistorySlotCode));
+
+  // FORK (2026-08-14, bug-hunt #10): repair out-of-range priorities on READ.
+  //
+  // IncrementalRep bounds `priority` to 0-100, and a single entry outside it fails
+  // IncrementalRem.safeParse below — which returns null, i.e. "not an Incremental
+  // Rem" to every consumer. The rem then disappears from the cache, queue, counter
+  // and distribution while still looking tagged in the editor, and no amount of
+  // re-tagging fixes it because the bad entry is already persisted.
+  //
+  // Clamping (rather than dropping the entry) keeps the repetition itself — the
+  // date, interval and review time are all still true; only the recorded priority
+  // was impossible. Writing nothing back keeps this read-only: the slot is repaired
+  // in memory for every consumer, and the next scheduling write persists the
+  // corrected history naturally.
+  const history = Array.isArray(rawHistory)
+    ? rawHistory.map((entry: any) => {
+        if (typeof entry?.priority !== 'number' || Number.isNaN(entry.priority)) return entry;
+        const clamped = Math.min(100, Math.max(0, entry.priority));
+        if (clamped === entry.priority) return entry;
+        console.warn(
+          '[getIncrementalRemFromRem] clamped out-of-range history priority',
+          { remId: r._id, stored: entry.priority, used: clamped }
+        );
+        return { ...entry, priority: clamped };
+      })
+    : rawHistory;
 
   // Priority resolution. The slot is authoritative, but it is not always
   // readable: RemNote's storage/sync overhaul left some Rems with a Priority
@@ -481,12 +583,65 @@ export const getIncrementalRemFromRem = async (
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
+/**
+ * Largest timestamp a JS Date can represent. A rotation whose landing date would
+ * exceed it produces an Invalid Date rather than a schedule, so it is rejected —
+ * a correctness floor, not a policy cap on how long a rotation may be.
+ */
+const MAX_TIMESTAMP = 8.64e15;
+
+/**
+ * A Rotation string as milliseconds, or null when it is absent, 'Default', or
+ * unusable — in which case callers fall back to the normal scheduler and the
+ * queue buttons show the amber `invalid rotation` warning.
+ *
+ * Two things this deliberately rejects, both of which used to be accepted and
+ * silently mis-scheduled the rem (fixed 2026-08-13):
+ *
+ * 1. **Sub-day durations** — anything strictly between 0 and 1 day (`2 hours`,
+ *    `30m`, `0.5`). A rotation is persisted through `updateSRSDataForRem` as a
+ *    Daily Doc *date reference*, so anything finer than a day collapses to that
+ *    day's midnight: the value is a lie about when the rem will actually return.
+ *    Rotation is a whole-day override by design.
+ *
+ *    **`0` IS allowed** (user request, 2026-08-14) and is not sub-day — it is the
+ *    whole-day value meaning "today". It resolves to today's midnight, which is
+ *    in the past, so the rem stays due. See the note below on what that implies.
+ * 2. **Unitless numbers meaning milliseconds.** `parseDuration('5')` returns 5 —
+ *    five MILLISECONDS — so `Rotation: 5`, the obvious way to write "5 days",
+ *    passed the old `ms > 0` check with no warning and pinned the rem to today.
+ *    Parsing with the 'd' format makes a bare number mean DAYS, which is what
+ *    the README documents and what anyone typing it intends.
+ *
+ * Note `parseDuration(x, 'd')` returns the duration already expressed in days
+ * ('6 months' → 182.625), so the ms conversion happens here, once.
+ */
 export function getRotationIntervalMs(rotation: string | undefined): number | null {
   if (!rotation || rotation.toLowerCase() === 'default') return null;
-  const ms = parseDuration(rotation);
-  return ms != null && ms > 0 ? ms : null;
+  const days = parseDuration(rotation, 'd');
+  if (days == null || !Number.isFinite(days)) return null;
+  // Negative is meaningless. Strictly between 0 and 1 is sub-day — and this is
+  // also what still catches the unitless-milliseconds trap, since `5` parsed as
+  // 5 ms is 0.0000058 days. Exactly 0 is permitted: "due today".
+  if (days < 0 || (days > 0 && days < 1)) return null;
+  const ms = days * MS_PER_DAY;
+  if (Date.now() + ms > MAX_TIMESTAMP) return null;
+  return ms;
 }
 
+/**
+ * ⚠️ What `Rotation: 0` actually means (2026-08-14).
+ *
+ * It does NOT mean "show it again today, then resume normal scheduling". Each
+ * review sets the next date to `now + 0`, stored as today's Daily Doc reference,
+ * which reads back as today's midnight — already in the past. So the rem is due
+ * again immediately and **stays due for ever**, in every future session, until
+ * the rotation is changed. It is an "always in the queue" marker, not a one-off.
+ *
+ * Within a single queue session it will not reappear: `GetNextCard` filters rems
+ * in `seenRemInSessionKey`, so it returns on the NEXT session, not immediately
+ * after you review it.
+ */
 export function getRotationIntervalDays(rotation: string | undefined): number | null {
   const ms = getRotationIntervalMs(rotation);
   return ms != null ? Math.round((ms / MS_PER_DAY) * 10) / 10 : null;
@@ -607,13 +762,20 @@ export async function initIncrementalRem(plugin: ReactRNPlugin, rem: PluginRem, 
       // instead of doing a redundant — and racy — second lookup.
       // getInitialPriority gets explicitParentId to override stale SDK cache when
       // creating a new Rem and moving it.
-      const [initialPriority, dateRef] = await Promise.all([
+      // FORK (2026-08-14, bug-hunt #10): belt and braces. getInitialPriority now
+      // clamps too, but this value is written to the priority slot AND stamped into
+      // the madeIncremental history marker, and an out-of-range stamp is
+      // unrecoverable (it fails IncrementalRem.safeParse on every later read, so
+      // getIncrementalRemFromRem returns null and the rem vanishes from the plugin
+      // entirely). defaultPriority above has always been clamped; this was not.
+      const [rawInitialPriority, dateRef] = await Promise.all([
         getInitialPriority(plugin, rem, defaultPriority, options?.explicitParentId),
         getDailyDocReferenceForDate(plugin, nextRepDate),
       ]);
       if (!dateRef) {
         return;
       }
+      const initialPriority = Math.min(100, Math.max(0, rawInitialPriority));
       const todayRef =
         initialInterval === 0 ? dateRef : await getDailyDocReferenceForDate(plugin, new Date());
 

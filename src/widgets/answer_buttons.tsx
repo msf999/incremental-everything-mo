@@ -3,14 +3,14 @@ import {
   usePlugin,
   useTrackerPlugin,
   WidgetLocation,
-  RNPlugin,
-  PluginRem,
 } from '@remnote/plugin-sdk';
 import React, { useMemo, useRef, useState, useLayoutEffect, useEffect } from 'react';
 import * as _ from 'remeda';
 import dayjs from 'dayjs';
 import { IncrementalRep, repCountsForScheduling } from '../lib/incremental_rem/types';
-import { NextRepTime } from '../components/NextRepTime';
+import { priorityStampFor } from '../lib/incremental_rem/types';
+import { NextRepTime, durationToHumanReadable } from '../components/NextRepTime';
+import dayjsDuration from 'dayjs/plugin/duration';
 import { SplitButton } from '../components/buttons/SplitButton';
 
 // Granular offset picker opened by the chevrons on Next / Open Editor / Skip:
@@ -18,6 +18,8 @@ import { SplitButton } from '../components/buttons/SplitButton';
 // the button row (same visual convention as the ⚙️ Options row). The chevron
 // picks WHICH action the chosen offset applies to.
 type OffsetUnit = 'days' | 'weeks' | 'months';
+dayjs.extend(dayjsDuration);
+
 const OFFSET_UNITS: { unit: OffsetUnit; label: string }[] = [
   { unit: 'days', label: 'Days' },
   { unit: 'weeks', label: 'Weeks' },
@@ -45,15 +47,14 @@ import {
   queueSessionCacheKey,
   priorityCalcScopeRemIdsKey,
   incremReviewStartTimeKey,
-  queueBackNavKey,
   queueInfoBarModeId,
   isMobileDeviceKey,
 } from '../lib/consts';
 import { getIncrementalRemFromRem, handleNextRepetitionClick, handleNextRepetitionManualOffset, rescheduleWithoutReview, updateReviewRemData, getRotationIntervalMs, requestQueueDashboardRefocus } from '../lib/incremental_rem';
 import { removeIncrementalRemCache, updateIncrementalRemCache } from '../lib/incremental_rem/cache';
 import { IncrementalRem } from '../lib/incremental_rem';
-import { percentileToHslColor, calculateRelativePercentile, calculateVolumeBasedPercentile, calculateWeightedShield, PERFORMANCE_MODE_LIGHT } from '../lib/utils';
-import { safeRemTextToString, getActivePdfForIncRem, findHTMLinRem, addPageToHistory, getPageHistory, getIncrementalReadingPosition, getDescendantsToDepth, resolveSessionBookmarkCarry } from '../lib/pdfUtils';
+import { percentileToHslColor, calculateRelativePercentile, calculateVolumeBasedPercentile, calculateWeightedShield } from '../lib/utils';
+import { getActivePdfForIncRem, findHTMLinRem, addPageToHistory, getPageHistory, getIncrementalReadingPosition, resolveSessionBookmarkCarry } from '../lib/pdfUtils';
 import { FORK_FEATURES } from '../lib/fork_gates';
 import {
   QueueDistribution,
@@ -65,7 +66,7 @@ import {
 import { remTitleEndsWithOpenLinkTag, extractExternalHttpUrlsFromRem } from '../lib/open_editor_link_tag';
 import { getRemReadPoint } from '../lib/remReadPoint';
 import { resolveRemTextForBreadcrumb } from '../lib/richTextRemRefs';
-import { QueueSessionCache, setCardPriority } from '../lib/card_priority';
+import { QueueSessionCache } from '../lib/card_priority';
 import { WeightedShieldTooltip } from '../components';
 import { shouldUseLightMode } from '../lib/mobileUtils';
 import { getHtmlSourceUrl, determineIncRemType } from '../lib/incRemHelpers';
@@ -75,7 +76,7 @@ import { addToIncrementalHistory } from '../lib/history_utils';
 import { handleReviewInEditorRem } from '../lib/review_actions';
 
 import { handleCardPriorityInheritance } from '../lib/card_priority/card_priority_inheritance';
-import { getIESetting, useIESetting } from '../lib/settings';
+import { useIESetting } from '../lib/settings';
 
 export function AnswerButtons() {
   const plugin = usePlugin();
@@ -100,6 +101,45 @@ export function AnswerButtons() {
   const shouldDisplayShield = useIESetting(displayPriorityShieldId);
   const shouldDisplayWeightedShield = useIESetting(displayWeightedShieldId);
 
+  // FORK (2026-08-14, bug-hunt #5/#6): row-level in-flight lock for every action
+  // that mutates the rem or advances the queue.
+  //
+  // Each of these does several sequential IPC round trips before its destructive
+  // step, and nothing used to disable the row meanwhile — so a second press
+  // re-entered with the same captured `incRemInfo`. On Dismiss that appended the
+  // rem's whole history to the Dismissed powerup a SECOND time (its
+  // `alreadyDismissed` merge branch) and consumed the next card unreviewed. Next
+  // is worse-timed still: `handleNextRepetitionClick` awaits a `sleep(150)`
+  // before advancing.
+  //
+  // The whole ROW locks, not each button: these actions all mutate the same rem
+  // and then tear the widget down, so Dismiss-then-Next is as damaging as
+  // Dismiss-twice. `busyRef` is the guard (synchronous, so it wins the race
+  // between two clicks in the same tick); `isBusy` only drives the disabled
+  // styling. MUST stay above the early returns — Rules of Hooks.
+  const busyRef = useRef(false);
+  const mountedRef = useRef(true);
+  const [isBusy, setIsBusy] = useState(false);
+  useEffect(() => () => { mountedRef.current = false; }, []);
+
+  /** Runs `fn` unless another row action is in flight; otherwise drops the press. */
+  const runExclusive = async (fn: () => Promise<void>) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setIsBusy(true);
+    try {
+      await fn();
+    } catch (e) {
+      console.error('[AnswerButtons] action failed', e);
+    } finally {
+      busyRef.current = false;
+      // Most of these destroy the sandbox before resolving, so this often never
+      // runs; the mounted check keeps the survivors from setting state on an
+      // unmounted tree.
+      if (mountedRef.current) setIsBusy(false);
+    }
+  };
+
   // FORK (Deviation 14): the info bar's visibility setting. isMobile drives the
   // 'allExceptMobile' option; this is an IncRem bar, so isIncRem is true.
   // MUST stay in the hooks section ABOVE the early returns below (Rules of
@@ -110,8 +150,16 @@ export function AnswerButtons() {
     false;
   const showInfoBar = shouldShowQueueInfoBar(infoBarMode, true, isMobileDevice);
 
+  // FORK (2026-08-14, bug-hunt #29): these trackers feed ONLY buttons behind
+  // FORK_FEATURES flags that are false, so every card paid for reads whose
+  // results nothing could render. Short-circuit inside the tracker rather than
+  // deleting it — the hook must still run (Rules of Hooks) and the code revives
+  // by flipping the flag.
   const activeHighlightId = useTrackerPlugin(
-    (rp) => rp.storage.getSession<string | null>(activeHighlightIdKey),
+    (rp) =>
+      FORK_FEATURES.pdfReader
+        ? rp.storage.getSession<string | null>(activeHighlightIdKey)
+        : Promise.resolve(null),
     []
   );
 
@@ -121,7 +169,10 @@ export function AnswerButtons() {
   );
 
   const scopeRemIds = useTrackerPlugin(
-    (rp) => rp.storage.getSession<string[] | null>(priorityCalcScopeRemIdsKey),
+    (rp) =>
+      FORK_FEATURES.shields
+        ? rp.storage.getSession<string[] | null>(priorityCalcScopeRemIdsKey)
+        : Promise.resolve(null),
     []
   );
 
@@ -266,7 +317,11 @@ export function AnswerButtons() {
   // Fetch the most recent bookmark highlightId for this IncRem (pdf or html doc reps).
   // Skipped for highlight reps — those auto-scroll to the highlight itself, no
   // separate bookmark concept applies.
+  // FORK (#29): the costliest of the group — a multi-hop chain
+  // (getActivePdfForIncRem -> getPageHistory) on every pdf/html card, consumed
+  // only by the pdfReader-gated Scroll-to-Bookmark button.
   const bookmarkHighlightId = useTrackerPlugin(async (rp) => {
+    if (!FORK_FEATURES.pdfReader) return null;
     if (!baseData?.rem) return null;
     const type = await rp.storage.getSession<string | null>(currentIncrementalRemTypeKey);
     if (type !== 'pdf' && type !== 'html') return null;
@@ -291,7 +346,11 @@ export function AnswerButtons() {
   // informational chip that points the user to "Review in Editor" instead of
   // navigating. Also flags whether the read point is the most recent reading
   // action (vs the PDF/HTML bookmark).
+  // FORK (#29): ~5-6 chained RPCs per pdf/html card (getSession ->
+  // getRemReadPoint -> findOne -> resolveRemTextForBreadcrumb ->
+  // getActivePdfForIncRem -> getPageHistory) for the readPoints-gated button.
   const remReadPointInfo = useTrackerPlugin(async (rp) => {
+    if (!FORK_FEATURES.readPoints) return null;
     if (!baseData?.rem) return null;
     const type = await rp.storage.getSession<string | null>(currentIncrementalRemTypeKey);
     if (type !== 'pdf' && type !== 'html') return null;
@@ -379,12 +438,40 @@ export function AnswerButtons() {
     setNoteOpen(false);
     setNoteText('');
     if (!currentRemId) return;
+    // FORK (2026-08-14, bug-hunt #47): stale-guard the async prefill. Advancing
+    // quickly (A -> B) let A's promise resolve after B's effect had already run,
+    // so B opened the note box prefilled with A's parked text. Storage is keyed
+    // per rem so nothing was written to the wrong rem — but the wrong text was
+    // shown, and would have been saved to B on the next review.
+    let stale = false;
     getPendingReviewNote(plugin, currentRemId).then((parked) => {
+      if (stale) return;
       if (parked) {
         setNoteText(parked);
         setNoteOpen(true);
       }
     });
+    return () => {
+      stale = true;
+    };
+  }, [currentRemId]);
+
+  // FORK (2026-08-14, bug-hunt #46): close the offset picker when the card
+  // changes. The widget is NOT remounted per card — the note state directly above
+  // proves it, since it has to reset itself — so the row stayed open across a
+  // transition, still labelled for the previous mode ("Skip to (no review)") on a
+  // brand-new item. The chosen value/unit deliberately persist; only the open
+  // state resets.
+  useEffect(() => {
+    setOffsetRowFor(null);
+    // FORK (2026-08-15, review §2.1): reset the ⚙️ Options panel too. Its toggle
+    // BUTTON renders inside `{!isProcessed && ...}` but the panel itself did not,
+    // and unlike the offset row it was never reset per card — so "open Options →
+    // Next → Previous" landed on the already-processed row with the panel still
+    // open, offering Reschedule / Change Priority / Review with Timer. The last of
+    // those calls updateReviewRemData, which breaks Deviation 8's invariant that
+    // nothing reachable on that row can write a schedule.
+    setShowAdvancedOptions(false);
   }, [currentRemId]);
 
   // ✅ NOW we can do early returns AFTER all hooks are called
@@ -404,6 +491,13 @@ export function AnswerButtons() {
   }
 
   const { ctx, rem, incRemInfo, sessionCache } = coreData;
+
+  // FORK (2026-08-14): an item whose next repetition is in the future has already
+  // been processed — a stale queue entry (reviewed on another device mid-session)
+  // or one revisited with Previous. It used to be silently skipped by a due-check
+  // effect in queue.tsx; it is now shown with a distinct button row instead, so
+  // "already done" is visible rather than inferred from an item vanishing.
+  const isProcessed = Date.now() < incRemInfo.nextRepDate;
 
   const hasInvalidRotation = !!(
     incRemInfo.rotation &&
@@ -472,6 +566,22 @@ export function AnswerButtons() {
     }
   };
 
+  // FORK (2026-08-14): the processed state's Open Editor. Same navigation as the
+  // normal one — (OpenLink) policy included — but it records NO review and leaves
+  // the schedule untouched. Re-reviewing an item you deliberately went back to look
+  // at would overwrite the very date that marks it as already processed.
+  const openEditorWithoutReview = async () => {
+    // Synchronous first, so the user-gesture token survives for window.open.
+    openExternalLinkTabsWhenOpenLinkTagged();
+    const skipRemDocument = shouldSkipRemDocumentForOpenEditor;
+    // Dispatch together: removeCurrentCardFromQueue can tear down this sandbox
+    // before a later await would resolve (same reason as the Dismiss path).
+    await Promise.allSettled([
+      plugin.queue.removeCurrentCardFromQueue(),
+      skipRemDocument ? Promise.resolve() : openEditorAction(),
+    ]);
+  };
+
   const shouldSkipRemDocumentForOpenEditor =
     remTitleEndsWithOpenLinkTagState === true && (externalUrls?.length ?? 0) > 0;
 
@@ -487,14 +597,20 @@ export function AnswerButtons() {
     try {
       await plugin.storage.setSession('plugin_operation_active', true);
       const reviewResult = await updateReviewRemData(plugin, incRemInfo);
-      if (reviewResult) {
-        const updatedIncRem: IncrementalRem = {
-          ...incRemInfo,
-          nextRepDate: reviewResult.newNextRepDate,
-          history: reviewResult.newHistory,
-        };
-        await updateIncrementalRemCache(plugin as any, updatedIncRem);
+      // FORK (2026-08-14, bug-hunt #9): null means the write failed — do not
+      // advance past an item that was not actually reviewed. Opening the editor
+      // without advancing is fine (and arguably what the user wants next), but
+      // the queue must keep the item; updateReviewRemData has already toasted.
+      if (!reviewResult) {
+        await openEditorAction();
+        return;
       }
+      const updatedIncRem: IncrementalRem = {
+        ...incRemInfo,
+        nextRepDate: reviewResult.newNextRepDate,
+        history: reviewResult.newHistory,
+      };
+      await updateIncrementalRemCache(plugin as any, updatedIncRem);
       const incRemType = await determineIncRemType(plugin, rem);
       // Dispatch both critical operations before widget teardown can interrupt either.
       await Promise.allSettled([
@@ -515,13 +631,37 @@ export function AnswerButtons() {
       return;
     }
     const incRemType = await determineIncRemType(plugin, rem);
-    // Fire both operations together so queue teardown does not prevent editor open.
-    await Promise.allSettled([runManualNext(offsetDays), openEditorAction(incRemType)]);
+    // FORK (2026-08-15, review §2.4): AWAIT the review before navigating.
+    //
+    // This used to be Promise.allSettled([runManualNext, openEditorAction]) — both
+    // started together. openEditorAction reaches openRem on its first tick while the
+    // write has ~6 sequential awaits ahead of it, so the widget could be torn down
+    // mid-write. Deviation 6 states the rule ("scheduling runs before navigation so
+    // the widget is not destroyed before the review is recorded") and the sibling
+    // performOpenEditorFlow follows it. It also defeated the #9 guard: a "could not
+    // save" toast surfaced after the user had already left the queue.
+    await runManualNext(offsetDays);
+    await openEditorAction(incRemType);
   };
 
-  const priorityColor = percentiles.kb
-    ? percentileToHslColor(percentiles.kb)
-    : QUEUE_PRIORITY_NEUTRAL_COLOR;
+  // FORK (2026-08-14, bug-hunt #52 + #59): `!== null`, not truthiness —
+  // calculateRelativePercentile legitimately returns 0.0 for the top-priority rem
+  // once the KB exceeds ~2000 items, and `0 ?` is falsy, so the most important
+  // item in the KB rendered a grey border. And when there IS no percentile, fall
+  // back to the absolute priority exactly as queue_info_bar does, instead of
+  // diverging to neutral grey while its comment claimed the two matched.
+  // FORK (#13, completed 2026-08-14): a 'fallback' prioritySource means the
+  // priority slot could NOT be read and the number is the placeholder 50, which
+  // types.ts says "means nothing". queue_priority_chip and queue_info_bar were
+  // both taught this; THIS bar was missed — so a damaged rem showed a grey `P?`
+  // chip reading "could not be read" in the toolbar and, two inches below, a
+  // confidently coloured border plus a ringed band asserting the item sits at 50.
+  const priorityUnreadable = incRemInfo.prioritySource === 'fallback';
+  const priorityColor = priorityUnreadable
+    ? QUEUE_PRIORITY_NEUTRAL_COLOR
+    : percentiles.kb !== null
+      ? percentileToHslColor(percentiles.kb)
+      : percentileToHslColor(incRemInfo.priority);
   const buttonStyles = getButtonStyles();
 
   // When both a reader bookmark and an outline read point exist, the reader
@@ -586,16 +726,90 @@ export function AnswerButtons() {
         } catch (_) { /* cross-origin safe */ }
       }}
     >
+      {/* FORK (2026-08-14): "already processed" row — shown instead of the normal
+          actions when this item's next repetition is in the future. Reached by
+          pressing Previous after reviewing, or by meeting a queue entry that another
+          device has since rescheduled. The point is that the item stays VISIBLE and
+          says so, rather than being silently advanced past. */}
+      {isProcessed && (
+        <div style={buttonRowStyle}>
+          <Button
+            variant="secondary"
+            disabled={isBusy}
+            onClick={() => runExclusive(async () => {
+              await plugin.queue.goBackToPreviousCard();
+            })}
+            title="Previous: Go back to the previous card in the queue"
+          >
+            <div style={buttonStyles.label}>Previous</div>
+          </Button>
+
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '0 14px',
+              lineHeight: 1.25,
+              whiteSpace: 'nowrap',
+            }}
+            title={`Already reviewed. Next repetition ${dayjs(incRemInfo.nextRepDate).format('dddd, D MMMM YYYY')}.`}
+          >
+            <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--rn-clr-green, #16a34a)' }}>
+              ✓ Already reviewed
+            </span>
+            <span style={{ fontSize: '11px', color: 'var(--rn-clr-content-tertiary)' }}>
+              next in{' '}
+              {durationToHumanReadable(dayjs.duration(dayjs(incRemInfo.nextRepDate).diff(dayjs())))}
+              {' · '}
+              {dayjs(incRemInfo.nextRepDate).format('ddd, MMM D')}
+            </span>
+          </div>
+
+          <Button
+            variant="secondary"
+            disabled={isBusy}
+            style={{
+              color: 'var(--rn-clr-green, #16a34a)',
+              border: '1px solid var(--rn-clr-green, #16a34a)',
+            }}
+            onClick={() => runExclusive(openEditorWithoutReview)}
+            title="Open Editor: open this Rem without re-reviewing it — its schedule stays as it is"
+          >
+            <div style={buttonStyles.label}>Open Editor</div>
+          </Button>
+
+          {/* Plain secondary styling, exactly like Previous: NOTHING in this row
+              changes the item's schedule, and the buttons should look like it.
+              This Next therefore only advances the queue — it deliberately does
+              NOT call handleNextClick, which would record a repetition and
+              rewrite nextRepDate from today. */}
+          <Button
+            variant="secondary"
+            disabled={isBusy}
+            onClick={() => runExclusive(async () => {
+              await plugin.queue.removeCurrentCardFromQueue();
+            })}
+            title="Next: move on to the next item — this item's schedule is left as it is"
+          >
+            <div style={buttonStyles.label}>Next</div>
+          </Button>
+        </div>
+      )}
+
       {/* Single row of buttons */}
+      {!isProcessed && (
       <div style={buttonRowStyle}>
         <Button
           variant="secondary"
-          onClick={async () => {
-            // Flag the back-navigation so the QueueComponent due-check doesn't auto-skip a
-            // just-reviewed (now future-dated) item when we revisit it via Previous.
-            await plugin.storage.setSession(queueBackNavKey, true);
+          disabled={isBusy}
+          onClick={() => runExclusive(async () => {
+            // No back-nav flag needed since 2026-08-14: nothing auto-skips an
+            // item that is no longer due — it renders the 'already processed'
+            // state instead (see isProcessed below).
             await plugin.queue.goBackToPreviousCard();
-          }}
+          })}
           title="Previous: Go back to the previous card in the queue"
         >
           <div style={buttonStyles.label}>Previous</div>
@@ -603,7 +817,8 @@ export function AnswerButtons() {
 
         <SplitButton
           variant="secondary"
-          onClick={handleNextClick}
+          disabled={isBusy}
+          onClick={() => runExclusive(handleNextClick)}
           title="Next (Cmd+Right / Ctrl+Right, or Opt+T): Mark as reviewed, calculate next interval, and advance to next item"
           onChevronClick={() => setOffsetRowFor((v) => (v === 'next' ? null : 'next'))}
           chevronActive={offsetRowFor === 'next'}
@@ -627,7 +842,12 @@ export function AnswerButtons() {
 
         <SplitButton
           variant="secondary"
-          onClick={performOpenEditorFlow}
+          disabled={isBusy}
+          // runExclusive reaches `await fn()` without yielding, so
+          // performOpenEditorFlow's synchronous first statement
+          // (openExternalLinkTabsWhenOpenLinkTagged) still runs in the click's own
+          // tick — the user-gesture token for window.open survives the wrapper.
+          onClick={() => runExclusive(performOpenEditorFlow)}
           style={{
             // Outline colouring (Dismiss-style): border + font only, neutral background.
             minWidth: '100px',
@@ -655,9 +875,10 @@ export function AnswerButtons() {
 
         <SplitButton
           variant="secondary"
-          onClick={async () => {
+          disabled={isBusy}
+          onClick={() => runExclusive(async () => {
             await plugin.queue.removeCurrentCardFromQueue();
-          }}
+          })}
           title="Skip (Opt+B): Move to the next item without recording a review or rescheduling"
           onChevronClick={() => setOffsetRowFor((v) => (v === 'skip' ? null : 'skip'))}
           chevronActive={offsetRowFor === 'skip'}
@@ -672,7 +893,8 @@ export function AnswerButtons() {
 
         <Button
           variant="danger"
-          onClick={async () => {
+          disabled={isBusy}
+          onClick={() => runExclusive(async () => {
             // FORK (Deviation 13): card surface disabled — don't stamp CardPriority
             // tags onto dismissed rems (T4).
             if (FORK_FEATURES.cardSurface) await handleCardPriorityInheritance(plugin, rem, incRemInfo);
@@ -686,7 +908,9 @@ export function AnswerButtons() {
               scheduled: incRemInfo.nextRepDate,
               reviewTimeSeconds: reviewTimeSeconds,
               eventType: 'rep',
-              priority: incRemInfo.priority,
+              // FORK (#13): omits priority entirely when it is the unreadable
+              // placeholder, instead of laundering 50 into history.
+              ...priorityStampFor(incRemInfo),
             };
 
             const updatedHistory = [...(incRemInfo.history || []), currentRep];
@@ -716,7 +940,7 @@ export function AnswerButtons() {
               plugin.queue.removeCurrentCardFromQueue(true),
             ]);
             console.log('[Dismiss] Both operations settled');
-          }}
+          })}
           title="Dismiss (Ctrl+D): Permanently finish item by removing its Incremental power-up"
         >
           <div style={buttonStyles.label}>Dismiss</div>
@@ -730,6 +954,7 @@ export function AnswerButtons() {
           <div style={buttonStyles.label}>⚙️ Options</div>
         </Button>
       </div>
+      )}
 
       {/* Offset picker — opened by the chevrons on Next / Open Editor / Skip.
           Number stepper + unit toggle + live landing date + one Apply button.
@@ -751,7 +976,7 @@ export function AnswerButtons() {
             : offsetRowFor === 'editor'
               ? { color: 'var(--rn-clr-green, #16a34a)', border: '1px solid var(--rn-clr-green, #16a34a)' }
               : { color: 'var(--rn-clr-purple, #8b5cf6)', border: '1px solid var(--rn-clr-purple, #8b5cf6)' };
-        const runApply = async () => {
+        const runApply = () => runExclusive(async () => {
           setOffsetRowFor(null);
           if (offsetRowFor === 'next') {
             await runManualNext(offsetDays);
@@ -760,7 +985,7 @@ export function AnswerButtons() {
           } else {
             await rescheduleWithoutReview(plugin, incRemInfo, offsetDays);
           }
-        };
+        });
         const stepBtnStyle: React.CSSProperties = {
           width: 28,
           height: 28,
@@ -809,9 +1034,21 @@ export function AnswerButtons() {
                 max={999}
                 value={offsetValue}
                 onChange={(e) => {
-                  const n = parseInt(e.target.value, 10);
-                  if (!isNaN(n)) setOffsetValue(Math.min(999, Math.max(1, n)));
+                  // FORK (2026-08-14, bug-hunt #37): allow the field to be empty
+                  // while editing. This is a CONTROLLED input, so ignoring NaN
+                  // meant the old value was re-rendered immediately: deleting both
+                  // digits of "12" was impossible, and changing it required
+                  // select-all-then-type. 0 is a valid transient state; the value
+                  // is clamped on blur and on apply.
+                  const t = e.target.value;
+                  if (t === '') {
+                    setOffsetValue(0);
+                    return;
+                  }
+                  const n = parseInt(t, 10);
+                  if (!isNaN(n)) setOffsetValue(Math.min(999, n));
                 }}
+                onBlur={() => setOffsetValue((v) => Math.min(999, Math.max(1, v || 1)))}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') runApply();
                   if (e.key === 'Escape') setOffsetRowFor(null);
@@ -894,8 +1131,9 @@ export function AnswerButtons() {
         );
       })()}
 
-      {/* Advanced Options Toolbar */}
-      {showAdvancedOptions && (
+      {/* Advanced Options Toolbar. `!isProcessed` guards the PANEL as well as its
+          toggle button (review §2.1) — see the per-card reset above. */}
+      {!isProcessed && showAdvancedOptions && (
         <div style={{ 
           display: 'flex', 
           gap: '8px', 
@@ -915,7 +1153,21 @@ export function AnswerButtons() {
             <div style={buttonStyles.label}>⚡ Change Priority</div>
           </Button>
 
-          <Button onClick={async () => { await handleReviewInEditorRem(plugin, rem, remType); }}>
+          {/* FORK (2026-08-15, review §2.2): inside the row lock. This writes through
+              the same updateReviewRemData funnel as Next, and handleNextRepetitionClick's
+              deliberate `await sleep(150)` is a wide window in which the whole main row
+              is disabled and this button was not — two overlapping runs both read
+              pre-write history and append, losing a repetition or recording two for one
+              review. CLAUDE.md already described the lock as covering "every action
+              button". */}
+          <Button
+            disabled={isBusy}
+            onClick={() =>
+              runExclusive(async () => {
+                await handleReviewInEditorRem(plugin, rem, remType);
+              })
+            }
+          >
             <div style={buttonStyles.label}>📝 Review with Timer</div>
           </Button>
 
@@ -1044,14 +1296,27 @@ export function AnswerButtons() {
         <div style={infoBarStyle}>
           {/* FORK (Deviation 14): due-IncRem priority distribution, moved here
               from the queue's top counter. */}
-          <QueueDistribution highlightPriority={incRemInfo.priority} />
+          {/* No ringed band when the priority is unreadable — ringing band 5
+              would assert a position on the scale that nothing supports. */}
+          <QueueDistribution
+            highlightPriority={priorityUnreadable ? null : incRemInfo.priority}
+          />
           {/* FORK (Deviation 14): the priority pill, its KB/Doc percentiles and
               the ⟳ stale-doc-percentile hint used to sit here. They moved to the
               queue toolbar's P-chip (widgets/queue_priority_chip.tsx), which
               shows "P50 (92.5%)" and explains the source and the percentile on
               hover — one place for priority instead of two. The bar keeps its
               priority-coloured left border. */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          {/* FORK (2026-08-14, bug-hunt #51): this flex wrapper is display:contents
+              now. It used to hold the priority block AND the shield; with the
+              priority moved to the toolbar chip it holds only the shield, which
+              cannot render in this fork (FORK_FEATURES.shields is false, so
+              shieldStatusAsync is hard-null). As a zero-width flex CHILD of a
+              gap:16px row it still contributed two gaps where one belonged — a
+              visible ~32px hole between the distribution bar and the separator.
+              display:contents keeps the subtree for when shields are re-enabled
+              while contributing no box of its own. */}
+          <div style={{ display: 'contents' }}>
             {/* Shield Display */}
             {/* 🔌 Conditionally show Shield */}
             {!useLightMode && shouldDisplayShield && shieldStatusAsync && (

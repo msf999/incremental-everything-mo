@@ -35,7 +35,15 @@ const BATCH_SIZE = 50;
 const BATCH_DELAY_MS = 10;
 
 export function ExtractViewer({ rem, plugin }: ExtractViewerProps) {
-  if (!rem) return null;
+  // FORK (2026-08-14, bug-hunt #48): NO early return here.
+  //
+  // This used to be `if (!rem) return null;` — placed above every hook in the
+  // component. Rendering once with a falsy `rem` and once with a truthy one would
+  // change the hook count and throw "Rendered fewer hooks than expected". It is
+  // unreachable today because all three call sites guard externally
+  // (`incRemRem ? <ExtractViewer/> : null`, and remAndType.rem is always defined),
+  // so the contract lives entirely in the callers — which is exactly what makes it
+  // a landmine for the next one. The prop type is non-optional; trust it.
 
   // --- STATE 1: DEFERRED METADATA (Statistics) ---
   const [metadata, setMetadata] = useState<Metadata | null>(null);

@@ -28,6 +28,7 @@ import { useAcceleratedKeyboardHandler } from '../lib/keyboard_utils';
 import { initIncrementalRem } from '../lib/incremental_rem';
 import { scanBatchTargets } from '../lib/priority_targets';
 import { getIESetting } from '../lib/settings';
+import { FORK_FEATURES } from '../lib/fork_gates';
 
 
 interface ParentExtractContext {
@@ -159,9 +160,19 @@ function PriorityLight() {
         ? (batchScan?.incCount ?? 0) > 0
         : !!data?.hasIncPowerup;
     // Match priority.tsx logic: only show Card section if has cards OR has cardPriority powerup
-    const showCardSection = isBatchMode
-        ? (batchScan?.cardCount ?? 0) > 0
-        : !!(data?.hasCards || data?.hasCardPowerup);
+    // FORK (2026-08-15, user decision): the card-priority surface is disabled in this
+    // fork (Deviation 13), so these popups must not offer to create CardPriority tags.
+    // fork_gates.ts justifies HIDING the CardPriority settings on the premise that
+    // nothing writes those tags any more — this is one of the three writers that made
+    // that premise false. Saving here routes through pendingPrioritySaveKey into
+    // tracker.ts, which calls rem.addPowerup('cardPriority') + setCardPriority, and
+    // `enable-flashcard-prioritisation` does NOT stop it (mayWriteCardPrioritySource
+    // allows 'manual' unconditionally). Flip FORK_FEATURES.cardSurface to restore.
+    const showCardSection =
+        FORK_FEATURES.cardSurface &&
+        (isBatchMode
+            ? (batchScan?.cardCount ?? 0) > 0
+            : !!(data?.hasCards || data?.hasCardPowerup));
 
     // State
     const [incVal, setIncVal] = useState<number | null>(null);
@@ -261,7 +272,12 @@ function PriorityLight() {
 
         // --- Optimistic UI updates (sync session writes — safe in popup context) ---
         if (incChanged) {
-            updateIncrementalRemCache(plugin, { remId: data.rem._id, priority: effectiveInc! } as any);
+            // FORK (2026-08-13): a genuine partial update — only the priority changed.
+            // updateIncrementalRemCache merges onto the cached entry, so the rem keeps
+            // its nextRepDate/history/rotation. This previously passed the same literal
+            // through `as any` into a REPLACING cache write, which dropped nextRepDate
+            // and made the rem disappear from the queue for the rest of the session.
+            updateIncrementalRemCache(plugin, { remId: data.rem._id, priority: effectiveInc! });
         }
         if (cardChanged) {
             // Signal events.ts to allow this update even if in queue

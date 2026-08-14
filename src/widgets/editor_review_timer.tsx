@@ -7,6 +7,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { getIncrementalRemFromRem, setIncRemPriority } from '../lib/incremental_rem';
 import { updateIncrementalRemCache, removeIncrementalRemCache } from '../lib/incremental_rem/cache';
 import { getNextSpacingDateForRem, updateSRSDataForRem } from '../lib/scheduler';
+import { priorityStampFor, seedPriorityForTimer } from '../lib/incremental_rem/types';
 import { powerupCode, prioritySlotCode, currentSubQueueIdKey, remnoteEnvironmentId, pageRangeWidgetId } from '../lib/consts';
 import { transferToDismissed } from '../lib/dismissed';
 import { handleCardPriorityInheritance } from '../lib/card_priority/card_priority_inheritance';
@@ -29,6 +30,7 @@ import {
 } from '../lib/history_notes';
 import dayjs from 'dayjs';
 import duration from 'dayjs/plugin/duration';
+import { FORK_FEATURES } from '../lib/fork_gates';
 
 dayjs.extend(duration);
 
@@ -415,7 +417,17 @@ function EditorReviewTimer() {
         // If the user chose "Keep Current Date" in the regression dialog before starting
         // the timer, the override will be set in session storage. Use it instead of computing.
         const dateOverride = await plugin.storage.getSession<number>('editor-review-timer-date-override');
-        const newNextRepDate = dateOverride ?? (Date.now() + (timerData.interval || 0) * 1000 * 60 * 60 * 24);
+        // FORK (2026-08-14, bug-hunt #60): a MISSING interval is not a zero-day
+        // interval. review_actions.ts starts a queue->editor timer with the key
+        // set to null precisely because "the repetition was already recorded",
+        // but `|| 0` turned that into `Date.now() + 0 days` — rescheduling the rem
+        // to right now, i.e. immediately due again. Absent means "leave the
+        // schedule alone"; only an actual number reschedules.
+        const newNextRepDate =
+          dateOverride ??
+          (typeof timerData.interval === 'number'
+            ? Date.now() + timerData.interval * 1000 * 60 * 60 * 24
+            : incRem.nextRepDate);
 
         // Calculate early/late status
         const scheduledDate = incRem.nextRepDate;
@@ -431,7 +443,14 @@ function EditorReviewTimer() {
           wasEarly: wasEarly,
           daysEarlyOrLate: daysEarlyOrLate,
           reviewTimeSeconds: reviewTimeSeconds,
-          priority: incRem.priority, // Record priority at time of rep
+          // FORK (#13, corrected 2026-08-14): same read-before-write ordering as
+          // handleNextReview below — setIncRemPriority runs above with
+          // timerData.priority while `incRem` was read before it. Seeding is now
+          // guarded by seedPriorityForTimer, so a non-null timerData.priority is a
+          // real value and never the unreadable placeholder.
+          ...(timerData.priority != null
+            ? { priority: timerData.priority }
+            : priorityStampFor(incRem)),
           eventType: 'executeRepetition' as const,
         };
 
@@ -534,7 +553,12 @@ function EditorReviewTimer() {
       }
 
       // Always create a new repetition, just like Mode 2
-      const newNextRepDate = Date.now() + (timerData.interval || 0) * 1000 * 60 * 60 * 24;
+      // FORK (#60): see above — a missing interval keeps the existing schedule
+      // rather than pinning the rem to now.
+      const newNextRepDate =
+        typeof timerData.interval === 'number'
+          ? Date.now() + timerData.interval * 1000 * 60 * 60 * 24
+          : currentIncRem.nextRepDate;
       const scheduledDate = currentIncRem.nextRepDate;
       const actualDate = Date.now();
       const daysDifference = (actualDate - scheduledDate) / (1000 * 60 * 60 * 24);
@@ -548,7 +572,20 @@ function EditorReviewTimer() {
         wasEarly: wasEarly,
         daysEarlyOrLate: daysEarlyOrLate,
         reviewTimeSeconds: reviewTimeSeconds,
-        priority: currentIncRem.priority,
+        // FORK (#13, 2026-08-14): `timerData.priority` takes precedence because
+        // setIncRemPriority ran above with exactly that value, while `currentIncRem`
+        // was read BEFORE it — stamping the object here would record the priority the
+        // rem had a moment ago rather than the one now persisted.
+        //
+        // This alone does NOT keep the placeholder out: the session priority is
+        // seeded from the rem, so for an unreadable slot it WAS the placeholder and
+        // this branch stamped it while priorityStampFor never ran. That is fixed at
+        // the source by seedPriorityForTimer (incremental_rem/types.ts), which seeds
+        // `undefined` for an unreadable priority — which also stops setIncRemPriority
+        // above from laundering it into the real slot, the irreversible half.
+        ...(timerData.priority !== undefined && timerData.priority !== null
+          ? { priority: timerData.priority }
+          : priorityStampFor(currentIncRem)),
         eventType: 'executeRepetition' as const,
       };
 
@@ -593,7 +630,7 @@ function EditorReviewTimer() {
     await plugin.storage.setSession('editor-review-timer-rem-id', nextRemId);
     await plugin.storage.setSession('editor-review-timer-start', Date.now()); // Reset start time
     await plugin.storage.setSession('editor-review-timer-interval', nextInterval);
-    await plugin.storage.setSession('editor-review-timer-priority', nextIncRemInfo?.priority ?? 10);
+    await plugin.storage.setSession('editor-review-timer-priority', seedPriorityForTimer(nextIncRemInfo));
     await plugin.storage.setSession('editor-review-timer-rem-name', nextRemName || 'Unnamed Rem');
     await plugin.storage.setSession('editor-review-timer-queue-list', newQueueList);
 
@@ -651,7 +688,11 @@ function EditorReviewTimer() {
         scheduled: currentIncRem.nextRepDate,
         reviewTimeSeconds: reviewTimeSeconds,
         eventType: 'rep' as const,
-        priority: currentIncRem.priority,
+        // FORK (#13, completed 2026-08-14): as above — and this one is the worst
+        // place to launder a placeholder, because it is persisted into the Dismissed
+        // powerup's preserved history, where no live priority slot survives to
+        // recover the real value from.
+        ...priorityStampFor(currentIncRem),
       };
 
       const updatedHistory = [...(currentIncRem.history || []), finalRep];
@@ -707,7 +748,7 @@ function EditorReviewTimer() {
     await plugin.storage.setSession('editor-review-timer-rem-id', nextRemId);
     await plugin.storage.setSession('editor-review-timer-start', Date.now());
     await plugin.storage.setSession('editor-review-timer-interval', nextInterval);
-    await plugin.storage.setSession('editor-review-timer-priority', nextIncRemInfo?.priority ?? 10);
+    await plugin.storage.setSession('editor-review-timer-priority', seedPriorityForTimer(nextIncRemInfo));
     await plugin.storage.setSession('editor-review-timer-rem-name', nextRemName || 'Unnamed Rem');
     await plugin.storage.setSession('editor-review-timer-queue-list', newQueueList);
     // Reset pause state for next item
@@ -836,7 +877,16 @@ function EditorReviewTimer() {
             </select>
           )}
           {/* Page controls only apply to PDF hosts. */}
-          {isPdfNote && pdfRemId && (
+                    {/* FORK (2026-08-14, gap review): gated on pdfReader like
+              priority_editor.tsx does. Without it these controls render live on
+              every PDF-hosted IncRem reviewed in the editor: the 📄 Range button
+              opens `page-range`, which the gates DENY, so it silently does nothing
+              — no popup, no toast, no error — and the ← / → steppers still write
+              the pdfState slot, contradicting Deviation 13's claim that the fork
+              stops pdfState writes. Bug-hunt #20 fixed this shape in
+              priority_editor only; these two widgets reach the same opener
+              indirectly through PageControls. */}
+          {FORK_FEATURES.pdfReader && isPdfNote && pdfRemId && (
             <PageControls
               incrementalRemId={timerData.remId as any}
               {...pdfControls}

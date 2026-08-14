@@ -12,6 +12,7 @@ import { getSortingRandomness } from '../lib/sorting';
 import { IncRemTable, IncRemWithDetails, DocumentInfo } from '../components';
 import type { IncRemListState } from '../components';
 import { buildDocumentScope } from '../lib/scope_helpers';
+import { seedPriorityForTimer } from '../lib/incremental_rem/types';
 import {
   BarChart,
   Bar,
@@ -345,7 +346,7 @@ export function IncRemMainView() {
     await plugin.storage.setSession('editor-review-timer-rem-id', remId);
     await plugin.storage.setSession('editor-review-timer-start', Date.now());
     await plugin.storage.setSession('editor-review-timer-interval', interval);
-    await plugin.storage.setSession('editor-review-timer-priority', incRemInfo?.priority ?? 10);
+    await plugin.storage.setSession('editor-review-timer-priority', seedPriorityForTimer(incRemInfo));
     await plugin.storage.setSession('editor-review-timer-rem-name', remName || 'Unnamed Rem');
     await plugin.storage.setSession('editor-review-timer-from-queue', false);
     await plugin.storage.setSession('editor-review-timer-origin', 'inc-rem-main-view');

@@ -16,7 +16,6 @@ import {
   hiddenDependentsOf,
 } from '../lib/settings';
 import {
-  FORK_HIDDEN_IE_GROUPS,
   FORK_HIDDEN_IE_SETTINGS,
   FORK_IE_GROUPS,
   FORK_IE_LAYOUT,
@@ -165,6 +164,10 @@ function SettingRow({ id, spec, value, onChange, hiddenDependents }: RowProps) {
   const commitNumber = (raw: string) => {
     setDraft(null);
     const n = Number(raw);
+    // FORK (2026-08-14, bug-hunt #37): `Number('')` is 0, not NaN, so this guard —
+    // plainly written to catch an emptied field — passed and committed 0 (then
+    // clamped to the min). Select-all + Delete + blur silently rewrote the value.
+    if (raw.trim() === '') return;
     if (!Number.isFinite(n)) return;
     const spec2 = spec as Extract<SettingSpec, { kind: 'number' }>;
     let v = spec2.integer ? Math.round(n) : n;
@@ -384,9 +387,18 @@ export function IESettingsWidget() {
   // counted every popup-tier id in the schema, so a hidden setting holding a
   // non-default value (e.g. display-fsrs-dsr in the hidden FSRS group) reported
   // "N changed from default" with no visible row marked — nothing to click.
+  // FORK (2026-08-14, bug-hunt #30): also filter by showWhen visibility. Narrowing
+  // this from the whole schema to FORK_VISIBLE_IDS was not enough — the three
+  // showWhen-gated settings still slipped through, so e.g. changing Multiplier and
+  // then enabling the Beta Scheduler left "1 changed from default" in the header
+  // with no visible row carrying the badge and nothing to click. The nav sidebar
+  // count already filters by `visible`, so the two disagreed.
   const modifiedCount = values
     ? FORK_VISIBLE_IDS.filter(
-        (id) => IE_SETTINGS_SCHEMA[id].tier === 'popup' && !isDefault(id, values[id])
+        (id) =>
+          IE_SETTINGS_SCHEMA[id].tier === 'popup' &&
+          isSettingVisible(id, values) &&
+          !isDefault(id, values[id])
       ).length
     : 0;
 

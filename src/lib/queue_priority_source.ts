@@ -21,6 +21,16 @@ import { getIncrementalRemFromRem } from './incremental_rem';
 import { getDismissedHistoryFromRem } from './dismissed';
 import { resolveRemTextForBreadcrumb } from './richTextRemRefs';
 
+/**
+ * Ceiling on any ancestor walk in this module.
+ *
+ * The visited Set below is the correct cycle guard; this is the backstop for the
+ * other shape — an acyclic but absurdly deep chain, which would terminate but
+ * only after hundreds of SDK round trips on a per-card path. 100 is far beyond
+ * any real hierarchy, so hitting it means something is wrong, and it warns.
+ */
+const MAX_ANCESTOR_DEPTH = 100;
+
 export type QueuePrioritySource = {
   priority: number;
   /**
@@ -35,6 +45,12 @@ export type QueuePrioritySource = {
   sourceName: string;
   /** True when the value came from a dismissed rem's preserved history. */
   fromDismissed: boolean;
+  /**
+   * True when the priority could NOT be read — the number is the
+   * UNREADABLE_PRIORITY_FALLBACK placeholder, not a real value. Callers must not
+   * present it as one (see incremental_rem/types.ts).
+   */
+  unreadable: boolean;
 };
 
 /**
@@ -47,10 +63,22 @@ export type QueuePrioritySource = {
 export async function readRemPriority(
   plugin: RNPlugin,
   rem: PluginRem
-): Promise<{ priority: number; sourceRemId: string | null; fromDismissed: boolean } | null> {
+): Promise<{
+  priority: number;
+  sourceRemId: string | null;
+  fromDismissed: boolean;
+  unreadable: boolean;
+} | null> {
   const incRem = await getIncrementalRemFromRem(plugin, rem);
   if (incRem) {
-    return { priority: incRem.priority, sourceRemId: incRem.remId, fromDismissed: false };
+    // FORK (#13): 'fallback' means nothing could be read — flag it rather than
+    // letting the placeholder 50 be rendered as this rem's priority.
+    return {
+      priority: incRem.priority,
+      sourceRemId: incRem.remId,
+      fromDismissed: false,
+      unreadable: incRem.prioritySource === 'fallback',
+    };
   }
 
   const dismissed = await getDismissedHistoryFromRem(plugin, rem);
@@ -58,7 +86,7 @@ export async function readRemPriority(
     for (let i = dismissed.history.length - 1; i >= 0; i--) {
       const recorded = dismissed.history[i]?.priority;
       if (typeof recorded === 'number') {
-        return { priority: recorded, sourceRemId: null, fromDismissed: true };
+        return { priority: recorded, sourceRemId: null, fromDismissed: true, unreadable: false };
       }
     }
   }
@@ -73,15 +101,35 @@ export async function resolveQueuePriority(
 ): Promise<QueuePrioritySource | null> {
   const own = await readRemPriority(plugin, rem);
   if (own) {
-    return {
-      ...own,
-      origin: 'own',
-      sourceName: await resolveRemTextForBreadcrumb(plugin, rem.text),
-    };
+    // FORK (2026-08-14, bug-hunt #27): no breadcrumb resolution on this branch.
+    // `sourceName` is read by exactly one consumer — the chip's tooltip, and only
+    // in its `origin === 'document'` case — while resolveRemTextForBreadcrumb
+    // walks rich text and issues an extra findOne per rem reference in the title.
+    // Paying that on every queue item, in two widgets, for a string nothing shows
+    // was pure waste.
+    return { ...own, origin: 'own', sourceName: '' };
   }
 
+  // Guarded walk. Without these the loop exits only on finding a document, a
+  // falsy parent, or a missing rem — and a cyclic parent chain (a self-parent, or
+  // A->B->A from conflict-merged sync data) satisfies none of them, so it spun
+  // forever at two SDK round trips per iteration. This runs on every card
+  // transition in two widgets, so it floods the plugin bridge rather than just
+  // hanging. Note `.catch(() => false)` on isDocument does not help: one that
+  // always throws simply keeps the climb going.
+  const seen = new Set<string>();
+  let depth = 0;
   let doc: PluginRem | undefined = rem;
   while (doc) {
+    if (seen.has(doc._id)) {
+      console.warn('[queuePriority] cyclic parent chain — abandoning walk at', doc._id);
+      return null;
+    }
+    seen.add(doc._id);
+    if (++depth > MAX_ANCESTOR_DEPTH) {
+      console.warn('[queuePriority] ancestor walk exceeded', MAX_ANCESTOR_DEPTH, 'from', rem._id);
+      return null;
+    }
     if (await doc.isDocument().catch(() => false)) break;
     if (!doc.parent) return null;
     doc = await plugin.rem.findOne(doc.parent);
