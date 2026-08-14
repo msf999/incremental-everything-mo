@@ -12,7 +12,11 @@ Both appear as visible properties under every Incremental Rem.
 
 ### Rotation
 
-A plain-text scheduling override. Give a Rem a `Rotation` like `2 days`, `10 days`, `3 weeks`, `6 months`, or `4.5w` (any human-readable duration), and reviewing it with **Next** always reschedules it that far out — the SRS scheduler is bypassed entirely. Set it to `Default` (or leave it empty) for normal scheduling.
+A plain-text scheduling override. Give a Rem a `Rotation` like `10 days`, `3 weeks`, `6 months`, `4.5w` — or just `10`, which means days — and reviewing it with **Next** always reschedules it that far out, bypassing the SRS scheduler entirely. Set it to `Default` (or leave it empty) for normal scheduling.
+
+Rotations are whole days: anything *between* zero and a day (`2 hours`, `30m`, `0.5`) is rejected, because the next-review date is stored as a day reference and sub-day precision cannot survive it.
+
+**`Rotation: 0` is allowed and means "always due".** Each review reschedules the item to today, which is already in the past, so it comes back in every future session until you change the rotation — it is a permanent always-in-the-queue marker, not a one-off repeat. It will not reappear within the *same* session, since the queue does not show an item twice in one sitting.
 
 - **Inheritance:** when a Rem is made incremental, it inherits the Rotation of its closest incremental ancestor. Set `Rotation: 1 week` on a project note, and every extract created under it rotates weekly.
 - The **Next** and **Open Editor** buttons show the rotation-based date in their sublabel, so you can see the override is active.
@@ -28,7 +32,7 @@ The answer-button row is rebuilt into six buttons, identical on desktop and mobi
 
 **Previous · Next · Open Editor · Skip · Dismiss · ⚙️ Options**
 
-- **Previous** steps back to the last card (and is exempt from the stale-item auto-skip below, so a just-reviewed item can be revisited).
+- **Previous** steps back to the last card. Going back to something you just reviewed shows it in the *already-reviewed* state described below.
 - **Next** (blue outline) — as upstream: record a review, advance.
 - **Open Editor** (green outline) — records the review **and opens the Rem in-app** (no browser tab), so you can process it immediately. Scheduling happens before navigation, so the review is never lost.
 - **Skip** (purple outline) — advances **without recording a review or rescheduling** (the item stays due).
@@ -44,6 +48,8 @@ The chosen offset does whatever its button does: **Next** records a review at th
 ### `(OpenLink)` titles
 
 If a Rem's visible title ends with `(OpenLink)` (case-sensitive), **Open Editor** (and `Ctrl+G`) opens the Rem's extracted external URL(s) in browser tabs **instead of** the Rem document — one tab per URL. Without the suffix, only the Rem document opens and URLs are never auto-opened. Useful for link-queue items you want to read at the source.
+
+This needs **popups allowed for RemNote** in your browser, especially with more than one URL — browsers otherwise block the second tab onwards. If popups are blocked the item is still reviewed and the queue still advances, but no tab opens and the Rem document is not opened as a fallback.
 
 ## Keyboard shortcuts (rebindable in RemNote → Settings → Shortcuts)
 
@@ -63,9 +69,15 @@ Two upstream defaults collided with Chrome DevTools, which matters when RemNote 
 - An IncRem with a PDF/HTML source attached shows this outline too — the source reader is disabled entirely in this fork (see below), so there is no 📄 Read document button. Highlight-type items keep upstream's isolated view.
 - The notes sidebar **never opens on its own**. The footer under the item (type + child/descendant/flashcard counts) ends with a small **✎ Open in sidebar** button: it opens the Rem in the notes sidebar for full editing (backlink search, date pickers, etc.) and pauses the in-queue copy while it's there; the button becomes a filled-blue **✎ Show in queue** to bring it back. Close the sidebar pane itself with RemNote's own control.
 
-### Stale items auto-skip
+### Items you've already reviewed
 
-If an item's next-rep date is already in the future when it comes up (typical after reviewing on another device mid-session), the queue skips past it automatically instead of showing it. **Previous** is exempt, so stepping back to something you just reviewed still works.
+An Incremental Rem whose next review is in the future still appears in the queue — it is never silently skipped — but with a different, deliberately harmless set of buttons:
+
+**Previous · ✓ Already reviewed, next in 4 days · Tue, Aug 18 · Open Editor · Next**
+
+You'll see this in two situations: you pressed **Previous** to go back to something you just reviewed, or you met an item that was reviewed on another device after this queue session started (the item list is built once, at the start).
+
+**None of these buttons changes the item's schedule.** *Next* simply moves on, *Previous* steps back, and *Open Editor* takes you to the Rem without recording a review — which is why Previous and Next look identical here. There is intentionally no way to re-review, reschedule or dismiss an item from this state; the point is that "already done" is visible and safe to click through.
 
 ### Info bar under every queue item
 
@@ -91,6 +103,20 @@ Set it under **General → Queue → Priority Chip in Queue Top Bar**: always sh
 
 When several due items share a priority, the **most overdue comes first** (in the live queue, the IncRem table's "Queue Order" view, and Priority Review Documents). Upstream's priority-weighted randomness lottery still applies on top (default 20%; set Sorting Criteria → randomness to 0 for strictly deterministic order).
 
+## Known issue: an all-Incremental queue can show "you've finished all your cards"
+
+If **every** flashcard is done and only Incremental Rems are still due, opening the queue may show
+RemNote's completion screen with no Incremental Rems at all.
+
+This is a bug in RemNote, not in the plugin. RemNote decides the queue is finished and renders that
+screen *before* it asks the plugin for an item, and the answer the plugin gives — correct, and in
+about 25 ms — is then discarded. Nothing a plugin can do changes that. It only bites at queue
+*entry*: once the queue is running, Incremental Rems appear normally, including after RemNote's own
+cards run out.
+
+**Workaround:** start the queue somewhere that has at least one due flashcard — a document's
+**Practice** button, or practice-ahead — and your Incremental Rems will come through as usual.
+
 ## Intentionally different / removed
 
 - Upstream's green **🎯 Target Incremental Rem** boxed read-only queue view is replaced by the editable document view described above.
@@ -103,7 +129,7 @@ When several due items share a priority, the **most overdue comes first** (in th
 This fork disables the upstream subsystems its owner doesn't use (everything remains in the code behind a single flags file, `src/lib/fork_gates.ts` — any of it can be re-enabled by flipping one boolean):
 
 - **All PDF/reader tooling** — the in-reader highlight toolbar (bookmark / extract / tag-as-incremental / peek), PDF Control Panel, source popups (Opt+O / Opt+Shift+O), reading-position memory, and the in-queue reader itself: queue items always show the rem outline (no 📄 Read document button). Read sources with RemNote's own reader.
-- **Flashcard features** — the card info bar, batch card priority, card-maintenance commands (the flashcard-prioritisation engine was already off), and cloze-creation commands. The editor's priority widget is on/off here rather than upstream's three modes, since its third mode existed only to add a card-priority editor beside rems with flashcards.
+- **Flashcard features** — the card info bar, batch card priority, card-maintenance commands (the flashcard-prioritisation engine was already off), and cloze-creation commands. The editor's priority widget is on/off here rather than upstream's three modes, since its third mode existed only to add a card-priority editor beside rems with flashcards. The **Change Priority** popups (⚡ in the queue, and `Opt+P`) no longer offer a *Card Priority* section either: this fork never creates `CardPriority` tags, so the section had nothing to act on.
 - **Analytics** — Priority/Weighted Shields, Practiced Queues and its per-card session tracking. (The Study Dashboard is kept.)
 - **Editor utilities** — heading/outline restructuring, listify/bulletize, text-case converter, reference finder, read points.
 - **Misc** — video debug surface, all debug/repair commands, Priority Review Documents.
@@ -129,7 +155,3 @@ The Hide-in-Queue warning about duplicate powerups — the one thing here that c
 ## Commands in the omnibar
 
 Every command this plugin registers is prefixed **`Incremental: `** in the omnibar, so they group together and are findable — upstream's names ranged from "Open Study Dashboard" to "Preserve history & remove" with nothing marking them as belonging to this plugin. Several were also renamed for intent over implementation (e.g. *Preserve history & remove* → **Delete Rem, Keep Study History**; *Quick Increase/Decrease Priority Number* → **Make Less/More Important**). Quick codes are untouched.
-
-## Versioning & syncing
-
-The fork adopts upstream's version numbers and bumps the patch for fork-only releases — upstream `1.0.35` is the current base, this fork is at `1.0.43`. Upstream is merged in periodically; the full engineering log of deviations and merges lives in `CLAUDE.md`. **This README is kept in sync with the fork's actual behaviour** — whenever a fork feature is added, changed, or removed, the relevant section above is updated.

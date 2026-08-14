@@ -59,7 +59,7 @@ All custom changes are **additive** unless noted otherwise. No upstream logic wa
 | `unlisted` | `false` | `true` | Prevents public listing of our private fork |
 | `author` | `Jamesb and Hugomarins (cont. Jonathangimeno)` | `Jamesb, Hugomarins and Jonathangimeno` | Minor attribution wording (cosmetic) |
 
-**Merge rule:** Always keep our values for the four fields above (`id`, `name`, `repoUrl`, `unlisted`; `author` is cosmetic). Accept all other manifest changes from upstream — including the upstream `version` and the `supportUrl` (upstream's GitHub issues) / `projectUrl` / `changeLogUrl` fields (the latter two point at upstream's MkDocs site `hugomarins.github.io/incremental-everything`, which is fine for a fork that tracks upstream features).
+**Merge rule:** Always keep our values for the four fields above (`id`, `name`, `repoUrl`, `unlisted`; `author` is cosmetic). ⚠️ **The `id` has a second consumer:** RemNote stamps it on each widget iframe as `data-plugin-id`, and every plugin-scoped stylesheet selects on it. Upstream hardcodes its own id in those selectors, so an accept-upstream on `callbacks.ts` / `settings.ts` silently makes all of that CSS inert here (this is exactly what happened, undetected, until 2026-08-12 — see Deviation 11). Selectors must be built from `pluginIframeSelector` in `consts.ts`; after a sync, `grep -c 'data-plugin-id="incremental-everything"' src/` must return 0. Accept all other manifest changes from upstream — including the upstream `version` and the `supportUrl` (upstream's GitHub issues) / `projectUrl` / `changeLogUrl` fields (the latter two point at upstream's MkDocs site `hugomarins.github.io/incremental-everything`, which is fine for a fork that tracks upstream features).
 
 **Version scheme:** upstream reset its numbering `0.2.294 → 1.0.x` during the `5f8ccdd` sync; we adopted it (fork was `0.2.277` → upstream base `1.0.35`, now at fork-local **`1.0.43`**). The rule is unchanged — accept upstream's `version`, and bump the patch for fork-local releases on top of it.
 
@@ -72,9 +72,9 @@ firstAddedSlotCode = 'firstAdded'
 rotationSlotCode  = 'rotation'
 ```
 
-Also added the `queueBackNavKey` session-flag constant (one-shot back-navigation flag consumed by the due-on-encounter auto-skip; see Deviation 8).
+Also added `pluginIframeSelector` (Deviation 1 — every plugin-scoped CSS selector builds from it) and the two Deviation-14 setting ids. A `queueBackNavKey` constant lived here until 2026-08-14 and was removed with the auto-skip it served (Deviation 8).
 
-**Merge rule:** Pure additions at the end of the constants blocks. Upstream has no colliding identifiers or slot-code strings, but it does insert its own constants directly around ours (`pdfStateSlotCode` after `originalIncrementalDateSlotCode`; ~15 new setting IDs near `queueBackNavKey`), so expect *context* conflicts here even though the names never clash — keep both sides.
+**Merge rule:** Pure additions at the end of the constants blocks. Upstream has no colliding identifiers or slot-code strings, but it does insert its own constants directly around ours (`pdfStateSlotCode` after `originalIncrementalDateSlotCode`; ~15 new setting IDs in the session-key block), so expect *context* conflicts here even though the names never clash — keep both sides.
 
 ### 3. `src/register/powerups.tsx`
 
@@ -116,7 +116,7 @@ This file has the most custom code. All additions are in clearly separated block
 |---|---|
 | **Imports** | Added `firstAddedSlotCode`, `rotationSlotCode` from consts; added `import parseDuration from 'parse-duration'`. Also imports `addCreationToIncrementalHistory` from `history_utils` (with upstream). |
 | **`getIncrementalRemFromRem()`** | Upstream rewrote this function (powerup-presence gate as the only `null` path, 3-tier priority resolution with `prioritySource`, 3-tier `nextRepDate` resolution). Our addition is now a rotation slot read placed **immediately after the priority clamp** (`priority = Math.min(100, Math.max(0, priority))`), plus a `rotation` key in the 7-key `rawData` literal. `createdAt` is now resolved by upstream's own `resolveDailyDocSlot` + `madeIncremental` marker fallback — our old createdAt block was superseded and removed. |
-| **New helpers (before `initIncrementalRem`)** | Added `MS_PER_DAY`, `getRotationIntervalMs()`, `getRotationIntervalDays()`, `getInitialRotation()`, and `rescheduleWithoutReview()`. Freestanding — upstream has no functions by these names. |
+| **New helpers (before `initIncrementalRem`)** | Added `MS_PER_DAY`, `MAX_TIMESTAMP`, `getRotationIntervalMs()`, `getRotationIntervalDays()`, `getInitialRotation()`, and `rescheduleWithoutReview()`. Freestanding — upstream has no functions by these names. ⚠️ `getRotationIntervalMs` parses with **`parseDuration(rotation, 'd')`** (days, not the default milliseconds) — see the 2026-08-13 Fix; reverting that silently re-breaks `Rotation: 5`. It rejects **negatives and sub-day fractions** (`days < 0 || (days > 0 && days < 1)`) and any value whose landing date would pass `MAX_TIMESTAMP`, but **permits exactly `0`**, the always-due marker (2026-08-14 decision). Re-applying an older `days < 1` test silently disables `Rotation: 0` and routes it into the amber invalid-rotation path with no compile error. |
 | **`initIncrementalRem()`** | Upstream batches its slot writes into a `slotWrites: Promise<unknown>[]` array + `Promise.all`. Our two writes are entries in that array: (a) `firstAddedSlotCode` set to upstream's existing **`todayRef`** — deliberately *not* a second `getDailyDocReferenceForDate` call, which upstream documents as a `getDailyDoc` race — guarded only on `todayRef` truthiness (unconditional on `hasExistingHistory`, unlike upstream's own `originalIncDate` write); (b) `rotationSlotCode` set from `getInitialRotation()`, which is resolved **before** the array so the value is also in scope for the cache entry. Upstream replaced its closing re-read with a hand-built `constructedIncRem` + `safeParse` — **`rotation: initialRotation` must be in that literal**, or the cache entry silently loses rotation until the next full read. |
 | **`handleNextRepetitionClick()` / `handleNextRepetitionManualOffset()`** | Use manual in-memory `IncrementalRem` patch + `updateIncrementalRemCache` from review result / constructed state (upstream) instead of re-fetching from the Rem after write. Upstream's `requestQueueDashboardRefocus` (before `removeCurrentCardFromQueue`) and `stampNoteAndContext` / `manualEntry` coexist with it. |
 | **`updateReviewRemData()`** | Branching `nextRepDateToUse`: explicit overrides, then rotation interval (`getRotationIntervalMs`), then normal scheduler. Returns `{ ...nextSpacing, newNextRepDate: nextRepDateToUse, newHistory }` so callers patch the cache with the **persisted** next date (required when rotation overrides the scheduler). Upstream's `stampNoteAndContext` block and its `overrideIntervalDays` write sit immediately **before** our branch — which is **not** purely additive: it replaces upstream's one-line `nextRepDateToUse` ternary with the 3-tier if/else. ⚠️ Upstream adds **no** `requestQueueDashboardRefocus` here — do not add one: this function is also called by the Review-in-Editor path, which deliberately leaves the queue. |
@@ -141,11 +141,15 @@ This file has grown into the most heavily customised widget. All changes are add
 | **Link Auto-Open (guarded)** | Added `externalUrls` via `useTrackerPlugin` (extract from `rem.text`, `rem.backText`, Link powerup). `openExternalLinkTabsWhenOpenLinkTagged()` runs **first** on Open Editor clicks (sync `window.open` while the gesture is valid) but **only** when the title ends with **`(OpenLink)`**. If the title does **not** end with `(OpenLink)`, only the Rem document opens — external URLs are not opened in new tabs. |
 | **Title `(OpenLink)` → external tabs, no Rem doc** | `remTitleEndsWithOpenLinkTag` (`open_editor_link_tag.ts`) **and** non-empty `externalUrls`: `performOpenEditorFlow` skips `openEditorAction` so only external URL(s) open (one tab per URL). If the title has `(OpenLink)` but no URL was extracted, the Rem document still opens. The offset picker's `'editor'` path (`runOpenEditorWithOffset`) applies the same rules. |
 
+**Also in this file (2026-08-14):** the **already-processed row** (Deviation 8) and the **row-level action lock** — `busyRef` / `isBusy` / `runExclusive` with `disabled={isBusy}` on every action button, which prevents the double-fire that could duplicate a rem's dismissal history (see the 2026-08-14 Fix). Both sets of hooks sit **above** the early returns.
+
 **Merge rule:** If upstream modifies the answer buttons layout, the Next button component, the Open Editor button, or the Skip area, re-apply our changes: (0) Previous button via `goBackToPreviousCard()`, (1) SplitButton on Next, Open Editor, and Skip with the chevron-toggled shared offset picker (`offsetRowFor`, `OFFSET_UNITS`, `offsetToDays`), (2) Open Editor uses in-app `openEditorAction` on all platforms and runs after scheduling, (3) `hasInvalidRotation` warning on Next + Open Editor, (4) `rescheduleWithoutReview` for the offset picker's Skip mode, (5) accordion-style toggle logic for the power-user button array (`showAdvancedOptions` state block), (6) inject `openExternalLinkTabsWhenOpenLinkTagged()` at the start of Open Editor click handlers (URLs only when `(OpenLink)`), (7) skip `openEditorAction` when the title ends with `(OpenLink)` and `externalUrls` is non-empty; (8) Next/Skip button tooltips advertise the `Opt+T` / `Opt+B` queue shortcuts (see Deviation 3.1); (9) new upstream buttons go in the accordion but their **hooks stay above the early returns**; (10) `handleNextClick`'s PDF branch uses `getIncrementalReadingPosition` (see Deviation 3.1's PDF note).
 
 **Deliberately dropped (post `5f8ccdd`):** upstream's edit to its "Open Editor in New Tab" button (`plugin.settings.getSetting(remnoteEnvironmentId)` → `getIESetting`, which only picks `beta.` vs `www.remnote.com` for a browser-tab URL). The fork replaced that button with the in-app `openEditorAction`, which builds no URL — verified UI-only, nothing to port. Re-check this if upstream ever puts functional logic in that handler. Note the container's `onClick` **must** keep upstream's `closest('input, textarea')` bail-out, or the note input cannot be typed into (our stricter guard is on `onMouseDown`, a different handler).
 
 ### 6.1. `src/lib/open_editor_link_tag.ts` *(new file)*
+
+**Accepted gap (2026-08-14, user decision — do not "fix" without asking):** the `(OpenLink)` path calls `window.open` after ~8 awaited steps in the `Ctrl+G` command (the *button* precomputes via trackers and fires synchronously first, so only the command is exposed), and `skipRemDocument` is computed from URLs **found**, never from `window.open`'s return value — so a blocked popup yields no tab AND no Rem document. Tested in-app on 2026-08-14: **works, including two URLs at once**, because the fork owner allows popups from RemNote. Bug-hunt item #4 was raised as High on the inference that the gesture token could not survive those awaits; that inference was **wrong** for RemNote's shortcut dispatch. Left as-is by decision. If tabs ever stop opening on another browser or machine, the two-line hardening is: capture the `window.open` return, treat `null` as not-opened, and fall back to opening the Rem document.
 
 **What changed:** Shared `remTitleEndsWithOpenLinkTag()` helper: checks **front and back** (`rem.text` / `rem.backText`). First walks rich text with `richTextVisibleForLinkSuffix()` (strings + `.text` + nested arrays; **does not** append raw `url` so hyperlinked titles like `Article (OpenLink)` still match), then falls back to `safeRemTextToString`. **Both** strings are normalised by `normalizeVisibleTitleForLinkCheck()` (NFKC + fullwidth `（ ）` → ASCII parens) and tested against **`/\(\s*OpenLink\s*\)\s*$/`** (**case-sensitive** — must be exactly `OpenLink` inside the parens); the plain fallback additionally ignores the literal title `Untitled`. Also exports `extractExternalHttpUrlsFromRem()` (scans front + back). Used by answer buttons and `Ctrl+G`.
 
@@ -167,13 +171,18 @@ This file has grown into the most heavily customised widget. All changes are add
 
 **Merge rule:** After any upstream merge that touches dependencies, verify `parse-duration` is still present. Run `npm install` to regenerate the lock file.
 
-### 8. `src/widgets/queue.tsx` (due-on-encounter auto-skip)
+### 8. Already-processed items are shown, not skipped (`queue.tsx`, `answer_buttons.tsx`)
 
-**What changed:** Added a due-date guard to `QueueComponent` (the `WidgetLocation.Flashcard` view for plugin queue items). Upstream already auto-advances when `remAndType === null` or the powerup is removed; this adds a parallel check. On first encounter of each item — a `useEffect` keyed on `ctx.remId` (deliberately **not** a reactive tracker) with a `cancelled` guard — it reads the item's *current* `nextRepDate` straight from the Rem via `getIncrementalRemFromRem` and, if `!isIncRemDue(incRem)`, calls `removeCurrentCardFromQueue(false)` to advance. Fixes stale queue entries: an item rescheduled to a future date on another device can linger in a session whose item list was built earlier (e.g. reviewed on a laptop, then back to a desktop). Consecutive stale items chain-skip. Imports: `getIncrementalRemFromRem` (added to the existing `../lib/incremental_rem` import) and `isIncRemDue` from `../lib/shield_history`.
+**What changed (rewritten 2026-08-14 — this deviation used to be the opposite).** An IncRem whose `nextRepDate` has moved into the future is **displayed with a distinct, schedule-neutral button row** instead of being silently advanced past. Two ways to meet one: a stale queue entry (the item list is built at session start, so an item reviewed on another device mid-session lingers), or pressing **Previous** after reviewing something.
 
-**Back-navigation exception:** As its very first step, the async effect reads and consumes a one-shot session flag `queueBackNavKey` (consts) — set by the **Previous** button in `answer_buttons.tsx` right before `goBackToPreviousCard()`. If set, the effect clears it and returns *without* the due check, so a just-reviewed (now future-dated) item revisited via Previous is shown instead of auto-skipped. The flag is also reset in `resetQueueSession` (`session_helpers.ts`). (Known minor edge: if Previous lands on a non-plugin card, the flag is consumed by the next IncRem instead — rare, bounded to one item per session.)
+- `src/widgets/answer_buttons.tsx` — `isProcessed = Date.now() < incRemInfo.nextRepDate`, derived after the early returns (not a hook). When true the normal row is replaced by: **Previous · ✓ Already reviewed + next date · Open Editor · Next**. The status shows both the relative distance (`durationToHumanReadable` from `NextRepTime`) and the absolute date, because "in 4 days" alone cannot be sanity-checked. `dayjs.extend(dayjsDuration)` is required in this module for that.
+- **Every button in that row is schedule-neutral, by design** (user decision, iterated 2026-08-14). `Next` calls only `removeCurrentCardFromQueue()` — deliberately **not** `handleNextClick`, which would record a repetition and rewrite `nextRepDate` from today. `Open Editor` uses `openEditorWithoutReview`, a copy of the normal flow (`(OpenLink)` policy, `openRemAsPage` vs `openRem`, synchronous-first `window.open`, paired dispatch with the queue removal) minus the review. Previous and Next therefore share plain `secondary` styling to signal that they only navigate; Open Editor keeps green because it leaves the queue.
+- **Consequence to keep in mind:** there is no way to re-review an already-processed item from the queue. That is intentional. If a re-review action is ever wanted back, give it a distinct colour — do not neutral-style something that writes a date.
 
-**Merge rule:** Keep the due-check `useEffect`. Its dep array is `[ctx?.remId, plugin]` (`plugin` is a stable ref); what matters is that it **must not** contain a reactive tracker value or the item's `nextRepDate` — otherwise it reacts to the future `nextRepDate` the user writes when reviewing the *current* item and skips the wrong card. Keep the `queueBackNavKey` consume-first early-out and the Previous-button hand-off together (they're a pair). If upstream restructures `QueueComponent`, re-add the effect alongside the existing auto-advance effects. **(Post `5f8ccdd`)** upstream added a hybrid Reader↔Outline feature (`useIESettingOptional(isolatedQueueModeId)`, `outlineView` state + reset effect) at the top of the component; it does not overlap this effect, which still follows the `hasIncrementalPowerup` effect.
+**Removed with this change:** the due-on-encounter `useEffect` in `queue.tsx` (which called `removeCurrentCardFromQueue(false)`), and the entire `queueBackNavKey` one-shot flag — its `consts.ts` declaration, the `Previous` button's write, the `queue.tsx` consume, and the reset in `resetQueueSession`. That flag existed *only* to stop the auto-skip firing on back-navigation; with nothing auto-skipping it guarded nothing, and it carried a known defect of its own (consumable by an unmounted effect). `queue.tsx` keeps a comment block where the effect was, explaining why.
+
+**Merge rule:** if upstream adds its own "skip items that are no longer due" behaviour, do **not** take it — this fork deliberately shows them. Keep `isProcessed` and its row in `answer_buttons.tsx`, and keep every action in it free of `handleNextClick` / `updateReviewRemData` / `rescheduleWithoutReview` / `transferToDismissed`. Upstream's other auto-advance effects in `queue.tsx` (null `remAndType`, powerup removed) are untouched and should stay.
+
 
 ### 9. Queue counter priority distribution (`session_helpers.ts`, `ui_helpers.ts`, `events.ts`, `callbacks.ts`)
 
@@ -207,7 +216,19 @@ This file has grown into the most heavily customised widget. All changes are add
 - `src/widgets/queue.tsx` — upstream offers its Reader↔Outline toggle only when a read point exists on a descendant, and defaults to the Reader. We offer it for **every** `pdf` / `html` card and default to the **outline** (`ExtractViewer` on the IncRem itself): `offerOutlineToggle` is a type check (`'pdf' || 'html'`) **AND-ed with `FORK_FEATURES.pdfReader`** (Deviation 13), which is `false` today — so in practice no toggle is offered; `outlineView` initialises/resets to `true`. The render branch renders `null` (not the Reader) while `incRemRem` resolves, to avoid a one-frame PDF flash. The `📄 Read document` button switches to the Reader per card **when `FORK_FEATURES.pdfReader` is on; with it off (the current default) neither the button nor the Reader is reachable**. Highlight types are deliberately excluded **from the toggle** — and with the reader disabled they render `ExtractViewer` too, via queue.tsx's `!pdfReader` terminal branch (`IsolatedCardViewer` already shows the highlight text, and its `← Back to isolated view` button shares the toggle's top-right slot).
 
 
-**Known limitation — the queue document does not fill the full pane height.** This is **long-standing and pre-dates the `5f8ccdd` merge**: the fork's own pre-merge `DocumentViewer` layout did not cover the full length either. The current result is **accepted** — do not spend more time on it without new information. Why it cannot be solved today: `WidgetOptions.dimensions.height` is `number | 'auto'` and the SDK docs state percentages apply to **width only**, so a widget cannot declare "fill the pane"; with `'auto'` the host sizes the iframe from our content, which makes a CSS percentage circular and `100vh` the *window* rather than the pane; and `plugin.widget.getDimensions(widgetInstanceId)` (real, `widget.d.ts:21`) reports *this widget's own* rect, which under `'auto'` is our content height — measuring it and pinning to it is circular too. All three were tried and are recorded in the 2026-08-10 changelog entries.
+**⚠️ SUPERSEDED (2026-08-12) — the queue document not filling the pane was NOT an SDK limitation.** The real cause was found by a codebase-wide bug hunt: all 21 plugin-scoped CSS selectors hardcoded upstream's `iframe[data-plugin-id="incremental-everything"]`, while this fork's manifest id is `incremental-everything-mo` (Deviation 1) — and attribute `=` is an exact match, so **`QUEUE_LAYOUT_FIX_CSS` never applied in this fork**. That rule set is precisely what gives the plugin iframe the pane's full height (`height: 100%` on `.rn-queue` plus `flex-grow: 1` down the chain). The selectors now build from `pluginIframeSelector` (`consts.ts`), a prefix match that covers both ids. Three other long-standing oddities share the root cause and should also be re-tested: Collapse Queue Top Bar (which carried a `// Disabled: feature not working` note), the answer-button padding fix from `5f141a5`, and `QUEUE_HIDE_ELEMENTS_CSS`.
+
+The investigation recorded below was sound but tested the wrong hypothesis: with the layout CSS inert, no amount of in-iframe geometry could have worked, which is why `100%`, `100vh`, `widget.getDimensions` and the grid restore all failed. Their conclusions about the SDK remain individually TRUE and worth keeping — `WidgetOptions.dimensions.height` really is `number | 'auto'`, percentages really do apply to width only, and `getDimensions` really does return this widget's own content-sized rect under `'auto'` — they simply were not the reason the pane looked short.
+
+**Known behaviour — focus fights between the queue body and the answer buttons (investigated 2026-08-14, left as-is by decision).** Symptom: with a PDF-type item in the queue, the arrow keys scroll the PDF and left/right stop doing previous/next, until you click empty space outside the queue body.
+
+Cause: the two halves of the queue pull focus in opposite directions.
+- `ExtractViewer`'s root `onClick` deliberately redirects focus **into** the `DocumentViewer`'s `[contenteditable]` when you click a non-interactive area, to avoid a "no-man's-land" state where neither the RemNote editor nor the parent window handles keys (its own comment says so; the handler predates the merge and came back with the verbatim restore). For a `pdf` rem `DocumentViewer` renders the PDF, so that focus lands in the PDF's scroll region and the arrows belong to it.
+- `answer_buttons`' container does the **opposite** on purpose: `onMouseDown` calls `preventDefault()` on non-interactive areas, and its `onClick` blurs `document.activeElement` then calls `window.parent?.focus()` so RemNote's own queue shortcuts keep working. Clicking there is what restores the arrow keys.
+
+Whichever was clicked last wins. Verified there is **no mount-time focus anywhere in the queue path** — every `.focus()`, `plugin.focus.*` and `scrollIntoView` in `src/` was checked; the only one in this path is the click handler above. So if focus moves to a PDF with no click at all, that is RemNote's own embed, not this plugin.
+
+Fix options, if it is ever worth doing: (1) make `ExtractViewer`'s background click mirror `answer_buttons` — blur and return focus to the parent — at the cost of click-to-edit on empty space; (2) skip the refocus only for `pdf`/`html` rems, the narrowest change; (3) remove the handler outright, which risks reintroducing the no-man's-land state its comment describes. **Do not "fix" this by deleting the handler without reading that comment first.**
 
 **⚠️ Re-test on every upstream merge that touches queue rendering.** If a future sync changes how Rems are rendered in the queue — `ExtractViewer`, `queue.tsx`'s render branch, `IsolatedCardViewer`, `Reader`, or the `registerWidget('queue', …)` dimensions — **run upstream's version in the app before re-applying our overrides**. Upstream may have found a technique for filling the pane, or RemNote may have added SDK support (watch for percentage/`'fill'` heights on `dimensions.height`, or a new sizing API, in the SDK changelog). If upstream's rendering fills the pane and still shows real formatting and properties, **prefer it and retire the corresponding parts of this deviation** rather than reflexively restoring ours. The parts to keep regardless are the ones that are preferences, not workarounds: no auto-opened sidebar, and the outline-first default.
 
@@ -229,7 +250,7 @@ This file has grown into the most heavily customised widget. All changes are add
 - **Flag-gated behaviour edits** (registration gating alone isn't enough): `queue.tsx` — `offerOutlineToggle &&= FORK_FEATURES.pdfReader` (no 📄 button) and a `!pdfReader` terminal `ExtractViewer` branch so highlight types can never reach the Reader; engagement calls skipped when `!sessionAnalytics`. `answer_buttons.tsx` — `shieldStatusAsync` short-circuits; `capturePdfPageHistoryIfNeeded` no-ops (stops pdfState writes); Dismiss skips `handleCardPriorityInheritance` (T4); Scroll-to-Highlight/Bookmark + Read-point accordion buttons hidden. `commands.ts` — same Dismiss skip. `review_actions.ts` — pdf position write skipped. `events.ts` — `registerQueueSessionTracking` and `registerHoveredReferenceTracking` not wired.
 - **Combined History tab:** fork widget `src/widgets/history_sidebar.tsx` (RightSidebar tab "History") renders upstream's three components under collapsible headings; the three separate tabs are denied. Requires two small edits per widget file: `export` on `IncrementalHistory`/`FlashcardHistory`/`RemHistory`, and a self-render guard. **Import-side-effect (hit in-app, fixed 2026-08-11):** each module's own `renderWidget` also runs when the module is imported for its component, and the SDK's HMR branch then calls `unmountComponentAtNode` on a container absent from a non-entry bundle — it **throws** (`Target container is not a DOM element`) and the combined tree never renders. The earlier assumption that ReactDOM.render's replace semantics would let the last call win was **wrong**. Fix: guard each call with `if (!FORK_FEATURES.combinedHistoryTab) renderWidget(X);` — a compile-time constant, so no import-order dependency — so they self-render only when registered standalone. Both history writers stay on.
 - **Priority Widget in Editor reduced to on/off (2026-08-12):** upstream's three modes are `all` / `incRemOnly` / `disable`, but `all` differs from `incRemOnly` *only* by also rendering a card-priority editor on any rem with flashcards (`priority_editor.tsx`: `showCardEditor` requires `displayMode === 'all'`) — a surface for the disabled card-priority engine. The fork presents two options (On = `incRemOnly`, Off = `disable`) and its default moved `'all'` → `'incRemOnly'`. The union type still admits `'all'` so a value stored before the change stays readable, and `priority_editor` coerces `'all'` (and empty) to `'incRemOnly'` at the single read site, so a legacy value cannot resurrect the card editor. **Merge note:** the changed default sits in upstream's `IE_SETTINGS_DEFAULTS` table — re-apply it after a sync, or the card-priority editor silently returns.
-- **Native settings pruned (2026-08-11, same mechanism):** the gates also wrap `plugin.settings.register*Setting` and drop the four native-panel mode settings — `enable-flashcard-prioritisation`, `performanceMode`, `always-use-light-mode-on-mobile`, `alwaysUseLightModeOnWeb` — so RemNote's plugin-settings panel is **empty of real settings**. As of 2026-08-12 the last native setting, `enable-hide-in-queue-integration`, was moved to **popup tier** in `settings.ts` (a one-word `tier` change + FORK comment) so it can be *changed* in the plugin's own window — native-tier rows render read-only there because the SDK has no setter for them. The panel now carries a single **signpost row** (`registerForkSettingsSignpost`, an inert one-option dropdown — the panel has no text-only row type) stating that every setting lives in the plugin's settings window (`ies`). ⚠️ Side effect of the tier move: the value now reads from the plugin's own store, so anyone who had previously enabled Hide-in-Queue in RemNote's panel is reset to the default (`false`) and must re-enable it in the popup. Safe because `readRawSetting` try/catches native reads and falls back to defaults, which are exactly the fork's pinned values (prioritisation **false**, performance **'light'** — Full Mode is retired, light-on-mobile/web **true**). The "running in Light Mode" startup toasts in `mobileUtils.ts` are silenced behind `FORK_FEATURES.startupModeBanner` (10 call sites routed through a local `notify`). The four are gone from the IE Settings popup too: it renders only the ids named in `FORK_IE_LAYOUT`.
+- **Native settings pruned (2026-08-11, same mechanism):** the gates also wrap `plugin.settings.register*Setting` and drop the four native-panel mode settings — `enable-flashcard-prioritisation`, `performanceMode`, `always-use-light-mode-on-mobile`, `alwaysUseLightModeOnWeb` — so RemNote's plugin-settings panel is **empty of real settings**. As of 2026-08-12 the last native setting, `enable-hide-in-queue-integration`, was moved to **popup tier** in `settings.ts` (a one-word `tier` change + FORK comment) so it can be *changed* in the plugin's own window — native-tier rows render read-only there because the SDK has no setter for them. The panel now carries a single **signpost row** (`registerForkSettingsSignpost`, an inert one-option dropdown — the panel has no text-only row type) stating that every setting lives in the plugin's settings window (`ies`). ⚠️ Side effect of the tier move: the value now reads from the plugin's own store. **This originally under-stated the problem** — without a `SEED_VERSION` bump the id never re-registers, so the stored native value becomes permanently *unreadable* (`getSetting` throws for an unregistered id), not merely reset, and Hide-in-Queue silently switches off with its five powerups and commands. Fixed 2026-08-14 by bumping `SEED_VERSION` to 6; see that entry. Safe because `readRawSetting` try/catches native reads and falls back to defaults, which are exactly the fork's pinned values (prioritisation **false**, performance **'light'** — Full Mode is retired, light-on-mobile/web **true**). The "running in Light Mode" startup toasts in `mobileUtils.ts` are silenced behind `FORK_FEATURES.startupModeBanner` (10 call sites routed through a local `notify`). The four are gone from the IE Settings popup too: it renders only the ids named in `FORK_IE_LAYOUT`.
 - **IE Settings popup layout (fork-owned, in `fork_gates.ts`):** `FORK_IE_LAYOUT` + `FORK_IE_GROUPS` define the sections the popup renders; `FORK_HIDDEN_IE_SETTINGS` filters individual rows out of them. `FORK_HIDDEN_IE_GROUPS` is **dead code** — still exported and still imported by `ie_settings.tsx`, but never consulted; the layout allow-list superseded it. Delete it, or wire it back, but do not trust it to be hiding anything.
 - **Mastery Drill is deliberately NOT gated:** upstream already ships it opt-in behind `enableMasteryDrill` (default off), so its widgets (`mastery_drill`, `mastery_drill_notification`) and commands (`open_mastery_drill`, `debug_audit_mastery_drill`, `cleanup_mastery_drill`) stay registered and inert. Only its settings group is hidden. If it ever becomes default-on upstream, add a group for it.
 - **Never gated:** `registerPowerup` (T1 — `getInitialPriority` reads CardPriority slots unguarded during Make-Incremental; pdfState slot stores data read points/dismissal rely on).
@@ -243,11 +264,11 @@ This file has grown into the most heavily customised widget. All changes are add
 
 **What changed:** the bottom info bar now appears for **all** queue items, and the due-IncRem **priority distribution** moved into it from the queue's top counter.
 
-- `src/components/QueueDistribution.tsx` *(new, fork-only)* — renders the distribution as a **proportional stacked bar over the plugin's own ten priority bands** (`priority_bands.ts`), not the fork's four ad-hoc buckets: band membership via `bandForPriority`, colour via `percentileToHslColor(bandColorPercentile(...))`, so a band reads the same colour here as its badge does in a table cell. **All ten bands always render, and every one always shows its count — zeros included.** Each segment is `flex: n 1 <floor>px` with a matching `min-width`, where the floor is `bandFloorPx(n)` — sized to **that band's own digit count** (`digits × 6 + 8`, for 10px tabular figures), not to a fixed worst case. So an empty band shrinks to a tight `0` chip instead of reserving four-digit width it will never use, and everything above the sum of the floors is shared out by `flex-grow: n`, i.e. in proportion to the counts. An empty band has grow 0, so it stays at its floor showing `0` at 0.3 opacity — present on the scale, but receding. The strip's `min-width` is the computed sum of the ten floors plus gaps, so a narrow queue wraps the bar onto its own line rather than clipping a band away. The band holding the **current queue item's own priority is ringed** (`boxShadow: inset 0 0 0 2px var(--rn-clr-content-primary)`), so you can see where this item sits on the same scale the backlog is drawn on; that band also keeps full opacity even when empty. The priority arrives as the optional `highlightPriority` prop — both callers already resolve it (`answer_buttons` from `incRemInfo`, `queue_info_bar` from `resolveQueuePriority`), so the component stays a pure view. An **inset** ring rather than `outline` because the strip clips to a rounded rect with `overflow: hidden`, which shaves an outline off the first and last segments. Segments carry the **count only** — range labels inside them were tried and removed (they crowded the bar and truncated to things like `-19 4`); the band is conveyed by colour and position, and spelled out in the tooltip, which lists every band with its count and percentage. The strip is `flex: 1 1 (stripMinPx + 120)px` / `min-width: stripMinPx` — both derived from the same floor sum — and its wrapper (`flex: 1 1 auto`, `min-width: 0`) grows, so it takes the slack in the info bar rather than sitting at a fixed narrow width. No `Due <total>` caption and no `Priority:` caption on either bar — the queue's top counter already reports the due total, and the coloured pill needs no label; the total stays in the tooltip. Renders `null` when nothing is due. Computed client-side from `allIncrementalRemKey` filtered by `now >= nextRepDate` — nothing is stored (upstream wrote its buckets straight into CSS text). ⚠️ **Colour uses the ABSOLUTE scale** — `bandColorPercentile(null, band)`, the band midpoint — deliberately *not* the KB-ranked percentiles the table badges prefer when the sample is large: percentile ranking is right for one badge but collapses a distribution to a single colour whenever most IncRems sit in one band (the fork owner's KB: 1541 of 2006 due items in 0–10). Passing `percentiles.inc` here would look broken, not more consistent. Also the **single source of the bar's geometry**, shared by both widgets so they can't drift: `getQueueInfoBarStyle(color)`, `getQueuePriorityBadgeStyle(color)`, `QUEUE_INFO_BAR_OUTER_PADDING` (also used as `answer_buttons`' `containerStyle` padding), `QUEUE_PRIORITY_NEUTRAL_COLOR`, and `shouldShowQueueInfoBar(mode, isIncRem, isMobile)` — the single place the setting's four options are interpreted. The two bars live in **different iframes**, so any divergence shows up as a visible jump when the queue moves between item types; keep the styles here rather than inlining them.
+- `src/components/QueueDistribution.tsx` *(new, fork-only)* — renders the distribution as a **proportional stacked bar over the plugin's own ten priority bands** (`priority_bands.ts`), not the fork's four ad-hoc buckets: band membership via `bandForPriority`, colour via `percentileToHslColor(bandColorPercentile(...))`, so a band reads the same colour here as its badge does in a table cell. **All ten bands always render, and every one always shows its count — zeros included.** Each segment is `flex: n 1 <floor>px` with a matching `min-width`, where the floor is `bandFloorPx(n)` — sized to **that band's own digit count** (`digits × 6 + 8`, for 10px tabular figures), not to a fixed worst case. So an empty band shrinks to a tight `0` chip instead of reserving four-digit width it will never use, and everything above the sum of the floors is shared out by `flex-grow: n`, i.e. in proportion to the counts. An empty band has grow 0, so it stays at its floor showing `0` at 0.3 opacity — present on the scale, but receding. The strip's `min-width` is the computed sum of the ten floors plus gaps, so a narrow queue wraps the bar onto its own line rather than clipping a band away. The band holding the **current queue item's own priority is ringed** (`boxShadow: inset 0 0 0 2px var(--rn-clr-content-primary)`), so you can see where this item sits on the same scale the backlog is drawn on; that band also keeps full opacity even when empty. The priority arrives as the optional `highlightPriority` prop — both callers already resolve it (`answer_buttons` from `incRemInfo`, `queue_info_bar` from `resolveQueuePriority`), so the component stays a pure view. An **inset** ring rather than `outline` because the strip clips to a rounded rect with `overflow: hidden`, which shaves an outline off the first and last segments. Segments carry the **count**, plus — where the segment is wide enough to fit it — the band's minimum priority as a small marker, positioned by a `useLayoutEffect` + `ResizeObserver` that measures the strip and all ten children into `segWidths` (helpers `bandMinLabel()` / `bandLabelPx()`). Full range labels inside the segments were tried and removed (they crowded the bar and truncated to things like `-19 4`); the band is otherwise conveyed by colour and position, and spelled out in the tooltip, which lists every band with its count and percentage. ⚠️ The merge rule below says "re-insert `<QueueDistribution />`" — re-implementing from that sentence alone would drop the measurement pass. The strip is `flex: 1 1 (stripMinPx + 120)px` / `min-width: stripMinPx` — both derived from the same floor sum — and its wrapper (`flex: 1 1 auto`, `min-width: 0`) grows, so it takes the slack in the info bar rather than sitting at a fixed narrow width. No `Due <total>` caption and no `Priority:` caption on either bar — the queue's top counter already reports the due total, and the coloured pill needs no label; the total stays in the tooltip. Renders `null` when nothing is due. Computed client-side from `allIncrementalRemKey` filtered by `now >= nextRepDate` — nothing is stored (upstream wrote its buckets straight into CSS text). ⚠️ **Colour uses the ABSOLUTE scale** — `bandColorPercentile(null, band)`, the band midpoint — deliberately *not* the KB-ranked percentiles the table badges prefer when the sample is large: percentile ranking is right for one badge but collapses a distribution to a single colour whenever most IncRems sit in one band (the fork owner's KB: 1541 of 2006 due items in 0–10). Passing `percentiles.inc` here would look broken, not more consistent. Also the **single source of the bar's geometry**, shared by both widgets so they can't drift: `getQueueInfoBarStyle(color)`, `getQueuePriorityBadgeStyle(color)`, `QUEUE_INFO_BAR_OUTER_PADDING` (also used as `answer_buttons`' `containerStyle` padding), `QUEUE_PRIORITY_NEUTRAL_COLOR`, and `shouldShowQueueInfoBar(mode, isIncRem, isMobile)` — the single place the setting's four options are interpreted. The two bars live in **different iframes**, so any divergence shows up as a visible jump when the queue moves between item types; keep the styles here rather than inlining them.
 - `src/widgets/queue_info_bar.tsx` *(new, fork-only)* — the bar for **non-IncRem** items, registered at `WidgetLocation.FlashcardUnder` with **no** `powerupFilter`/`queueItemTypeFilter` (that location mounts for every queue item). Shows the distribution and the card's reps/time from `card.repetitionHistory`. It still resolves the priority, but **only to colour the bar's left border** — the readout itself lives in the toolbar chip. Two widgets are needed rather than one because `FlashcardAnswerButtons` is `queueItemTypeFilter: Plugin` and so can never render for a flashcard.
   - **Bail discriminator:** it returns `null` while `incrementalQueueActiveKey` is true — i.e. while a *plugin queue item* is on screen and `answer_buttons` is drawing its own bar. ⚠️ This is deliberately about the **queue item**, not the rem: an earlier version bailed when the *rem* had the Incremental powerup, which wrongly blanked the bar for a flashcard whose rem is also an IncRem. `incrementalQueueActiveKey` is set true by `queue.tsx` on mount and false by `callbacks.ts` when a flashcard is served — the same discriminator upstream's `card_info_bar` uses.
   - **Priority (border colour only):** resolved by the shared `resolveQueuePriority` (below). The `own` / `↖ document` badge, the percentile and the pill all moved to the toolbar chip's label and tooltip. The document walk starts at the card's rem and stops at the first ancestor with `isDocument()` true; whatever that document has is what shows, and it never continues upward — a card in an unprioritised document shows **no** chip even when a grandparent document is an IncRem. That unbounded climb is exactly what `findClosestIncrementalAncestor` does, so do **not** reintroduce it here (it was the first implementation and was wrong for this fork). `readRemPriority` resolves either source the same way: live IncRem → its current priority; dismissed → the last priority recorded in its preserved history (dismissal drops the priority slot, but every history entry carries the priority it had at the time), flagged `fromDismissed` and explained in prose by the chip's tooltip. Colour and the `x% KB` figure come from `calculateRelativePercentile(allIncRems, sourceRemId)` so the chip matches how the source rem itself looks; a dismissed source is no longer in the IncRem set, so it has no percentile and falls back to colouring by the absolute priority value. Read-only — nothing is written and no CardPriority tag is involved, so the disabled card-priority engine (Deviation 13) stays untouched.
-  - **Cluster caveat** (from upstream's `card_info_bar`): inside a Card Cluster a `FlashcardUnder` widget stays mounted across siblings and `getWidgetContext().remId` stays pinned to the cluster parent, so the visible card is tracked via the context's `cardId` + the `QueueLoadCard` event.
+  - **Cluster caveat** (from upstream's `card_info_bar`): inside a Card Cluster a `FlashcardUnder` widget stays mounted across siblings, `getWidgetContext().remId` stays pinned to the cluster parent, and **`QueueLoadCard` does not fire per sibling** — nor does `plugin.queue.getCurrentCard()` advance. The only signal that moves is `getWidgetContext().cardId`, so it must be **polled** (500 ms, `lastAppliedCardId`-guarded, matching upstream). Listening to `QueueLoadCard` alone — which this widget did until 2026-08-14 — leaves every sibling after the first showing the anchor card's reps/time.
 - `src/widgets/answer_buttons.tsx` — the IncRem bar gains `<QueueDistribution />` as its first segment and is gated on `shouldShowQueueInfoBar(mode, true, isMobile)`. ⚠️ The gate's two hooks (`useIESetting(queueInfoBarModeId)` + the `isMobileDeviceKey` tracker) **must live in the hooks section above the `if (!coreData)` early return** — the same Rules-of-Hooks constraint Deviation 6 records for upstream's note/read-point hooks. Placed next to the render code they compile and typecheck fine, then blow the widget up the moment `coreData` resolves: the hook count changes between renders, React throws, and the **entire answer-buttons tree disappears** — no info bar *and no buttons* under the item. Hit in-app 2026-08-12 and fixed by moving them up.
 - `src/lib/ui_helpers.ts` — `registerQueueCounter` no longer appends the bucket breakdown to the top counter (it still shows `+ <count>`); both call sites still pass buckets, now used only for the console line.
 - Setting **`queue-info-bar-mode`** (`consts.ts` + the three `settings.ts` tables), options `All queue items` / `Incremental Rems only` / `All items (Incremental Rems only on mobile)` / `Off`, default **`allExceptMobile`**; listed first under General → Queue.
@@ -300,15 +321,15 @@ Only files the fork has modified can conflict. Reference: the "Current Deviation
 | `src/register/commands.ts` | **HIGH** | `open-incremental-editor` (`Ctrl+G`) + `(OpenLink)` URL/skip-doc logic; `runNextInQueueAction` + `next-in-queue-alt` (`opt+t`) + `skip-in-queue` (`opt+b`); the two fork import lines; PDF position via `getIncrementalReadingPosition`. |
 | `src/widgets/answer_buttons.tsx` | **HIGH** | Deviation 6: 6-button layout, `SplitButton`s + shared offset picker, green in-app Open Editor flow, `(OpenLink)` trackers, rotation warning, Skip `rescheduleWithoutReview`. Deviation 13: shield/pdf-capture/Dismiss-inheritance gates, accordion buttons hidden. Deviation 14: `<QueueDistribution highlightPriority=…/>` + the `showInfoBar` gate (**hooks above the early returns**), and the priority pill REMOVED from the bar. |
 | `src/lib/incremental_rem/index.ts` | **HIGH** | rotation read, helpers, First-Added/inherited-rotation init, `updateReviewRemData` `newNextRepDate` return. |
-| `src/lib/incremental_rem/types.ts` | low | Keep both `rotation` and upstream `createdAt`. |
-| `src/lib/consts.ts` | low | `firstAddedSlotCode`, `rotationSlotCode`, `queueBackNavKey` (Deviation 8); Deviation 14: `queueInfoBarModeId`/`QueueInfoBarMode` + `queueToolbarPriorityModeId`/`QueueToolbarPriorityMode`. |
+| `src/lib/incremental_rem/types.ts` | low | Keep both `rotation` and upstream `createdAt`; plus the fork's `priorityStampFor` helper (2026-08-14) that every history writer spreads. |
+| `src/lib/consts.ts` | low | `firstAddedSlotCode`, `rotationSlotCode`; Deviation 1: `pluginIframeSelector`; Deviation 14: `queueInfoBarModeId`/`QueueInfoBarMode` + `queueToolbarPriorityModeId`/`QueueToolbarPriorityMode`. (`queueBackNavKey` was removed 2026-08-14.) **2026-08-15:** `forkPluginId` — must equal `public/manifest.json`'s `id`; it is the last-resort fallback for the two plugin-id sites below, and falling back to upstream's literal instead is the bug it exists to prevent. |
 | `src/register/powerups.tsx` | low | First Added (DATE) + Rotation (TEXT) slots. |
 | `src/components/NextRepTime.tsx` | low | rotation-aware display branch. |
 | `package.json` / `package-lock.json` | low | Keep `parse-duration`; regenerate lock via `npm install`. |
-| `src/register/callbacks.ts` | **HIGH** | Deviations 9+10: queue-counter buckets in `GetNextCard`; remeda **multi-projection** `sortBy` tiebreak (never the lodash array-of-iteratees form); lottery ordering. |
+| `src/register/callbacks.ts` | **HIGH** | Deviation 1: plugin-scoped CSS must use `pluginIframeSelector`, never upstream's hardcoded id. Deviations 9+10: queue-counter buckets in `GetNextCard`; remeda **multi-projection** `sortBy` tiebreak (never the lodash array-of-iteratees form); lottery ordering. **2026-08-15:** the `pluginId` in the returned `GetNextCard` queue item is FORK code (`plugin.manifest?.id || plugin.id || forkPluginId`) — never accept upstream's bare `'incremental-everything'` literal. Also the narrowed/batched #16 purge (§2.3). |
 | `src/lib/sorting.ts` | reconcile | Deviation 10: `nextRepDate` tiebreak (`?? 0` guard) in the `sort` feeding `applyPriorityWeightedLottery` — conflicted in the `be390d5` merge. |
-| `src/lib/session_helpers.ts` | reconcile | Deviations 8+9: `calculateDueIncRemStats` rename + `getDueIncRemPriorityBuckets`; `queueBackNavKey` reset in `resetQueueSession`. |
-| `src/widgets/queue.tsx` | **HIGH** | Deviation 8: due-on-encounter auto-skip effect (keyed on `ctx.remId` only) + `queueBackNavKey` consume-first early-out. Deviation 11: outline-first (`offerOutlineToggle` is a plain pdf/html type check, `outlineView` defaults true, render branch yields `null` while resolving). Deviation 13: `offerOutlineToggle &&= FORK_FEATURES.pdfReader`, the `!pdfReader` terminal `ExtractViewer` branch, engagement calls gated. |
+| `src/lib/session_helpers.ts` | reconcile | Deviation 9: `calculateDueIncRemStats` rename + `getDueIncRemPriorityBuckets`. (The Deviation-8 `queueBackNavKey` reset was removed 2026-08-14.) |
+| `src/widgets/queue.tsx` | **HIGH** | Deviation 8: the due-on-encounter auto-skip and its back-nav flag were REMOVED (2026-08-14) — do not let an upstream merge reintroduce skipping; a comment block marks the spot. Deviation 11: outline-first (`offerOutlineToggle` is a plain pdf/html type check, `outlineView` defaults true, render branch yields `null` while resolving). Deviation 13: `offerOutlineToggle &&= FORK_FEATURES.pdfReader`, the `!pdfReader` terminal `ExtractViewer` branch, engagement calls gated. **2026-08-15:** `shouldRenderEditorForRemType`'s widget filter compares against OUR plugin id (same rule as `callbacks.ts`) and the `getWidgetsAtLocation` probe fails OPEN — a rejection must render our body, never blank it. |
 | `src/lib/ui_helpers.ts` | low | Deviation 9: `registerQueueCounter` optional `priorityBuckets` arg. Deviation 14: buckets are **no longer appended** to the counter CSS (console line only) — a naive accept-upstream restores them. |
 | `src/register/events.ts` | low | Deviation 9: QueueEnter passes count + buckets to `registerQueueCounter`. Deviation 13: flag-gated wiring of `registerQueueSessionTracking` / `registerHoveredReferenceTracking` + import. |
 | `src/components/IncRemTable.tsx` | low | Deviation 10: "Queue Order" `nextRepDate` tiebreak. |
@@ -322,8 +343,21 @@ Only files the fork has modified can conflict. Reference: the "Current Deviation
 | `src/widgets/index.tsx` | low | Deviation 13: `installForkGates` + `registerForkWidgets` calls + import. |
 | `src/lib/open_editor_link_tag.ts` | none | Fork-only new file — cannot conflict. |
 | `src/components/buttons/SplitButton.tsx` | none | Fork-only new file — cannot conflict. |
+| `src/lib/incremental_rem/cache.ts` | **HIGH** | 2026-08-13 fix: `updateIncrementalRemCache` **merges** onto the cached entry and `safeParse`-gates the result; its param is `Partial<IncrementalRem> & {remId}`. Upstream's version REPLACES — re-accepting it silently restores the vanishing-rem bug. |
+| `src/widgets/priority_light.tsx` | low | 2026-08-13 fix: the optimistic write passes a genuine partial (no `as any`); relies on cache.ts merging. |
+| `src/widgets/priority.tsx` | low | 2026-08-13 fix: the optimistic write no longer fabricates `nextRepDate: Date.now()` on the `!incRemInfo` path. |
+| `src/lib/action_guard.ts` | none | Fork-only new file (2026-08-14) — the drop-if-in-flight guard for queue commands. |
+| `src/lib/settings_migration.ts` | reconcile | 2026-08-14: `SEED_VERSION = 6` + its v6 note (upstream is at 5). **Any future native→popup tier change needs another bump** — the file's own v4 note states the rule. If upstream bumps to 6 for its own reason, take theirs and go to 7. |
+| `src/lib/priority_inheritance.ts` | low | 2026-08-14 fixes: `getInitialPriority` clamps its result to 0-100 (upstream returns a raw `parseInt` of a slot); both ancestor walks carry a visited-Set + `MAX_ANCESTOR_DEPTH` guard against cyclic parent chains. Upstream has neither. |
+| `src/lib/scheduler.ts` | reconcile | 2026-08-14 fixes: `updateSRSDataForRem` returns `Promise<IncrementalRep[] | null>` — the persisted history — (upstream: `void`); `interactionOnSameDay` compares calendar days instead of two Date objects by reference and fails loudly on a missing rem or unresolvable date reference. Upstream's silent `return` is a data-loss path — do not accept it back. |
+| `webpack.config.js` | reconcile | **2026-08-15:** fork-changed (bug-hunt #26). Excludes webpack entries for gate-denied widgets by PARSING the deny-list out of `fork_gates.ts` — a load-bearing textual coupling: a formatting change there can silently deny the wrong widget (registered, no bundle, blank iframe). It asserts each denied id has a `src/widgets/<id>.tsx` and falls back to building everything. An accept-upstream restores 23 bundles with no error and no symptom. |
+| `src/widgets/editor_review_timer.tsx` | reconcile | Deviation 13 (`pdfReader` gate on `PageControls`); #13 priority stamps at both writers + `seedPriorityForTimer`; §2.2 row-lock parity. |
+| `src/widgets/editor_review.tsx` | low | Deviation 13 (`pdfReader` gate on `PageControls`); #13 stamp now records the priority this function WROTE (`newPriority`), not the pre-write read. |
+| `src/lib/history_edit.ts` | low | #13: uses `priorityStampFor` rather than a raw `priority:`. |
+| `src/lib/queue_session.ts` | low | Deviation 13: `pushIncRemEvent` returns early when `sessionAnalytics` is off (#21). |
 | `CLAUDE.md` | none | Fork-only doc, absent upstream — cannot conflict. |
 | `src/components/ExtractViewer.tsx` | **HIGH** | Deviation 11: the **verbatim `be390d5` file** + the `✎` sidebar toggle. Upstream rewrote this file after that commit, so expect a wholesale conflict; keep ours unless upstream passes Deviation 11's re-test. |
+| `src/register/settings.ts` | **HIGH** | Deviation 1: the three `COLLAPSE_TOP_BAR_CSS` selectors must use `pluginIframeSelector`. |
 | `src/lib/settings.ts` | **HIGH** | Deviation 13: Hide-in-Queue moved to `tier: 'popup'`, `warningTone`, reworded descriptions, **`priorityEditorDisplayMode` default `'all'` → `'incRemOnly'`** (in upstream's `IE_SETTINGS_DEFAULTS` — a sync silently reverts it). Deviation 14: `queue-info-bar-mode` + `queue-toolbar-priority-mode` (id, type, default, schema entry — four places each). |
 | `src/widgets/ie_settings.tsx` | reconcile | Deviation 13: fork-owned section layout (`FORK_IE_LAYOUT` + `blocks`), `groupSpec()`, widened `activeGroup`, `danger` warning callout, row/group filtering by `FORK_HIDDEN_IE_*`. |
 | `src/widgets/priority_editor.tsx` | low | Deviation 13: coerce `displayMode` `'all'` → `'incRemOnly'` at the read site + the matching `??` default. |
@@ -398,7 +432,7 @@ git diff --stat 7e0bc0d..upstream/main -- \
 - Smoke-test (if running end-to-end): rotation scheduling + amber invalid-rotation warning,
   `(OpenLink)` Open Editor tab policy, `SplitButton` dropdowns, 6-button queue layout, `Ctrl+G`,
   First Added set on a new IncRem, PDF page-resume via `opt+t` and `Ctrl+G` (the only check that
-  catches a missed `getCurrentPageKey` swap), `opt+b` skip, and Previous-after-review not auto-skipping.
+  catches a missed `getCurrentPageKey` swap), `opt+b` skip, and Previous-after-review showing the item's **already-processed** row (Deviation 8) rather than skipping.
 
 #### Step 6 — Land + record
 - Commit the merge; fast-forward `main` to `merge/upstream-2955e9a` (or open a PR).
@@ -1272,3 +1306,466 @@ Interim namings/orders not to revive: a "General" section holding scheduling val
 - `README.md` — see the entry below.
 
 **Notes:** The conflict map is now verified mechanically rather than by eye: every path in `git diff --name-only upstream/main` plus every untracked `src/` file resolves to a row. Re-run that check after each sync. Outstanding at the time of writing, none of it code: the whole Deviation 11/13/14 body of work is **uncommitted** (21 modified, 2 deleted, 6 untracked fork-only sources), `main` is 225 commits behind `merge/upstream-5f8ccdd` with nothing pushed (Runbook Step 6), `public/manifest.json` is still `1.0.42` despite ~15 fork changes since, and the in-app smoke tests have not been run.
+
+---
+
+### 2026-08-13 — Fix (Plugin-scoped CSS never matched: 21 selectors carried upstream's plugin id)
+
+**Upstream commit(s):** N/A (local fix; issue #1 from the 2026-08-12 multi-agent bug hunt)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build + validate + zip pass; emitted bundle confirmed to carry the new selector)
+**Files touched:**
+- `src/lib/consts.ts` — new `pluginIframeSelector`, a **prefix** match (`iframe[data-plugin-id^="incremental-everything"]`) with the full rationale.
+- `src/register/callbacks.ts` — 18 occurrences (`QUEUE_LAYOUT_FIX_CSS`, `QUEUE_HIDE_ELEMENTS_CSS`) now interpolate the constant; import added.
+- `src/register/settings.ts` — the 3 `COLLAPSE_TOP_BAR_CSS` occurrences likewise; import added.
+- `CLAUDE.md` — Deviation 11's "Known limitation" replaced with a SUPERSEDED note; Deviation 1 merge rule gained the `data-plugin-id` consumer + a post-sync grep check; conflict map rows for both register files; this entry.
+
+**Notes:** RemNote stamps a widget iframe's `data-plugin-id` with the plugin's **manifest id**. Upstream hardcodes `="incremental-everything"`; this fork's id is `incremental-everything-mo` (Deviation 1) and attribute `=` is exact, so **every plugin-scoped rule had been inert since the fork's first commit** (id changed 2026-04-07; the CSS arrived from upstream 2026-04-12 and was inherited by merge). The mechanism was already provable inside the same stylesheets, which target a *different* plugin as `[data-plugin-id="flashcard-repetition-history"]` — i.e. by its manifest id.
+
+The headline consequence: `QUEUE_LAYOUT_FIX_CSS` sets `height: 100%` on `.rn-queue` and `flex-grow: 1` down the chain to our iframe — it is the fix for "the queue document doesn't fill the pane", which Deviation 11 had recorded as an accepted **SDK dead-end** after a day of failed in-iframe geometry attempts. Those attempts could not have worked while the enclosing CSS was inert. Three further symptoms share the cause and want re-testing in-app: Collapse Queue Top Bar (which even carried a `// Disabled: feature not working` note at `ui_helpers.ts:434`), the answer-button whitespace fix from `5f141a5`, and `QUEUE_HIDE_ELEMENTS_CSS` (flashcard insights / AI suggestions staying visible during IncRem turns).
+
+Fixed with a **prefix** selector rather than the fork id spelled out, for two reasons: it matches upstream's id and any `incremental-everything-*` fork id, so a future manifest rename cannot silently re-break it; and routing all 21 through one constant means there is no second copy of the id to drift from `manifest.json`.
+
+> ⚠️ **SUPERSEDED (2026-08-15) — see the "Queue plugin id" changelog entry below.** Two of the
+> literals described in this paragraph as safe to leave alone were CHANGED: the `pluginId` in
+> `GetNextCard`'s returned queue item (`callbacks.ts`) and the widget filter in `queue.tsx`. Both
+> now resolve `plugin.manifest?.id || plugin.id || forkPluginId`. Do **not** restore the bare
+> literal at either site during a merge. The `commands.ts` command id below is still correct as
+> written.
+
+**Deliberately NOT changed** (same string, different meaning — verify separately before touching): `commands.ts:1217` `id: 'incremental-everything'` is a **command** id, not the plugin id, and `fork_gates.ts:394` overrides it. `callbacks.ts:291` returns `pluginId: 'incremental-everything'` in the `GetNextCard` payload and `queue.tsx:176` filters widgets on the same literal — both are plugin-id-shaped, but IncRems demonstrably inject and render today, so changing them is a behavioural experiment, not a cleanup.
+
+---
+
+### 2026-08-13 — Fix (Rotation: a unitless value meant milliseconds; sub-day values silently mis-scheduled)
+
+**Upstream commit(s):** N/A (local fix; issue #2 from the 2026-08-12 multi-agent bug hunt)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build + validate + zip pass)
+**Files touched:**
+- `src/lib/incremental_rem/index.ts` — `getRotationIntervalMs` now parses with `parseDuration(rotation, 'd')` and rejects `days < 1`, non-finite values, and any duration whose landing date would exceed `MAX_TIMESTAMP`.
+- `README.md` — the Rotation section documents bare numbers as days and sub-day values as rejected.
+- `CLAUDE.md` — Deviation 5 helper row + this entry.
+
+**Notes:** `parseDuration` treats a bare number as **milliseconds**, verified against the installed 2.1.5: `'5' → 5`. The old guard was `ms != null && ms > 0`, so `Rotation: 5` — the obvious way to write "5 days" — was *valid*: no amber warning, a normal-looking sublabel, and a review scheduling `now + 5ms`. That is persisted as a Daily Doc reference, so it resolves to today's midnight and the rem is due again the instant it is reviewed, forever, recording `interval: 0` in history. `2 hours` and `30m` failed the same way. The failure was invisible precisely because it was *not* a parse error — `banana` was always caught; a wrong unit never was.
+
+Parsing with the `'d'` format fixes both halves at once: `parseDuration(x, 'd')` returns the duration already in days AND treats a unitless number as days. Valid values are unchanged (`'5 days'` → 5, `'6 months'` → 182.625, `'4.5w'` → 31.5), so no existing rotation reschedules differently.
+
+**Sub-day rejected by decision (user, 2026-08-13), not oversight.** Rotation is persisted as a *date reference*, so sub-day precision cannot survive the storage format — supporting it would mean changing how the next-rep date is stored. Rejecting routes those values into the existing `invalid rotation` amber warning instead of mis-scheduling them silently. The `MAX_TIMESTAMP` check is a correctness floor, not a policy cap: a rotation past it yields an Invalid Date rather than a schedule.
+
+---
+
+### 2026-08-13 — Fix (Incremental-rem cache: partial writes erased entries; a fabricated next-rep date made rems due)
+
+**Upstream commit(s):** N/A (local fix; issues #3 and #8 from the 2026-08-12 multi-agent bug hunt)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline — the 3 hits in `priority.tsx` are pre-existing; production build + validate + zip pass)
+**Files touched:**
+- `src/lib/incremental_rem/cache.ts` — `updateIncrementalRemCache` now takes `Partial<IncrementalRem> & { remId: string }`, **merges** onto the existing cache entry, and gates the result through `IncrementalRem.safeParse`, skipping (with a warning) rather than writing an entry the queue can never match.
+- `src/widgets/priority_light.tsx` — the optimistic write drops its `as any` and passes a genuine partial.
+- `src/widgets/priority.tsx` — the optimistic write no longer fabricates `nextRepDate` (and the now-unused `currentNow` went with it).
+- `CLAUDE.md` — three conflict-map rows + this entry.
+
+**Notes (#3):** the cache write was `allRems.filter(...).concat(updatedIncRem)` — a straight **replace** — with the parameter typed as a complete `IncrementalRem`. 21 of 22 call sites honoured that; `priority_light.tsx` cast a `{remId, priority}` literal through `as any`, so changing an IncRem's priority from the light popup replaced its full cache entry with two fields. The queue selector's `Date.now() >= x.nextRepDate` (`callbacks.ts:186`) then compared against `undefined` — a NaN comparison, always false — so **the rem silently left the queue and the due counter for the rest of the session**, taking its `rotation` and `history` with it. Intermittent by nature: it self-heals whenever the tracker happens to re-read that rem, which is why it would present as "items sometimes disappear after I change their priority."
+
+Fixed at both levels deliberately. The call site was the bug; the *replace* semantics plus a type that could be bypassed with a cast were what let one caller cause it. Merging makes a partial update mean what it says, and `safeParse` is the backstop for the remaining hole — a partial update for a rem not yet in the cache, which would otherwise write a permanently unmatchable entry.
+
+**Notes (#8):** `priority.tsx`'s optimistic write had a `!incRemInfo` fallback constructing `nextRepDate: Date.now()`, commented "Approximate". It is not approximate but wrong: for a rem already scheduled into the future it makes the rem due immediately, and a failed incremental read says nothing about the schedule. Since only the priority changed, the patch now carries only the priority; merging preserves the real date, and the safeParse gate skips the write entirely when the rem is absent from the cache (the DB side is already handled by `initIncrementalRem`, and the tracker inserts the true entry on its next read). The block's several unresolved "we could maybe…" comments were removed with it.
+
+The 7 remaining `as any` at call sites are all on the *plugin* argument (`ReactRNPlugin` → `RNPlugin`), a pre-existing and separately-verified-safe bridge — no data-shape cast survives.
+
+---
+
+### 2026-08-14 — Fix (Double-firing queue actions: duplicated dismissal history, skipped cards)
+
+**Upstream commit(s):** N/A (local fix; issues #5 and #6 from the 2026-08-12 multi-agent bug hunt)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build + validate + zip pass)
+**Files touched:**
+- `src/lib/action_guard.ts` *(new)* — `runQueueActionOnce`, a drop-if-in-flight guard.
+- `src/register/commands.ts` — guards on all four mutating queue commands: Dismiss (`ctrl+d`), the shared `runNextInQueueAction` (`cmd+right` / `opt+t`), Skip (`opt+b`), Open Editor (`ctrl+g`).
+- `src/widgets/answer_buttons.tsx` — `busyRef` / `isBusy` / `runExclusive` row lock (hooks placed **above** the early returns); applied to Previous, Next, Open Editor, Skip, Dismiss and the offset picker's Apply; `disabled={isBusy}` on all five buttons.
+- `src/components/buttons/SplitButton.tsx` — new optional `disabled` prop (greys and blocks the main click area; the chevron stays live, since toggling the offset row is harmless mid-action).
+- `CLAUDE.md` — conflict-map row + this entry.
+
+**Notes:** Every queue action performs several sequential IPC round trips before its destructive step and nothing disabled the control meanwhile, so a second press re-entered with the same captured `incRemInfo`. Worst case was Dismiss: the first pass adds the Dismissed powerup, the second then takes `transferToDismissed`'s `alreadyDismissed` **merge** branch and appends the rem's entire history a second time — persisted to the rem, with a duplicate `dismissed` marker — while `removeCurrentCardFromQueue` fired twice and silently consumed the following card unreviewed. Unlike the cache bugs fixed the day before, that damage does not heal: the doubled history inflates the Repetition-History popup and, if the rem is ever re-incrementalized, feeds the scheduler a fabricated rep count. `handleNextRepetitionClick`'s `await sleep(150)` makes Next the widest window.
+
+That merge branch is **not** itself wrong — it exists so a rem dismissed, re-tagged and dismissed again keeps both learning sessions. It simply cannot tell that apart from one dismissal arriving twice, which is why the fix belongs at the call sites.
+
+**Design decisions worth keeping:** (1) the guard **drops** the second call — deliberately not `withQueueMutex` (`lib/mutex.ts`), which *serialises* and would still run it, exactly the wrong semantics for a double-press. (2) The widget locks the **whole row**, not each button: these actions all mutate the same rem then tear the widget down, so Dismiss-then-Next is as damaging as Dismiss-twice. (3) `busyRef` (synchronous) is the guard and `isBusy` only drives styling — state alone would lose a race between two clicks in one tick. (4) Open Editor's wrapper preserves the user-gesture token: `runExclusive` reaches `await fn()` without yielding, so `openExternalLinkTabsWhenOpenLinkTagged()` still runs in the click's own tick (see Deviation 6.1's accepted-gap note).
+
+**Known limit:** one flag per JS context. The commands (main bundle) and the buttons (widget iframe) guard independently, so pressing `Ctrl+D` while clicking Dismiss is still unguarded. Covering that needs session storage, which is itself racy; not worth it for a case that requires two input devices at once.
+
+---
+
+### 2026-08-14 — Edit (Already-processed items are shown with their own row instead of being skipped)
+
+**Upstream commit(s):** N/A (local behaviour change, user request)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build + validate + zip pass)
+**Files touched:**
+- `src/widgets/queue.tsx` — the due-on-encounter auto-skip `useEffect` removed, replaced by a comment block explaining what was there and why it went; the now-unused `isIncRemDue` / `getIncrementalRemFromRem` / `queueBackNavKey` imports dropped.
+- `src/widgets/answer_buttons.tsx` — `isProcessed`, the processed row (Previous · status · Open Editor · Next), `openEditorWithoutReview`, `durationToHumanReadable` + `dayjs.extend(duration)` imports; the Previous button no longer writes a back-nav flag.
+- `src/lib/consts.ts` — `queueBackNavKey` removed.
+- `src/lib/session_helpers.ts` — its reset removed from `resetQueueSession`.
+- `CLAUDE.md` — Deviation 8 rewritten (it described the opposite behaviour), Deviation 2 + 6 notes, four conflict-map rows, the Runbook smoke-test line, this entry. `README.md` — "Stale items auto-skip" replaced.
+
+**Notes:** The old behaviour silently advanced past any item whose freshly-read `nextRepDate` had moved into the future. That hides information — a stale entry is indistinguishable from an item that was never in the queue — and it made **Previous** unreliable: the `queueBackNavKey` exemption that was supposed to let you revisit a just-reviewed item had a known hole (the flag could be consumed by an unmounted effect, or by the next IncRem if Previous landed on a flashcard), so going back often skipped anyway. Showing the item with an explicit "✓ Already reviewed, next in N days" row fixes both, and deletes the flag rather than patching it.
+
+**Design settled over several iterations with the user — the end state, not the intermediate ones:**
+1. First cut had **Continue** (advance, schedule untouched) + **Review anyway** (revealed the normal row). The user removed *Review anyway*: on a processed item there must be **no** path back to the normal buttons.
+2. **Continue** and **Next** were then judged redundant — they are not identical (Next re-reviewed and re-dated the item) but they look identical, which is the point: the row is meant to be safe. Continue was dropped and **Next** kept the name.
+3. Finally the user asked for Next to be styled like Previous "so it is clear the buttons do not affect the scheduling". Styling alone would have made a scheduling action *look* safe, so the **behaviour** was changed to match the intent: Next now only calls `removeCurrentCardFromQueue()`.
+
+The row is therefore schedule-neutral by construction, and that invariant is worth protecting: a mechanical check is that the `isProcessed` block contains no `handleNextClick`, `updateReviewRemData`, `rescheduleWithoutReview` or `transferToDismissed` call.
+
+---
+
+### 2026-08-14 — Fix (Card Clusters: the flashcard info bar showed the anchor card's stats)
+
+**Upstream commit(s):** N/A (local fix; issue #7 from the 2026-08-12 multi-agent bug hunt)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build + validate + zip pass)
+**Files touched:**
+- `src/widgets/queue_info_bar.tsx` — added the 500 ms `getWidgetContext().cardId` poll with a `lastAppliedCardId` short-circuit and unmount cleanup; routed the existing context effect and `QueueLoadCard` listener through the same `applyCardId`; corrected the file header, which described the half-implemented approach as though it worked.
+- `CLAUDE.md` — Deviation 14's cluster caveat + this entry.
+
+**Notes:** the widget tracked the visible card two ways and inside a cluster neither advanced: `ctx` comes from `useRunAsync(..., [])` (fetched once, never refetched), and `QueueLoadCard` does not fire per cluster sibling — a fact upstream's `card_info_bar` records from experience at its own poll, along with `getCurrentCard()` being stuck on the anchor. So `cardId` froze on the anchor and every sibling after the first showed the anchor's reps and minutes: silently, with plausible-looking numbers. The distribution and priority chip were unaffected (per-KB and per-document, not per-card).
+
+Worth noting how this got in: the file header already carried upstream's *warning* about clusters — copied across when the widget was written — but only half the remedy was implemented. A comment describing a hazard is not evidence the hazard is handled.
+
+The poll is deliberately unconditional, matching upstream: one cheap context read per 500 ms for the whole queue session, including while an IncRem is showing (when this bar renders `null`). Ordinary card-to-card changes are still handled by `QueueLoadCard`; `lastAppliedCardId` means a tick that re-sees a known id does no work at all.
+
+---
+
+### 2026-08-14 — Fix (A failed review was reported as success and consumed the IncRem)
+
+**Upstream commit(s):** N/A (local fix for an UPSTREAM bug; issue #9 from the 2026-08-12 multi-agent bug hunt)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build + validate + zip pass)
+**Files touched:**
+- `src/lib/scheduler.ts` — **first fork edit to this file.** `updateSRSDataForRem` now returns `Promise<boolean>`, returns `false` (with `console.error`) when the rem is missing or the Daily Doc reference cannot be resolved, and drops the `rem?.` optional chaining that made the missing-rem case silent.
+- `src/lib/incremental_rem/index.ts` — `updateReviewRemData` returns `null` and toasts on a failed write; `handleNextRepetitionManualOffset` and `rescheduleWithoutReview` return early on it; `handleNextRepetitionClick` returns before patching the cache or advancing the queue.
+- `src/widgets/answer_buttons.tsx` — the inline Open-Editor review path does the same, but still opens the editor (the item just is not consumed).
+- `CLAUDE.md` — conflict-map row + this entry.
+
+**Notes:** `updateSRSDataForRem` is the only thing that persists a review. Upstream returns `void` and bails with a `console.log` when `getDailyDocReferenceForDate` yields nothing, so callers could not distinguish total failure from success: `updateReviewRemData` returned a success-shaped payload regardless, `handleNextRepetitionClick` patched the session cache with the new date and called `removeCurrentCardFromQueue()`. The IncRem therefore **left the queue looking reviewed while nothing was written to the Rem** — due again next session with no record of the repetition, its review time or its interval, and hidden from the counter meanwhile because the cache said otherwise.
+
+Reachable, not theoretical: `getDailyDocReferenceForDate` goes through `plugin.date.getDailyDoc`, whose concurrent-call race this repo already documents at `incremental_rem/index.ts` ("firing two getDailyDoc calls concurrently can make one lose the race and resolve to undefined") — the reason `initIncrementalRem` reuses `todayRef`.
+
+**This is upstream's bug, verified:** `git diff upstream/main -- src/lib/scheduler.ts` was empty before this change, and upstream's `handleNextRepetitionClick` has the identical unconditional advance. Worth reporting upstream alongside the T2 `plugin_operation_active` leak. Fixing it makes `scheduler.ts` a fork deviation for the first time, which is why it now has a conflict-map row.
+
+**Still unguarded, deliberately (decide before extending):** seven other `updateSRSDataForRem` callers ignore the new boolean — `tracker.ts`, `history_edit.ts`, `editor_review.tsx`, `editor_review_timer.tsx` (×3), `reschedule.tsx`. None of them consumes a queue item, so the data-loss-plus-false-confirmation shape does not apply; and they now at least produce a `console.error` from inside `updateSRSDataForRem`. Guarding them would turn five more upstream files into deviations, so it was left as an explicit choice rather than done silently.
+
+---
+
+### 2026-08-14 — Fix (An out-of-range inherited priority made a rem permanently invisible)
+
+**Upstream commit(s):** N/A (local fix for an UPSTREAM bug; issue #10 from the 2026-08-12 multi-agent bug hunt)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build + validate + zip pass)
+**Files touched:**
+- `src/lib/priority_inheritance.ts` — **first fork edit to this file.** `getInitialPriority` clamps both of its return paths (own `cardPriority` slot, inherited ancestor) via a local `clampPriority`.
+- `src/lib/incremental_rem/index.ts` — `initIncrementalRem` clamps the value again before writing it (renamed to `rawInitialPriority` → `initialPriority`); `getIncrementalRemFromRem` repairs out-of-range history priorities on read.
+- `CLAUDE.md` — conflict-map row + this entry.
+
+**Notes:** `initIncrementalRem` clamped `defaultPriority` but not `getInitialPriority`'s result, which is a raw `parseInt` of a slot (`!isNaN` was the only check). An out-of-range value — hand-edited slot, import, older plugin version, corrupted sync — was written to the priority slot **and stamped into the `madeIncremental` history marker**. Both Zod schemas bound priority to 0-100, so that one entry made `IncrementalRem.safeParse` fail: `initIncrementalRem` returned early (skipping the cache insert, host-index registration and inheritance cascade) *after* the rem was already tagged and written, and every later `getIncrementalRemFromRem` returned `null`. `null` means "not an Incremental Rem" to every consumer, so the rem vanished from cache, queue, counter and distribution **permanently**, while still showing its powerup and properties in the editor. The only trace was one console line at creation.
+
+**Three layers, and the read repair is the load-bearing one.** Clamping at the source and at the write stops NEW damage; it does nothing for a rem already in this state, which cannot be fixed by re-tagging because the bad entry is persisted. `getIncrementalRemFromRem` therefore clamps offending history entries in memory as it reads. Verified against the real schemas: a history containing `priority: 150` fails `safeParse` before the change and parses to `[100, 20]` after, i.e. the rem becomes visible again.
+
+**Design choices:** the read repair **clamps rather than drops** the entry — the repetition's date, interval and review time are all still true, only the recorded priority was impossible, and dropping it would corrupt rep counts. It also **writes nothing back**: the read stays read-only, every consumer gets the corrected value, and the next scheduling write persists the corrected history naturally. Each clamp logs a warning naming the rem and both values, so damage is visible rather than silently absorbed.
+
+Like #9 this is upstream's bug — `priority_inheritance.ts` had no fork edits before today. Worth reporting upstream with the others.
+
+---
+
+### 2026-08-14 — Fix (SEED_VERSION bump for the Hide-in-Queue tier move)
+
+**Upstream commit(s):** N/A (local fix; issue #11 from the 2026-08-12 multi-agent bug hunt)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build + validate + zip pass)
+**Files touched:**
+- `src/lib/settings_migration.ts` — **first fork edit to this file.** `SEED_VERSION` 5 → 6 with a v6 note in the established style.
+- `CLAUDE.md` — conflict-map row, a correction to the 2026-08-11 native-settings entry, and this entry.
+
+**Notes:** moving `enable-hide-in-queue-integration` from `tier: 'native'` to `'popup'` on 2026-08-12 required a seed bump, and the rule is written in the file we were editing around: its v4 note says "**ANY tier change from native to popup needs a bump for exactly this reason**" — v4 exists because `skip_mastery_drill` made the same move.
+
+Without it, on any KB already seeded at v5: `5 < 5` is false → no re-seed → `includePopupTier` false → the id is never registered → `readRawSetting` takes the popup branch → the blob has no key (the seed's cleanup strips non-popup keys) → resolves to the default `false`. Hide-in-Queue silently switches off, so `registerHideInQueueLegacyPowerups` never runs and the five Hide-in-Queue powerups/commands stop registering, leaving rems tagged with them without their queue filtering. And because the id is unregistered, `plugin.settings.getSetting` **throws** for it, so the old native value cannot be read back or migrated later — permanently unreadable, not merely reset. The 2026-08-11 entry claimed only the reset; corrected there.
+
+Chain verified against the code rather than assumed: `isIESettingsSeedNeeded` → `registerPluginSettings({ includePopupTier: true })` → `migrateIESettingsIfNeeded` with `force = doneVersion > 0` → `migrateIESettings` re-reads every `IE_POPUP_TIER_IDS` entry (the id is in that list now that its tier is `popup`) and writes the native value into the blob. Ordering matters and holds: registration precedes migration in `index.tsx`, which it must, since the migration reads through `getSetting`. The id is not on the fork gates' `DENIED_NATIVE_SETTINGS`, so nothing blocks the registration.
+
+**Cost:** one re-seed per KB on next activation (expected — that is the mechanism), and `settings_migration.ts` becomes a fork deviation.
+
+⚠️ **Amended 2026-08-15:** the re-seed described above used `force = doneVersion > 0`, which re-read every popup-tier id from RemNote's registration records and wrote the result over the plugin's blob. That is data loss, not migration: `setIESetting` writes only to synced storage and never back to RemNote, so **every popup-set value was reverted on the next activation** — with `queue-info-bar-mode` and `queue-toolbar-priority-mode` guaranteed casualties, having no native panel row to be re-derived from. `force` is now `false`. It bought nothing for v6's purpose: the v5 cleanup strips `enable-hide-in-queue-integration` as a non-popup key, so its `hasOwnProperty` check is false either way and the normal path re-reads it.
+
+---
+
+### 2026-08-14 — Fix (Unguarded ancestor walks could loop forever on a cyclic parent chain)
+
+**Upstream commit(s):** N/A (local fix; issue #12 from the 2026-08-12 multi-agent bug hunt)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build + validate + zip pass)
+**Files touched:**
+- `src/lib/queue_priority_source.ts` — the document walk in `resolveQueuePriority` gained a visited `Set` + `MAX_ANCESTOR_DEPTH` (100).
+- `src/lib/priority_inheritance.ts` — the same guard on both `findClosestIncrementalAncestor` and `findClosestAncestorWithAnyPriority`.
+- `CLAUDE.md` — conflict-map row + this entry.
+
+**Notes:** all three walks exited only on finding their target, a falsy `parent`, or a missing rem. A cyclic parent chain — a self-parent, or `A -> B -> A` from conflict-merged sync data — satisfies none of those, so the loop ran forever issuing SDK calls, flooding the plugin bridge rather than merely hanging. `.catch(() => false)` on `isDocument()` does not help: one that always throws just keeps the climb going.
+
+Exposure differed by walk, which is why all three were done together rather than only the fork's own: `resolveQueuePriority` runs on **every card transition in two widgets**, while `priority_inheritance`'s pair are reached from `getInitialPriority` during **extraction** — so a hang there freezes tagging a rem, which is worse than a blank chip.
+
+**Two guards, on purpose.** The visited `Set` is the correct cycle detector — exact, and with no ceiling on legitimately deep hierarchies. `MAX_ANCESTOR_DEPTH = 100` covers the other shape: an acyclic but absurdly deep chain that would terminate, but only after hundreds of round trips on a hot path. Both warn rather than failing silently, and both yield the same benign outcome — `null` / `break`, i.e. "no priority to show" — so the chip and the bar border simply go neutral. Verified against synthetic chains: self-parent caught in 2 steps, `A->B->A` in 3, a 500-deep acyclic chain stopped at the cap in 101, and a normal 3-deep chain unaffected.
+
+The two `priority_inheritance` walks are upstream's and unguarded there, so this belongs in the same upstream report as #9 and #10.
+
+---
+
+### 2026-08-14 — Fix (The unreadable-priority placeholder was being laundered into real data)
+
+**Upstream commit(s):** N/A (local fix for an UPSTREAM bug; issue #13 from the 2026-08-12 multi-agent bug hunt)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build + validate + zip pass)
+**Files touched:**
+- `src/lib/incremental_rem/types.ts` — new `priorityStampFor(incRem)`: `{}` for a `'fallback'` priority, `{ priority }` otherwise.
+- `src/widgets/answer_buttons.tsx`, `src/register/commands.ts`, `src/widgets/editor_review.tsx`, `src/widgets/editor_review_timer.tsx`, `src/lib/history_edit.ts` — all five history writers spread the helper instead of `priority: incRem.priority`.
+- `src/lib/priority_inheritance.ts` — `findClosestIncrementalAncestor` skips an ancestor whose priority is `'fallback'` and keeps walking.
+- `src/lib/queue_priority_source.ts` — `QueuePrioritySource` gains `unreadable`.
+- `src/widgets/queue_priority_chip.tsx` — renders `P?` in neutral grey with an explanatory tooltip, and computes no percentile.
+- `src/widgets/queue_info_bar.tsx` — neutral border and no ringed band when the priority is unreadable.
+- `CLAUDE.md` — conflict-map row + this entry.
+
+**Notes:** `types.ts` states the contract — a `'fallback'` priority is `UNREADABLE_PRIORITY_FALLBACK` (50), it "means nothing", and "must not be written back or stamped into history" — but only `scheduler.ts` honoured it. Five other writers stamped `priority: incRem.priority` unconditionally.
+
+**The harm is a one-way door.** A rem whose Priority slot is unreadable (real, not hypothetical — the same file records slots being detached by RemNote's storage/sync overhaul) reads as `50 / 'fallback'`. Dismiss it or review it in the editor, and 50 lands in a history entry. The next read finds it through the history tier and reports `prioritySource: 'history'` — which the contract calls "**Trustworthy as a value**". The placeholder is now indistinguishable from a genuinely recovered priority, it is the most recent entry so it buries the older ones the real value might still have been recoverable from, and the rem is silently, permanently rewritten to P50.
+
+**Three fronts, because the placeholder leaked three ways:** (1) *persisted* by the five writers — fixed with a single shared helper so the rule is not five separate things to remember. ⚠️ **Completed 2026-08-15, not on 2026-08-14 as this entry originally claimed:** two writers in `editor_review_timer.tsx` were missed, and — more importantly — a *fourth* leak was found. The timer's session priority is SEEDED from the rem (`incRem?.priority ?? 10`), so for an unreadable slot it was the placeholder, and `setIncRemPriority` then wrote it into the REAL priority slot, promoting it to `prioritySource: 'slot'` — the tier the contract calls trustworthy. That is the irreversible half, and stamping history was the lesser one. `seedPriorityForTimer` (`incremental_rem/types.ts`) now seeds `undefined` for an unreadable priority, which closes both; (2) *inherited* — `findClosestIncrementalAncestor` returned it, so a brand-new rem could be born at 50 because an ancestor had a damaged slot; it now skips such ancestors and keeps climbing, which is both more honest and more likely to find a real value; (3) *displayed* — the chip showed a confident `P50` with a KB percentile, i.e. a guess dressed as a measurement. It now shows `P?` in neutral grey, computes no percentile, and its tooltip says the slot is unreadable and that setting a priority repairs it. The info bar likewise goes neutral and rings no band.
+
+Upstream's bug — the contract is theirs and only their scheduler follows it. Belongs in the same upstream report as #9, #10 and #12.
+
+---
+
+### 2026-08-14 — Fix (Bug-hunt group A: queue engine & session state)
+
+**Upstream commit(s):** N/A (local fixes; items 14-19, 54-55 of the 2026-08-12 bug hunt)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build + validate + zip pass)
+**Files touched:**
+- `src/register/callbacks.ts` — #14 re-read the seen-set immediately before appending; #15 hoisted a `Map` of scope positions out of the sort projection; #16 purge rejected rems from the cache and advance `sessionItemCounter` on the all-invalid return.
+- `src/lib/session_helpers.ts` — #17 `resetQueueSession` now clears `incremReviewStartTimeKey`; #19 and `incremNotesSidebarRemIdKey`.
+- `src/widgets/queue.tsx` — #18 a shared `autoAdvancedRef` so at most one auto-advance fires per item; #54 removed the dead `shouldHideIncEverythingKey` writes.
+- `src/lib/consts.ts` — #54 dropped `shouldHideIncEverythingKey` and `collapseTopBarKey`.
+
+**#14 — seen-set lost update.** `GetNextCard` read the seen list, then wrote `[...seenRemIds, first.remId]` about ten awaits later. `QueueEnter`'s `clearSeenItems()` landing in that window was undone by the stale write, so every rem seen in the PREVIOUS session counted as seen in the new one and never appeared. The two demonstrably interleave — this file's scope-not-ready branch exists precisely because `GetNextCard` runs while `QueueEnter` is still working. Now re-read immediately before the append. Not atomic (the SDK offers no CAS), but the window is one await instead of ten.
+
+**#15 — quadratic-ish sort.** `docScopeRemIds.indexOf(...)` sat inside the sort projection, and remeda re-runs projections per comparison with no memoisation: ~2·N·log₂N linear scans, ~10⁸ element comparisons for a 5k-rem KB with a 3k-rem scope, synchronously, every card turn. That is the shape that trips the `GetNextCard` timeout, which this file notes "blocks all IncRem injection". Replaced with a `Map` built once; `?? Infinity` so an out-of-scope rem sorts last rather than first.
+
+**#16 — the all-invalid path.** It returned without `sessionItemCounter++` (its sibling early-return does), so `(sessionItemCounter + 1) % intervalBetweenIncRem` stayed true and the next call repeated the whole validation sweep. It also only `shift()`ed rejects off a local array, never purging them, so the same stale rems were re-validated forever. Both fixed.
+
+**#17 — review clock leaked across sessions.** `incremReviewStartTimeKey` is set on every IncRem injection and consumed as `now - startTime` with no clamp and no queue check, so reviewing at 09:00, leaving, then running Review-in-Editor at 14:00 stamped a five-hour `reviewTimeSeconds` into history and inflated the Study Dashboard. `reschedule.tsx` already nulls it for this reason; `resetQueueSession` did not.
+
+**#18 — double advance on a deleted rem.** The `remAndType === null` and `hasIncrementalPowerup === false` effects derive from the SAME failed `findOne`, so a rem deleted mid-session resolved both in one render and the queue skipped the deleted item AND the next card, unreviewed. A shared `autoAdvancedRef` (reset per item) allows one removal per widget instance.
+
+**#19 — ✎ sidebar key outlived the queue.** Its only clearer, `clearStaleIncRemSignals`, runs on flashcard turns — which an all-IncRem queue may never have — so re-entering the queue could show a rem stuck in the "editing in the sidebar" hint with no sidebar open.
+
+**Two items where checking changed the answer:**
+
+**#54** — the bug hunt reported `shouldHideIncEverything` as a dead key "only fed by" a `shouldRenderEditorForRemType` tracker, implying both could go. Wrong: that tracker is load-bearing — a render bail (`if (remAndType?.type === 'rem' && !shouldRenderEditorForRemType) return null`) depends on it. Only the two session writes were dead (2 writes, 0 reads), so only those were removed. **Do not delete that tracker.** Its `w.pluginId !== 'incremental-everything'` filter also carries the hardcoded upstream id (Deviation 1's family), but rem items demonstrably render today, so its current behaviour is load-bearing in a way that is not fully understood — left alone deliberately.
+
+**#55 — `incRemCacheReloadKey` is read but never written, and that is being left as-is.** `tracker.ts` reads it as the *only* reactive dependency of the `plugin.track()` that calls `loadIncrementalRemCache`, so that track runs once at registration and can never re-run. The comment says the key is meant to be bumped "after initIncrementalRem adds a powerup", which never happens. It is not a correctness bug: `initIncrementalRem` inserts the new rem into the cache directly, and every other mutation goes through `updateIncrementalRemCache`, so the cache is maintained incrementally. The consequence is only that **there is no way to force a full KB reload** — and wiring the bump into `initIncrementalRem` would trigger a multi-second KB-wide reload on every single tag, which is certainly why nobody did. If a reload escape hatch is ever wanted, bumping this key is the mechanism it was designed for.
+
+---
+
+### 2026-08-14 — Fix (Bug-hunt group C: scheduling & history correctness)
+
+**Upstream commit(s):** N/A (local fixes; items 25, 40-44, 60 of the 2026-08-12 bug hunt — all upstream bugs)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build + validate + zip pass)
+**Files touched:**
+- `src/lib/scheduler.ts` — #41 `updateSRSDataForRem` now returns the **stamped history** it wrote (`IncrementalRep[] | null`) rather than a bare success flag; #40 `interactionOnSameDay` compares calendar days.
+- `src/lib/incremental_rem/index.ts` — #41 `updateReviewRemData` returns the persisted history; #42 the offset-picker entry stamps priority; #43 new `readRemHistory` helper, used by both single-entry append paths; #25 `rescheduleWithoutReview` patches the cache from known values.
+- `src/lib/incremental_rem/cache.ts` — #44 all three mutators (update, remove, the bulk loader's final swap) share one write chain.
+- `src/widgets/editor_review_timer.tsx` — #60 a missing interval keeps the existing schedule.
+
+**#41 — cache/rem disagreement.** `updateSRSDataForRem` stamps `nextRepMs` onto the last history entry before writing, but `updateReviewRemData` returned its own pre-stamp array, which callers put straight into the session cache. Returning the persisted array makes the two agree by construction, and subsumes the boolean added for #9 (null still reads as failure at every call site).
+
+**#40 — dead comparison.** `new Date(scheduled) == new Date(prev.date)` compares two distinct Date *objects* by reference: always false. So `useRealScheduledTime` collapsed to `!prevInteraction` and every entry past the first was compared at day granularity. ⚠️ **This one changes scheduling behaviour** in the narrow case it was always meant to cover — a rep answered on the same calendar day it was scheduled now uses the real time — which changes which reps `removeResponsesBeforeEarlyResponses` cleanses and so the computed interval.
+
+**#42 / #43 — the single-entry append paths.** The offset-picker review recorded no `priority` (every other writer does), leaving nothing for the history-recovery tier if the slot ever became unreadable. Both it and `rescheduleWithoutReview` also built their new array from `incRem.history` — Zod-parsed output, so any field the schema does not declare was already stripped — and wrote that back, persisting the loss and clobbering anything appended since. `readRemHistory` reads the raw slot instead, falling back to the in-memory copy rather than wiping it.
+
+**#25 — stale re-read.** `rescheduleWithoutReview` re-read the rem immediately after writing; `reschedule.tsx` documents that this can return pre-write data, leaving the cache holding the OLD due date so a just-skipped item still counts as due all session. Now patched from the values just written.
+
+**#44 — lost cache updates.** Verified: three concurrent unlocked read-modify-writes over one session key leave `["c"]`; through the chain they leave `["a","b","c"]`. ⚠️ **Scope corrected 2026-08-15:** `cacheWriteChain` is MODULE-scoped and every widget is its own webpack entry in its own iframe, so the chain serialises writes **within one JS context only** — the cross-widget races this entry's original wording implied are NOT covered (the verification exercised a single context). Same class of limit as `action_guard.ts`, which states it honestly. No cheap fix exists: session storage has no CAS. The bulk loader's final `setSession` takes the lock too — it runs for seconds over a large KB and would otherwise discard every per-rem update made while it loaded.
+
+**#60 — a missing interval is not zero.** `review_actions.ts` starts a queue→editor timer with the interval key `null` *because the repetition was already recorded*, but `|| 0` turned that into `Date.now() + 0 days` — rescheduling the rem to now, immediately due again. Absent now means "leave the schedule alone"; only an actual number reschedules. A genuine `0` still means zero days.
+
+---
+
+### 2026-08-14 — Edit (Rotation may be 0, meaning "always due")
+
+**Upstream commit(s):** N/A (local behaviour change, user request)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build + validate + zip pass)
+**Files touched:**
+- `src/lib/incremental_rem/index.ts` — `getRotationIntervalMs` rejects `days < 0` and `0 < days < 1` instead of `days < 1`, so exactly `0` now passes; the standing consequence is documented on `getRotationIntervalDays`.
+- `README.md` — Rotation section.
+
+**Notes:** the 2026-08-14 sub-day rejection (#2) also excluded `0`, which the user wanted as a legitimate value. `0` is not sub-day — it is the whole-day value for "today" — so the rule is now "negative and sub-day fractions are rejected; 0 and whole days are fine". The unitless-milliseconds trap is still caught by the same test, since `5` parsed as 5 ms is 0.0000058 days. Verified: `0` → 0 days, `0.5`/`2 hours`/`30m`/`-1` → rejected, `5` → 5 days, `3 weeks` → 21 days.
+
+**⚠️ What `Rotation: 0` actually does, because it is not obvious:** it does not mean "again today, then back to normal". Every review sets the next date to `now + 0`, which is persisted as today's Daily Doc reference and reads back as today's **midnight** — already past. So the rem is due again immediately and **stays due forever**, in every session, until the rotation is changed. It is an always-in-the-queue marker. It does *not* reappear within the same session: `GetNextCard` filters rems already in `seenRemInSessionKey`, so it returns on the next session.
+
+No consumer needed changing: all four call sites test `getRotationIntervalMs(...) !== null` rather than truthiness, so a `0` is not mistaken for "no rotation". `getRotationIntervalDays` likewise uses `ms != null`. That was checked before making the change — a truthiness test anywhere would have made `0` silently fall through to the SRS scheduler.
+
+---
+
+### 2026-08-14 — Fix (Bug-hunt group B: debloat leftovers)
+
+**Upstream commit(s):** N/A (local fixes; items 20-23, 29, 39, 50 of the 2026-08-12 bug hunt)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build + validate + zip pass)
+**Files touched:**
+- `src/widgets/priority_editor.tsx` — #20 the whole PDF Range section gated on `FORK_FEATURES.pdfReader` (+ import).
+- `src/lib/queue_session.ts` — #21 `pushIncRemEvent` returns early when `sessionAnalytics` is off (+ import).
+- `src/widgets/queue_info_bar.tsx` — #22 broadcasts the `clusterVisible*` session signals.
+- `src/register/commands.ts` — #23 both keyboard PDF page-history branches gated.
+- `src/widgets/answer_buttons.tsx` — #29 four trackers short-circuit behind their flags.
+- `src/lib/settings.ts` + `src/lib/fork_gates.ts` — #39 `readRawSetting` skips the native read for denied ids; `DENIED_NATIVE_SETTINGS` exported.
+- `src/register/events.ts` — #50 the queue-dashboard refocus listener gated on `practicedQueues`.
+
+**The common shape:** every item here is something disabled at one end and still wired at the other. Worth naming as a class, because the debloat mechanism (a registration deny-list) cannot catch them by construction — it stops things *registering*, and says nothing about code that still calls, produces for, or renders a route to them.
+
+**#20 — dead buttons.** `priority_editor` is a kept widget with no flag guard, but its PDF Range section's two controls (📄 Range, PDF Control Panel ↗) both open the denied `page-range` widget: on every PDF-hosted IncRem, clicking did nothing — no toast, no error. The other three openers of that widget were already denied. `editor_review.tsx` / `editor_review_timer.tsx` merely *import* the id and never use it (dead imports, #57).
+
+**#21 — unbounded growth.** With `sessionAnalytics` off the only DRAIN of `ieIncRemEventLog` is never registered, but three editor-review producers kept appending for the whole session. `queue.tsx` had already guarded its own two producers *with a comment stating the invariant*; the others missed it. Gating the single `pushIncRemEvent` covers all five and cannot be missed again — the right level, since the deny-list can't express "don't produce".
+
+**#22 — restored rather than deleted.** `clusterVisibleCardId` / `…LoadTime` are read by `events.ts` (⚠️ `clusterVisibleRemId` is NOT — it has zero readers anywhere, and its write plus a `plugin.card.findOne` per card transition was dropped on 2026-08-15) to attribute a rating and a flashcard-history entry to the cluster sibling actually on screen. Their only writer was the denied `card_info_bar`, so the readers were dead and attribution silently fell back to the anchor card. The fork's own `queue_info_bar` already tracks the visible sibling (see #7), so it now writes them — recovering the behaviour instead of removing the consumers.
+
+**#23 — the doc was wrong.** Deviation 13 claimed the fork "stops pdfState writes", but only the *button* was gated: `opt+T` and `Ctrl+G` still wrote page history on every advance, since `currentIncrementalRemTypeKey` is set to `'pdf'` regardless of the flag. Both branches now match the button.
+
+**#29 — per-card waste.** `activeHighlightId`, `scopeRemIds`, `bookmarkHighlightId` and `remReadPointInfo` ran on every card for buttons behind `pdfReader` / `shields` / `readPoints`, all false. The last two are multi-hop RPC chains (~5-6 calls each on a pdf/html card). Short-circuited *inside* the trackers, not deleted — the hooks must still run (Rules of Hooks), and flipping a flag revives them.
+
+**#39 — structural log noise.** The gates drop four native settings, so `getSetting` threw for each on every read and `readRawSetting`'s catch logged a warning. `shouldUseLightMode` runs per queue item, so this was several warnings per card, burying real errors. Their defaults are exactly the fork's pinned values, so returning `undefined` early resolves identically — just quietly. `DENIED_NATIVE_SETTINGS` had to be exported; `fork_gates` imports nothing local, so no require cycle.
+
+**#50 — an un-turn-off-able no-op.** `registerQueueDashboardRefocusListener` exists to reopen the denied `practiced_queues` sidebar. It was wired unconditionally (unlike its two neighbours), so any KB with `auto-focus-queue-dashboard` stored true attempted an impossible sidebar open on every Next/Dismiss/Reschedule — and that setting is hidden from the popup, so it could not be switched off.
+
+---
+
+### 2026-08-14 — Fix (Bug-hunt groups D, E, F: queue UI, link/command edges, perf & dead weight)
+
+**Upstream commit(s):** N/A (local fixes; items 24, 26-28, 30-38, 46-49, 51-53, 56-59 of the 2026-08-12 bug hunt)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build + validate + zip pass)
+
+**Group D — queue UI (30, 31, 32, 46, 47, 51, 52, 53, 59).**
+- **#30** `modifiedCount` in `ie_settings.tsx` now also filters by `isSettingVisible`. Narrowing it to `FORK_VISIBLE_IDS` earlier was not enough — the three `showWhen`-gated settings still slipped through, so changing Multiplier then enabling the Beta Scheduler left "1 changed from default" with no visible row to click. The nav sidebar count already filtered by visibility, so the two disagreed with each other.
+- **#31** `queue_info_bar` counts reps/time the way the rest of the plugin does: slice off everything up to the last `RESET`, then count only gradeable answers. It was reporting more reps and more minutes than the repetition-history popup for the same card.
+- **#32** the chip tooltip said an item "sits in the least-important {100−p}%", inverting the meaning — percentile 2 means 2nd-most-important of 100. Now "more important than the other {100−p}%".
+- **#46** the offset picker closes on card change. The widget is not remounted per card (the note state has to reset itself, which proves it), so the row stayed open across a transition still labelled for the previous mode. Value/unit deliberately persist.
+- **#47** stale-guard on the note prefill: A→B advances let A's promise resolve after B's effect, showing A's parked note on B.
+- **#51** the flex wrapper left over from the priority move is now `display: contents` — as a zero-width flex child of a `gap: 16px` row it contributed two gaps where one belonged, a visible ~32px hole. Kept (not deleted) so the shield subtree revives if `shields` is flipped on.
+- **#52 + #59** one colour rule for both bars: `percentiles.kb !== null` (truthiness hid a legitimate `0.0` — the top-priority rem in a >2000-item KB rendered a grey border) and, with no percentile, fall back to the absolute priority exactly as `queue_info_bar` does rather than diverging to grey while claiming to match.
+- **#53** the distribution wrapper gets `min-width: 0` + `overflow-x: auto`. The strip cannot shrink below its ten per-band floors, so a narrow pane used to overflow; now it scrolls with every band intact.
+
+**Group E — links & command edges (24, 33, 34, 35, 36, 37, 38).** Verified against real inputs:
+- **#33** URLs may contain balanced parens and lose trailing sentence punctuation: `…/Mercury_(planet)` no longer truncates to `…/Mercury_` (which opened a wrong page AND suppressed the Rem document, since the truncated string is non-empty). The internal-link filter is hostname-based, so `https://example.com/?ref=remnote.com` survives while `www.remnote.com` is dropped.
+- **#34** zero-width and bidi marks (`U+200B/200E/200F`…) are stripped before the `$`-anchored `(OpenLink)` test — a title pasted from RTL or web content silently lost the policy. Case-sensitivity is unchanged (`(openlink)` still fails).
+- **#35** Link-powerup URLs are scheme-checked; `mailto:` / `javascript:` / `file:` no longer reach `window.open` (and no longer suppress the document by making the list non-empty).
+- **#24** `skip-in-queue` now checks the item is an IncRem. It mirrors a button that lives behind `queueItemTypeFilter: Plugin` and so can never fire on a flashcard, but the command checked only the URL — `opt+B` on a flashcard silently removed a due card with no review and no feedback.
+- **#36** `Ctrl+G`'s open step gets the try/catch + toast the button already had.
+- **#37** number inputs can be cleared: the settings guard used `Number.isFinite(Number(raw))`, but `Number('')` is 0, so an emptied field silently committed 0; the offset picker is controlled, so ignoring NaN re-rendered the old value and deleting digits was impossible.
+- **#38** `coerce` validates a dropdown value against its options. Narrowing `priorityEditorDisplayMode` to two options left a KB holding `'all'` matching no `<option>`, so the control painted **empty**.
+
+**Group F — perf & dead weight (26, 27, 28, 48, 49, 56, 57, 58).**
+- **#26 — `dist/` 60 MB → 37 MB.** Entries are globbed from every `src/widgets/*.tsx`, so the 23 widgets whose only registration id is denied still shipped a bundle plus a `-sandbox` twin. `webpack.config.js` now **parses the deny-list out of `fork_gates.ts`** rather than restating it, so flipping a `FORK_FEATURES` boolean restores that widget's bundle automatically and the two cannot drift. If the parse finds nothing it builds everything — failing safe. Excluding an entry does not remove the file: `history_sidebar` imports the three history components and `practiced_queues` is imported for its types; module resolution is unaffected.
+- **#27** `sourceName` is no longer resolved on the `origin === 'own'` branch — `resolveRemTextForBreadcrumb` walks rich text and issues an extra `findOne` per rem reference, and only the chip's `document` case ever reads it.
+- **#28** the chip's poll and resolver are gated on `shouldShow`, computed before them. The early return sits after every hook (it must), so switching the chip off stopped it *rendering* while the 500 ms poll and a full ancestor walk kept running every card to produce `null`. `shouldShow` is in the effect's deps so toggling the setting takes effect without a reload.
+- **#48** `ExtractViewer`'s `if (!rem) return null` sat above every hook — a hook-count change waiting for the first call site that doesn't guard externally. Removed; the prop type is non-optional.
+- **#49** `installForkGates` is idempotent. Nothing untangles the wrappers, so a second call (HMR in `npm run dev`) wrapped the wrappers permanently for all six methods. Harmless today only because every transform happens to be idempotent — luck, not design.
+- **#57** unused imports cleared from the fork-touched files (bare `React` included — `jsx: react-jsx` makes them unnecessary).
+- **#56 / #58 — deliberately NOT done.** `priority_shield.ts` (162 lines, zero importers) and `DraggableButton.tsx` are dead but are *upstream* files: deleting them buys nothing at runtime (neither is a widget entry, so #26 already excluded any bundle weight) and converts a clean merge into a delete/modify conflict at the next sync. Same for the remaining stale comments in upstream files. Documented as dead rather than removed.
+
+---
+
+### 2026-08-15 — Fix (Queue plugin id; pre-merge review: 4 must-fixes, 11 should-fixes, gate leaks)
+
+**Upstream commit(s):** N/A (local; uncommitted until this entry's commit)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13, unchanged baseline; production build + validate + zip pass at every step)
+
+**Queue plugin id (2 sites).** RemNote stamps a returned queue item's `pluginId` to route it, and
+upstream hardcodes its own id — which is guaranteed wrong here (Deviation 1). Both sites now
+resolve `plugin.manifest?.id || plugin.id || forkPluginId`:
+- `src/register/callbacks.ts` — the `GetNextCard` payload.
+- `src/widgets/queue.tsx` — `shouldRenderEditorForRemType`'s "is another plugin claiming this
+  slot?" filter, which compared against upstream's id and so treated our OWN widget as foreign.
+- `src/lib/consts.ts` — new `forkPluginId`, the last-resort fallback. The previous fallback was
+  upstream's literal, i.e. the broken value.
+
+**This did NOT fix the reported bug**, and the investigation that proved it is worth keeping: with
+only IncRems due, RemNote shows "you have finished all your cards". Decompiling RemNote's queue
+bundle showed `loadCards` commits `currentCard = null` and renders the completion screen **before**
+the plugin is asked — `GetNextCard` is reached only from a fire-and-forget "full" preload — and
+`numRemainingCards()` does not count the `pendingPluginCard` it stores, so a late answer is
+unreachable. Our answer is correct and arrives in **25 ms**. It is a RemNote regression; the
+workaround is to enter the queue with at least one due flashcard (or via practice-ahead).
+Upstream independently hit the latency half of this and fixed it in the 27 commits we have not yet
+merged (`queue_prefetch`, answering from module state in ~0-1 ms). A local latency patch was
+written and **deliberately dropped** — the merge supersedes it and it would conflict in the fork's
+most fragile file.
+
+**Pre-merge review (21 agents, adversarially verified).** Must-fixes:
+- `src/lib/settings_migration.ts` — `force = doneVersion > 0` → `false`. See the amendment on the
+  2026-08-14 SEED_VERSION entry: it was silently reverting every popup-set setting.
+- `src/widgets/editor_review_timer.tsx`, `editor_review.tsx`, `src/lib/review_actions.ts`,
+  `inc_rem_list.tsx`, `inc_rem_main_view.tsx`, `incremental_rem/types.ts` — new
+  `seedPriorityForTimer`; see the amendment on the #13 entry. The slot write was the irreversible
+  half and the original fix missed it.
+- `src/widgets/answer_buttons.tsx` — the info bar goes neutral and rings no band when
+  `prioritySource === 'fallback'`, matching the chip and `queue_info_bar`.
+
+Should-fixes §2.1-2.11: the ⚙️ Options panel no longer survives onto the already-processed row
+(it could reach Review-with-Timer, which writes a schedule — breaking Deviation 8's invariant);
+`📝 Review with Timer` and `review-increm-in-editor` joined the row lock / `runQueueActionOnce`;
+the #16 cache purge now evicts ONLY rems that have actually lost the powerup, and batches its
+purges (a transient read failure used to permanently evict a valid rem, unrecoverable because
+`incRemCacheReloadKey` has no writers); the offset picker's Open Editor awaits the review before
+navigating; `queue_info_bar` no longer resolves priorities it cannot render (reachable at the
+shipped default on mobile); `plugin_updating_srs_data` expires at the read site; `resetQueueSession`
+moved to the TOP of QueueExit; `webpack.config.js` scopes its flag scan, asserts each denied id has
+a source file, and logs the full list; the Queue Info Bar setting description was rewritten (it
+described four buckets and a priority readout that no longer exist).
+
+**Gate leaks (Deviation 13 is a REGISTRATION deny-list — it cannot see these):**
+- `pdfReader` — `PageControls` in both editor-review widgets rendered live on every PDF-hosted
+  IncRem: a 📄 Range button opening a denied widget (silent no-op) plus ungated `pdfState` writes.
+- `cardSurface` (user decision, 2026-08-15) — three live CardPriority writers gated:
+  `priority.tsx` and `priority_light.tsx` card sections (+ the inheritance section), and
+  `events.ts`'s in-queue writer, which needed no user intent at all. `fork_gates.ts` hides the
+  CardPriority settings on the premise that nothing writes those tags; that premise is now true.
+- `src/widgets/queue.tsx` — the `getWidgetsAtLocation` probe fails OPEN; a rejection used to leave
+  the queue body permanently blank for rem-type IncRems.
+
+**Notes:** documentation drift fixed in the same pass — the two passages telling a future merge to
+leave the plugin-id literals alone are annotated SUPERSEDED (three of the 27 incoming upstream
+commits rewrite that exact function, so a resolver would have read them in a conflict hunk); five
+fork-changed files were missing conflict-map rows (`webpack.config.js` the sharp one); Deviation 5
+stated the superseded rotation rule (`< 1 day`, which would silently disable `Rotation: 0`);
+Deviation 14 omitted `QueueDistribution`'s measurement pass. **In-app smoke tests are still
+outstanding — none of the 21 agents ran the plugin.**
+
