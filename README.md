@@ -143,7 +143,24 @@ This fork disables the upstream subsystems its owner doesn't use (everything rem
 
 **Changed:** the three history sidebar tabs (Incremental / Flashcard / Visited Rems) are merged into **one "History" tab** with collapsible sections. Kept: the 📚 Inc Rems counter under document titles, the No-IncRem queue timer, Sorting Criteria, all IncRem priority tools, and repetition history (Ctrl+Shift+H).
 
-Also fixed here (pre-existing upstream bug): a stuck `plugin_operation_active` flag after making a rem incremental with flashcard prioritisation off, which silently disabled manual-dismiss and manual-date-edit detection.
+### Upstream bugs fixed here
+
+Several defects found while maintaining this fork are fixed here but still present upstream. The ones
+you would actually notice:
+
+- **A failed review was reported as success and consumed the item.** The only function that persists a
+  review returned `void` and bailed silently, so an Incremental Rem could leave the queue looking
+  reviewed while nothing was written — due again next session, with no record of the repetition.
+- **An out-of-range priority made a Rem permanently invisible to the plugin.** One bad value put it
+  outside the schema, so every later read returned "not an Incremental Rem": gone from the queue,
+  counter and tables, while still looking normal in the editor. Existing damage is repaired on read.
+- **The "priority could not be read" placeholder was being written back as if it were real**, silently
+  and permanently rewriting such Rems to P50.
+- **A cyclic parent chain could hang the plugin** during extraction.
+- A stuck `plugin_operation_active` flag after making a rem incremental with flashcard prioritisation
+  off, which silently disabled manual-dismiss and manual-date-edit detection.
+
+The full list, with mechanisms and the fixes, is in [`UPSTREAM_ISSUES.md`](UPSTREAM_ISSUES.md).
 
 ## Settings, in one window
 
