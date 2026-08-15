@@ -1,6 +1,6 @@
 # Mo's Incremental Everything
 
-> **This is a personal fork of [Incremental Everything](https://github.com/bjsi/incremental-everything)** by Jamesb, Hugomarins and Jonathangimeno. All credit for the plugin itself — incremental reading, prioritization, scheduling, analytics, and everything else it does — belongs upstream; read their README and [documentation site](https://hugomarins.github.io/incremental-everything/) first. This fork is **unlisted**, tracks upstream (currently synced to upstream v1.0.35, commit `5f8ccdd`), and layers the changes described below on top.
+> **This is a personal fork of [Incremental Everything](https://github.com/bjsi/incremental-everything)** by Jamesb, Hugomarins and Jonathangimeno. All credit for the plugin itself — incremental reading, prioritization, scheduling, analytics, and everything else it does — belongs upstream; read their README and [documentation site](https://hugomarins.github.io/incremental-everything/) first. This fork is **unlisted** on Remnote, tracks upstream (currently synced to upstream v1.0.39, commit `9d2ea3a` of 2026-08-12), and layers the changes described below on top.
 
 This document only describes **what is different from upstream**. If a feature isn't mentioned here, it works exactly as in the original plugin.
 
@@ -101,26 +101,7 @@ Set it under **General → Queue → Priority Chip in Queue Top Bar**: always sh
 
 ### Deterministic ordering among equal priorities
 
-When several due items share a priority, the **most overdue comes first** (in the live queue, the IncRem table's "Queue Order" view, and Priority Review Documents). Upstream's priority-weighted randomness lottery still applies on top (default 20%; set Sorting Criteria → randomness to 0 for strictly deterministic order).
-
-## Known issue: an all-Incremental queue can show "you've finished all your cards"
-
-If **every** flashcard is done and only Incremental Rems are still due, opening the queue may show
-RemNote's completion screen with no Incremental Rems at all.
-
-This is a bug in RemNote, not in the plugin. RemNote decides the queue is finished and renders that
-screen *before* it asks the plugin for an item, and the answer the plugin gives — correct, and in
-about 25 ms — is then discarded. Nothing a plugin can do changes that. It only bites at queue
-*entry*: once the queue is running, Incremental Rems appear normally, including after RemNote's own
-cards run out.
-
-**Workaround:** start the queue somewhere that has at least one due flashcard — a document's
-**Practice** button, or practice-ahead — and your Incremental Rems will come through as usual.
-
-Still present after syncing with upstream on 2026-08-15, which rewrote this area (the plugin now
-answers RemNote in about a millisecond instead of a few hundred). That ruled out speed as the cause
-and confirmed the problem is on RemNote's side, so the fork is waiting on a fix there rather than
-working around it further.
+When several due items share a priority, the **most overdue comes first** (both in the live queue and in the IncRem table's "Queue Order" view). Upstream's priority-weighted randomness lottery still applies on top (default 20%; set Sorting Criteria → randomness to 0 for strictly deterministic order).
 
 ## Intentionally different / removed
 
@@ -143,30 +124,12 @@ This fork disables the upstream subsystems its owner doesn't use (everything rem
 
 **Changed:** the three history sidebar tabs (Incremental / Flashcard / Visited Rems) are merged into **one "History" tab** with collapsible sections. Kept: the 📚 Inc Rems counter under document titles, the No-IncRem queue timer, Sorting Criteria, all IncRem priority tools, and repetition history (Ctrl+Shift+H).
 
-### Upstream bugs fixed here
-
-Several defects found while maintaining this fork are fixed here but still present upstream. The ones
-you would actually notice:
-
-- **A failed review was reported as success and consumed the item.** The only function that persists a
-  review returned `void` and bailed silently, so an Incremental Rem could leave the queue looking
-  reviewed while nothing was written — due again next session, with no record of the repetition.
-- **An out-of-range priority made a Rem permanently invisible to the plugin.** One bad value put it
-  outside the schema, so every later read returned "not an Incremental Rem": gone from the queue,
-  counter and tables, while still looking normal in the editor. Existing damage is repaired on read.
-- **The "priority could not be read" placeholder was being written back as if it were real**, silently
-  and permanently rewriting such Rems to P50.
-- **A cyclic parent chain could hang the plugin** during extraction.
-- A stuck `plugin_operation_active` flag after making a rem incremental with flashcard prioritisation
-  off, which silently disabled manual-dismiss and manual-date-edit detection.
-
-The full list, with mechanisms and the fixes, is in [`UPSTREAM_ISSUES.md`](UPSTREAM_ISSUES.md).
 
 ## Settings, in one window
 
 Every setting now lives in the plugin's own window — open it from the omnibar with **"Incremental: Settings"** (quick code `ies`). RemNote's plugin-settings panel carries only a pointer to it.
 
-The window is reorganised into **three sections** holding the ~16 settings that still do something here (settings belonging to disabled subsystems are hidden, not deleted — their stored values survive):
+The window is reorganised into **three sections** holding the 17 settings that still do something here (settings belonging to disabled subsystems are hidden, not deleted — their stored values survive):
 
 1. **General** — split into *Queue* (queue info bar, priority chip, collapse top bar, isolated card view) and *Appearance* (priority widget in the editor, left borders, hidden tags, table badges).
 2. **Priority & Scheduling** — *Priority* (default IncRem priority, step size), then *Scheduling* (initial interval, the Beta-scheduler switch, and only the selected curve's parameters).
@@ -176,4 +139,4 @@ The Hide-in-Queue warning about duplicate powerups — the one thing here that c
 
 ## Commands in the omnibar
 
-Every command this plugin registers is prefixed **`Incremental: `** in the omnibar, so they group together and are findable — upstream's names ranged from "Open Study Dashboard" to "Preserve history & remove" with nothing marking them as belonging to this plugin. Several were also renamed for intent over implementation (e.g. *Preserve history & remove* → **Delete Rem, Keep Study History**; *Quick Increase/Decrease Priority Number* → **Make Less/More Important**). Quick codes are untouched.
+Every command this plugin registers is prefixed **`Incremental: `** in the omnibar, so they group together and are findable.
