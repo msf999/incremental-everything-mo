@@ -14,7 +14,8 @@ mcp.json
 *.mcp.json
 .claude/settings.local.json
 
-# Local-only working notes. UPSTREAM_ISSUES.md is our running list of bugs found
-# in upstream while maintaining the fork — useful to us, but not something the
-# fork publishes. Referenced from CLAUDE.md only.
+# Local-only working notes — kept on disk, never published. CLAUDE.md is the
+# fork's maintenance and merge record; UPSTREAM_ISSUES.md is the running list of
+# bugs found in upstream while maintaining it.
+CLAUDE.md
 UPSTREAM_ISSUES.md

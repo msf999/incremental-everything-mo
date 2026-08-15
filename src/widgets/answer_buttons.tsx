@@ -1158,7 +1158,7 @@ export function AnswerButtons() {
               deliberate `await sleep(150)` is a wide window in which the whole main row
               is disabled and this button was not — two overlapping runs both read
               pre-write history and append, losing a repetition or recording two for one
-              review. CLAUDE.md already described the lock as covering "every action
+              review. The fork's own notes already described the lock as covering "every action
               button". */}
           <Button
             disabled={isBusy}

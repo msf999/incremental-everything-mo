@@ -11,7 +11,7 @@
 // upstream, so syncs merge clean; re-enabling a whole subsystem is flipping one
 // boolean here.
 //
-// HARD RULES (see CLAUDE.md Deviation 13 and the dependency traps recorded
+// HARD RULES (see the fork's maintenance notes, Deviation 13, and the traps recorded
 // there): never gate registerPowerup — the CardPriority powerup is read
 // unguarded by getInitialPriority during Make-Incremental (T1), and the
 // pdfState slot on Incremental/Dismissed stores data that read points and
@@ -22,7 +22,7 @@ import { WidgetLocation } from '@remnote/plugin-sdk';
 
 /**
  * One boolean per upstream subsystem. true = behave like upstream.
- * All decisions 2026-08-11 by the fork owner; see CLAUDE.md Deviation 13.
+ * All decisions 2026-08-11 by the fork owner; see the fork's maintenance notes.
  */
 export const FORK_FEATURES = {
   /** PDF/HTML reader in the queue, highlight toolbar, source popups, PDF
