@@ -118,7 +118,7 @@ This fork disables the upstream subsystems its owner doesn't use (everything rem
 - **Flashcard features** — the card info bar, batch card priority, card-maintenance commands (the flashcard-prioritisation engine was already off), and cloze-creation commands. The editor's priority widget is on/off here rather than upstream's three modes, since its third mode existed only to add a card-priority editor beside rems with flashcards. The **Change Priority** popups (⚡ in the queue, and `Opt+P`) no longer offer a *Card Priority* section either: this fork never creates `CardPriority` tags, so the section had nothing to act on.
 - **Analytics** — Priority/Weighted Shields, Practiced Queues and its per-card session tracking. (The Study Dashboard is kept.)
 - **Editor utilities** — heading/outline restructuring, listify/bulletize, text-case converter, reference finder, read points.
-- **Misc** — video debug surface and Priority Review Documents. (The **debug/repair commands are currently ON**, kept as insurance against a RemNote bug that can detach priority slots — they are user-invoked only and do nothing unless you run them.)
+- **Misc** — video debug surface, all debug/repair commands, Priority Review Documents.
 - **Modes & native settings** — Full performance mode is retired (the fork always runs Light) and the startup "running in Light Mode" banner is gone. RemNote's own plugin-settings panel now holds **no settings at all**, just a signpost row: every setting lives in the plugin's settings window (see below).
 - **Migration commands** — Import-with-History, and Copy/Paste Rem Sources (upstream groups the latter with the PDF tooling).
 

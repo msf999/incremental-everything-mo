@@ -265,33 +265,37 @@ Fix options, if it is ever worth doing: (1) make `ExtractViewer`'s background cl
 - **Never gated:** `registerPowerup` (T1 — `getInitialPriority` reads CardPriority slots unguarded during Make-Incremental; pdfState slot stores data read points/dismissal rely on).
 - **Upstream bugfix (T2), report upstream:** `tracker.ts`'s cascade watcher now clears `plugin_operation_active` on its prioritisation-off early return — previously the flag set by `initIncrementalRem`/`extract.ts` stayed stuck (its only clearer was `runCascade`'s `finally`), suppressing `GlobalRemChanged` (manual powerup-removal → Dismissed transfer, manual date-edit detection).
 
-**⚠️ Slot-detachment tooling — `debugTools` is ON as insurance (2026-08-15).** Upstream's two RemNote
+**Slot-detachment tooling — reviewed 2026-08-15, `debugTools` stays OFF.** Upstream's two RemNote
 bug reports in the repo root (`REMNOTE_SUPPORT_REPORT_priority_slot_detachment.md`,
 `REMNOTE_SUPPORT_FOLLOWUP_1.27.24.md`) document RemNote's storage/sync overhaul re-pointing powerup
 property references at orphaned slot Rems — 99.2% of Incremental priorities in the reporter's KB.
 RemNote 1.27.24 fixed the re-pointing; ~2,033 dangling Daily Document references remain outstanding.
-Checked against this fork:
 
-- **Read-side robustness is ACTIVE and ungated.** `getPowerupSlotByCodeSafe` (`powerup_slot_compat.ts`)
-  is a library, not a registration, and is used by `scope_helpers`, `powerupSlotFilter`, `priority.tsx`,
-  `card_priority/batch` and the scan/dump helpers. Nothing to do.
-- **The fork's own mitigations are ACTIVE and directly on point.** The whole
-  `UNREADABLE_PRIORITY_FALLBACK` chain — `priorityStampFor`, `seedPriorityForTimer`, the `P?` chip and
-  the neutral info bar — exists precisely because a slot can be unreadable, which is this bug.
-- **The scan/repair TOOLING is now ENABLED as insurance (user decision, 2026-08-15).**
-  `scanKbForDetachedSlots`, `repairDetachedCardPriorities` and `testDeleteOrphanProperties` live in
-  the `debug` widget, and `probe-slot-api` / `dump-raw-powerup-slots` are commands — all under
-  `FORK_FEATURES.debugTools`, which was `false` and is now **`true`** so the tooling is reachable
-  without a code change if this KB ever shows detached slots.
+It was briefly switched ON as insurance, then switched back OFF the same day after reading what the
+tooling actually does. **It does not address this fork's exposure**, and the reasoning is worth
+keeping so nobody re-enables it expecting a fix:
 
-  > 🔔 **REMINDER FOR A FUTURE SESSION: turn `debugTools` back OFF when it is no longer wanted.**
-  > It was enabled purely as insurance against the slot-detachment bug above, not because the
-  > workflow needs it. Cost of leaving it on: 7 extra `Incremental: …` entries in the omnibar
-  > (`debug-incremental-everything`, `probe-slot-api`, `dump-raw-powerup-slots`,
-  > `test-console-function`, `jump-to-rem-by-id`, `test-mobile-detection`,
-  > `debug_clear_flashcard_history`) and 2 extra widget bundles — the zip went 12.0MB → 12.6MB,
-  > 78 → 82 entries. Nothing here runs on its own; every entry is user-invoked, so it is inert
-  > until used. Ask the fork owner before flipping it back.
+- The only real REPAIR is `repairDetachedCardPriorities`. The card-priority engine is disabled here,
+  so those values are wrong in a subsystem this fork does not use.
+- Detached **Incremental** priorities — the ~100% case that would matter — are **not repaired by this
+  tooling at all**. `getIncrementalRemFromRem` recovers them from each Rem's own repetition history on
+  every read, so a scan reports them detached forever while the app shows correct values.
+- **Dangling Daily Document dates**, the half 1.27.24 did NOT fix, are not recoverable by anything.
+  The plugin's own `nextRepMs` history stamp is what saves those schedules, also automatically.
+- The all-IncRem queue regression is unrelated — that is RemNote's queue loop discarding a returned
+  plugin item, nothing to do with slots.
+
+**Still ACTIVE and ungated, and these are what actually protect the fork:** `getPowerupSlotByCodeSafe`
+(`powerup_slot_compat.ts`) is a library, used by `scope_helpers`, `powerupSlotFilter`, `priority.tsx`
+and `card_priority/batch`; and the whole `UNREADABLE_PRIORITY_FALLBACK` chain — `priorityStampFor`,
+`seedPriorityForTimer`, the `P?` chip, the neutral info bar — which exists precisely because a slot
+can be unreadable.
+
+**Re-enable only if a FUTURE RemNote change breaks something slot-shaped** (`probe-slot-api` and
+`dump-raw-powerup-slots` are general diagnostics). ⚠️ Re-enabling needs a **dev-server restart**, not
+just a reload: webpack derives its entry exclusions from the deny-list and reads it only at startup.
+Skipping that gives a registered widget with no bundle — the popup opens as a blank white rectangle
+with nothing in the console. That is exactly what happened when it was switched on.
 
 **Merge rule:** at a sync, upstream's `commands.ts`/`widgets.ts`/`menus.ts` merge clean (untouched by this deviation) — but **re-verify the deny-list ids still match** (upstream renames = silently re-enabled feature; grep each denied id post-merge) and re-apply the flag edits if upstream rewrites the touched regions. If upstream adds new commands/widgets in a disabled subsystem, add their ids to the group. **Popup check:** the IE Settings popup renders only `FORK_IE_LAYOUT` ids, so a newly added upstream setting will not appear until its id is added there (deliberate — new upstream settings are opt-in for this fork).
 

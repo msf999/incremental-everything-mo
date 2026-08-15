@@ -59,21 +59,34 @@ export const FORK_FEATURES = {
   /**
    * Debug / diagnostics / raw-slot repair commands and widgets.
    *
-   * ⚠️ **ON as an insurance policy (2026-08-15, user decision) — turn it back OFF
-   * once it is no longer wanted.** This is the only route to the slot-detachment
-   * scan and repair tooling (`scanKbForDetachedSlots`,
-   * `repairDetachedCardPriorities`, `testDeleteOrphanProperties` in the `debug`
-   * widget, plus `probe-slot-api` and `dump-raw-powerup-slots`), which exists
-   * because RemNote's storage/sync overhaul re-pointed powerup property
-   * references at orphaned slot Rems — see the two REMNOTE_SUPPORT_*.md reports
-   * in the repo root.
+   * Briefly enabled on 2026-08-15 as insurance against the slot-detachment bug in
+   * upstream's two REMNOTE_SUPPORT_*.md reports, then turned back OFF the same day
+   * once we actually read what the tooling does. It does not cover this fork's
+   * exposure:
    *
-   * The cost of leaving it on: 7 extra `Incremental: …` entries in the omnibar
-   * and 2 extra widget bundles in `dist`/the zip (webpack derives its exclusions
-   * from this deny-list). Nothing here runs on its own — every one of these is
-   * user-invoked — so it is inert until used.
+   *   - The only real REPAIR is `repairDetachedCardPriorities`, and the
+   *     card-priority engine is disabled here — those values are wrong in a
+   *     subsystem this fork does not use.
+   *   - Detached INCREMENTAL priorities (the ~100% case that would matter) are not
+   *     repaired by this tooling at all. `getIncrementalRemFromRem` recovers them
+   *     from each Rem's own repetition history on every read, automatically, so a
+   *     scan reports them as detached forever while the app shows correct values.
+   *   - Dangling Daily Document dates — the half RemNote 1.27.24 did NOT fix — are
+   *     not recoverable by anything. The plugin's own `nextRepMs` history stamp is
+   *     what saves those schedules, also automatically.
+   *
+   * So its value here is purely diagnostic, and every question it answers leads to
+   * "nothing to do". Re-enable if a FUTURE RemNote change breaks something
+   * slot-shaped — `probe-slot-api` and `dump-raw-powerup-slots` are general
+   * diagnostics and would be the first thing to reach for.
+   *
+   * ⚠️ Re-enabling needs a DEV SERVER RESTART, not just a reload: webpack derives
+   * its entry exclusions from this deny-list and only reads it at startup. Skipping
+   * that gives you a registered widget with no bundle — the popup opens as a blank
+   * white rectangle with nothing in the console. That is exactly what happened when
+   * this was switched on.
    */
-  debugTools: true,
+  debugTools: false,
   /** Priority Review Documents (Opt+Shift+R). */
   priorityReviewDocs: false,
   /** Fork-built combined History sidebar tab replacing the three upstream tabs. */
