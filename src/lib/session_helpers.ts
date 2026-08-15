@@ -4,6 +4,7 @@ import {
   seenCardInSessionKey,
   currentScopeRemIdsKey,
   priorityCalcScopeRemIdsKey,
+  priorityCalcScopeCompletenessKey,
   currentSubQueueIdKey,
   queueSessionCacheKey,
   incrementalQueueActiveKey,
@@ -23,6 +24,8 @@ export async function resetQueueSession(plugin: ReactRNPlugin): Promise<void> {
   await plugin.storage.setSession(seenCardInSessionKey, []);
   await plugin.storage.setSession(currentScopeRemIdsKey, null);
   await plugin.storage.setSession(priorityCalcScopeRemIdsKey, null);
+  // Describes the scope above; must never outlive it.
+  await plugin.storage.setSession(priorityCalcScopeCompletenessKey, null);
   await plugin.storage.setSession(currentSubQueueIdKey, null);
   await plugin.storage.setSession('effectiveScopeId', null);
   await plugin.storage.setSession('originalScopeId', null);
@@ -59,6 +62,8 @@ export async function clearSeenItems(plugin: ReactRNPlugin): Promise<void> {
   await plugin.storage.setSession(seenCardInSessionKey, []);
   await plugin.storage.setSession(currentScopeRemIdsKey, null);
   await plugin.storage.setSession(priorityCalcScopeRemIdsKey, null);
+  // Describes the scope above; must never outlive it.
+  await plugin.storage.setSession(priorityCalcScopeCompletenessKey, null);
 }
 
 /** Counts of due IncRems bucketed by priority: [0-10, 11-30, 31-60, 61-100] (inclusive). */
