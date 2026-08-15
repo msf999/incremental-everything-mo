@@ -265,6 +265,26 @@ Fix options, if it is ever worth doing: (1) make `ExtractViewer`'s background cl
 - **Never gated:** `registerPowerup` (T1 — `getInitialPriority` reads CardPriority slots unguarded during Make-Incremental; pdfState slot stores data read points/dismissal rely on).
 - **Upstream bugfix (T2), report upstream:** `tracker.ts`'s cascade watcher now clears `plugin_operation_active` on its prioritisation-off early return — previously the flag set by `initIncrementalRem`/`extract.ts` stayed stuck (its only clearer was `runCascade`'s `finally`), suppressing `GlobalRemChanged` (manual powerup-removal → Dismissed transfer, manual date-edit detection).
 
+**⚠️ Slot-detachment tooling is behind `debugTools` (reviewed 2026-08-15).** Upstream's two RemNote
+bug reports in the repo root (`REMNOTE_SUPPORT_REPORT_priority_slot_detachment.md`,
+`REMNOTE_SUPPORT_FOLLOWUP_1.27.24.md`) document RemNote's storage/sync overhaul re-pointing powerup
+property references at orphaned slot Rems — 99.2% of Incremental priorities in the reporter's KB.
+RemNote 1.27.24 fixed the re-pointing; ~2,033 dangling Daily Document references remain outstanding.
+Checked against this fork:
+
+- **Read-side robustness is ACTIVE and ungated.** `getPowerupSlotByCodeSafe` (`powerup_slot_compat.ts`)
+  is a library, not a registration, and is used by `scope_helpers`, `powerupSlotFilter`, `priority.tsx`,
+  `card_priority/batch` and the scan/dump helpers. Nothing to do.
+- **The fork's own mitigations are ACTIVE and directly on point.** The whole
+  `UNREADABLE_PRIORITY_FALLBACK` chain — `priorityStampFor`, `seedPriorityForTimer`, the `P?` chip and
+  the neutral info bar — exists precisely because a slot can be unreadable, which is this bug.
+- **The scan/repair TOOLING is DENIED.** `scanKbForDetachedSlots`, `repairDetachedCardPriorities` and
+  `testDeleteOrphanProperties` live in the `debug` widget, and `probe-slot-api` /
+  `dump-raw-powerup-slots` are commands — all on the `debugTools` deny-list. The code is still in the
+  bundle-less source, so **if this KB ever shows detached slots, flip `FORK_FEATURES.debugTools` to
+  `true`, run the scan/repair, then flip it back.** No standing change needed; recorded so nobody has
+  to rediscover where the tooling went.
+
 **Merge rule:** at a sync, upstream's `commands.ts`/`widgets.ts`/`menus.ts` merge clean (untouched by this deviation) — but **re-verify the deny-list ids still match** (upstream renames = silently re-enabled feature; grep each denied id post-merge) and re-apply the flag edits if upstream rewrites the touched regions. If upstream adds new commands/widgets in a disabled subsystem, add their ids to the group. **Popup check:** the IE Settings popup renders only `FORK_IE_LAYOUT` ids, so a newly added upstream setting will not appear until its id is added there (deliberate — new upstream settings are opt-in for this fork).
 
 ---

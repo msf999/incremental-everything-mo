@@ -347,9 +347,23 @@ export function registerCallbacks(plugin: ReactRNPlugin) {
       const dueCount = readDueCount();
 
       // Queue counter suffix (" + N" due IncRems). Never awaited, as before.
-      plugin.app.registerCSS(
-        queueCounterId,
-        `
+      //
+      // FORK (2026-08-15, caught by in-app testing after the 9d2ea3a merge): only
+      // write this once the prefetch has a REAL number.
+      //
+      // `state.dueCount` initialises to 0 and is only assigned during the prefetch
+      // build, but this runs on every call — so the first calls at queue open
+      // stamped " + 0" over the correct total QueueEnter had just written via
+      // registerQueueCounter (Deviation 9). Observed: the console reported 2002 due
+      // IncRems while the counter on screen read "45 + 0".
+      //
+      // `isPrefetchReadyFor` is the right discriminator, not `dueCount > 0`: it
+      // distinguishes "not built yet" from "built, and the answer really is 0", so a
+      // genuinely empty queue still shows " + 0".
+      if (isPrefetchReadyFor(prefetchInfo)) {
+        plugin.app.registerCSS(
+          queueCounterId,
+          `
         .rn-queue__card-counter {
           /*visibility: hidden;*/
         }
@@ -361,7 +375,8 @@ export function registerCallbacks(plugin: ReactRNPlugin) {
         .dark .rn-queue__card-counter:after {
           content: ' + ${dueCount}';
         }`.trim()
-      );
+        );
+      }
 
       const shouldShowIncRem =
         (typeof intervalBetweenIncRem === 'number' &&
