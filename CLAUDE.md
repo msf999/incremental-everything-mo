@@ -39,9 +39,9 @@ When working on this repository, follow these rules in order:
 |---|---|
 | **Upstream repo** | `https://github.com/bjsi/incremental-everything` (via `hugomarins` fork) |
 | **Our fork** | `https://github.com/msf999/incremental-everything-mo` |
-| **Last synced upstream commit** | `5f8ccdd` — _Merge pull request #306 from hugomarins/main_ (synced 2026-08-10) |
+| **Last synced upstream commit** | `9d2ea3a` — _Merge pull request #307 from hugomarins/main_ (synced 2026-08-15) |
 | **Our first custom commit** | `88839e1` — _feat: add Rotation and First Added properties, make Open Editor advance queue_ |
-| **Branch** | `main` is the fork trunk; the current work sits on `merge/upstream-5f8ccdd` until Runbook Step 6 lands it |
+| **Branch** | `main` is the fork trunk; the current work sits on `merge/upstream-9d2ea3a` until Runbook Step 6 lands it |
 
 ---
 
@@ -193,13 +193,22 @@ This file has grown into the most heavily customised widget. All changes are add
 - `src/register/events.ts` — QueueEnter calls `calculateDueIncRemStats` and passes `.count` + `.priorityBuckets`.
 - `src/register/callbacks.ts` — the live `GetNextCard` counter path (excludes already-seen rems) now calls `registerQueueCounter(plugin, filtered.length, getDueIncRemPriorityBuckets(filtered))` instead of inlining the CSS, keeping both counter paths consistent.
 
-**Merge rule:** If upstream changes `calculateDueIncRemCount`, re-apply the rename to `calculateDueIncRemStats` + bucket return (or wrap it). Keep `registerQueueCounter`'s optional `priorityBuckets` param and **both** call sites (events.ts QueueEnter + callbacks.ts GetNextCard) passing buckets, so the distribution doesn't flicker between the two paths. Buckets use the standard `priority` field (0-100) and `Date.now() >= nextRepDate` due semantics (`isIncRemDue`).
+> ⚠️ **PARTLY SUPERSEDED (2026-08-15, `9d2ea3a` sync).** The `callbacks.ts` call site is GONE:
+> upstream's rewritten `GetNextCard` writes the same ` + N` counter CSS inline from its own
+> `readDueCount()`, and Deviation 14 had already moved the distribution out of the counter. Only the
+> **events.ts QueueEnter** call site still passes buckets (for the console line). Do not re-add a
+> `registerQueueCounter` call to `callbacks.ts` — it would double-write the same CSS id.
+
+**Merge rule:** If upstream changes `calculateDueIncRemCount`, re-apply the rename to `calculateDueIncRemStats` + bucket return (or wrap it). Keep `registerQueueCounter`'s optional `priorityBuckets` param and the **events.ts QueueEnter** call site passing buckets. Buckets use the standard `priority` field (0-100) and `Date.now() >= nextRepDate` due semantics (`isIncRemDue`).
 
 ### 10. Equal-priority tiebreak by `nextRepDate` (`callbacks.ts`, `IncRemTable.tsx`, `sorting.ts`)
 
 **What changed:** Added a deterministic secondary sort key so that when two or more Incremental Rems share the same priority, the **most overdue** one (smallest `nextRepDate`) is ordered first. Previously priority was the only sort key, so ties fell back to arbitrary KB load order (stable sort) or got shuffled by sorting randomness. The new key is additive — it only orders items that were already tied on the primary key. Three sort sites:
 
-- `src/register/callbacks.ts` — the authoritative live-queue selector. The `_.sortBy(allIncrementalRem, …)` in `GetNextCard` passes **two projections as separate arguments**: `_.sortBy(allIncrementalRem, primaryKey, (incRem) => incRem.nextRepDate)`. The primary projection is unchanged (scope index in `in-order` mode, else `priority`); in `in-order` mode the scope index is unique per rem, so the `nextRepDate` tiebreak never engages there. **⚠️ remeda gotcha:** `_` is **remeda** (`import * as _ from 'remeda'`), not lodash — `sortBy` takes projections as *separate args*, **not** a lodash array of iteratees; `_.sortBy(arr, [fn1, fn2])` makes remeda read the array as a `[projection, order]` pair and throw `TypeError: comparator is not a function`, crashing `GetNextCard` so **no IncRems appear in the queue** (the `9e2a2bb` bug; fixed in the `0.2.277` Fix below). **(Post `be390d5` merge)** the old uniform random-swap block that ran after the sort was replaced by upstream's `applyPriorityWeightedLottery(filtered, sortingRandomness, weightK)` (skipped in `in-order` mode). Our tiebreak still sets the base order the lottery runs on top of.
+- `src/lib/queue_prefetch.ts` — **(moved here by the `9d2ea3a` sync; it was `callbacks.ts`)** the
+  authoritative live-queue selector. Upstream lifted selection out of `GetNextCard` into the prefetch
+  builder, so the tiebreak lives in `buildQueuePrefetch`'s `_.sortBy` — same remeda multi-projection
+  form, same gotcha. Bug-hunt #15's scope-index `Map` was re-applied alongside it. The `_.sortBy(allIncRems, …)` passes **two projections as separate arguments**: `_.sortBy(allIncrementalRem, primaryKey, (incRem) => incRem.nextRepDate)`. The primary projection is unchanged (scope index in `in-order` mode, else `priority`); in `in-order` mode the scope index is unique per rem, so the `nextRepDate` tiebreak never engages there. **⚠️ remeda gotcha:** `_` is **remeda** (`import * as _ from 'remeda'`), not lodash — `sortBy` takes projections as *separate args*, **not** a lodash array of iteratees; `_.sortBy(arr, [fn1, fn2])` makes remeda read the array as a `[projection, order]` pair and throw `TypeError: comparator is not a function`, crashing `GetNextCard` so **no IncRems appear in the queue** (the `9e2a2bb` bug; fixed in the `0.2.277` Fix below). **(Post `be390d5` merge)** the old uniform random-swap block that ran after the sort was replaced by upstream's `applyPriorityWeightedLottery(filtered, sortingRandomness, weightK)` (skipped in `in-order` mode). Our tiebreak still sets the base order the lottery runs on top of.
 - `src/components/IncRemTable.tsx` — the **"Queue Order"** sort (the `sortBy === 'queueOrder'` branch) sorts `a.priority - b.priority || a.nextRepDate - b.nextRepDate` before the randomness step, so the table preview mirrors the live queue. The separate user-selectable "priority" **column** sort is intentionally left unchanged. **(Post `be390d5`)** upstream did **not** touch this file, so its randomness step still uses the old uniform swaps rather than the new lottery — a minor preview-vs-live divergence; aligning it to `applyPriorityWeightedLottery` is an optional follow-up.
 - `src/lib/sorting.ts` — `applySortingCriteria` (used by Priority Review Documents for both IncRems and cards) sorts `a.priority - b.priority || ((a as any).nextRepDate ?? 0) - ((b as any).nextRepDate ?? 0)`. The `?? 0` guard keeps flashcards (no `nextRepDate`) in their prior stable order while IncRems get most-overdue-first. **(Post `be390d5`)** the result is then passed to upstream's `applyPriorityWeightedLottery(sorted, randomness, weightK)` (it replaced the old uniform-swap loop). **`DEFAULT_RANDOMNESS` follows upstream** — `0` → `0.1` (be390d5 sync) → **`0.2`** (`5f8ccdd` sync), so the tiebreak is the deterministic base order but ~20% of slots get the priority-weighted lottery on top — it is **no longer strict by default** (set randomness to 0 to make it strict).
 
@@ -292,19 +301,19 @@ Fix options, if it is ever worth doing: (1) make `ExtractViewer`'s background cl
 
 | Field | Value |
 |---|---|
-| **Base (last synced)** | `5f8ccdd` — _Merge PR #306_ (synced 2026-08-10) |
-| **Target (upstream HEAD)** | `5f8ccdd` — **caught up, no pending delta** |
-| **Our HEAD** | `cf5a72c` on `merge/upstream-5f8ccdd`, **plus a large uncommitted working tree** (Deviations 11 and 13-14: fork gates, settings rework, queue info bar, priority chip). `main` is 225 commits behind and nothing is pushed — Runbook Step 6 is still open, gated on in-app smoke tests. |
-| **Delta size** | none pending (next sync: `git fetch upstream` then re-run the runbook) |
+| **Base (last synced)** | `9d2ea3a` — _Merge PR #307_ (synced 2026-08-15) |
+| **Target (upstream HEAD)** | `9d2ea3a` — **caught up as of 2026-08-15**; re-check with `git fetch upstream` |
+| **Our HEAD** | `77a6b0a` on `merge/upstream-9d2ea3a`, working tree CLEAN. `main` is ~230 commits behind and nothing is pushed — Runbook Step 6 is still open. |
+| **Delta size** | none pending. The `9d2ea3a` sync was 27 commits / 48 files / +6176-661, 7 conflicts (next sync: `git fetch upstream` then re-run the runbook). |
 
-**Last sync's themes** (for reference; the next delta will differ — re-recon at Step 3):
-the settings-architecture rewrite (native RemNote settings → a plugin-owned typed store + "IE Settings"
-popup: `getIESetting` / `useIESetting` / `useIESettingOptional`, 12 setting IDs deregistered, Mastery Drill
-flipped to opt-in); priority bands + PDF highlight badges; powerup-slot damage recovery for RemNote's
-storage overhaul (raw slot scan/dump/repair); listify + heading assignment; **PDF state consolidated into
-`pdf_state.ts` behind a `pdfState` powerup slot** (the `getCurrentPageKey` → `getIncrementalReadingPosition`
-migration); history notes/edit/import; read points + hybrid Reader↔Outline queue view; synced-storage
-shrink; and a MkDocs documentation site. Upstream also reset its version numbering to `1.0.x`.
+**Last sync's themes** (`5f8ccdd..9d2ea3a`, for reference; the next delta will differ — re-recon at Step 3):
+**the GetNextCard rewrite around a prefetch buffer** (new `lib/queue_prefetch.ts`) — upstream measured
+RemNote's callback deadline at ~1s (993ms landed, 1088ms dropped) and moved selection off the callback
+so it answers from module state in ~0-1ms, adding `verifyPreviousDecision` / `confirmServed` /
+`rollbackServed` so a candidate RemNote silently drops goes back on the buffer instead of being burned;
+**a slim cache projection** (`allIncrementalRemSlimKey` + `writeIncRemCaches`) that queue selection now
+reads *exclusively*; per-KB history shards; a card-priority snapshot/persistence layer; and
+local-storage ceiling probes.
 
 > The exact per-file conflict set is confirmed at execution time in **Step 3** (GitHub omits the
 > inline file list for a diff this large, so it must be enumerated locally after `git fetch`).
@@ -343,7 +352,7 @@ Only files the fork has modified can conflict. Reference: the "Current Deviation
 | `src/widgets/index.tsx` | low | Deviation 13: `installForkGates` + `registerForkWidgets` calls + import. |
 | `src/lib/open_editor_link_tag.ts` | none | Fork-only new file — cannot conflict. |
 | `src/components/buttons/SplitButton.tsx` | none | Fork-only new file — cannot conflict. |
-| `src/lib/incremental_rem/cache.ts` | **HIGH** | 2026-08-13 fix: `updateIncrementalRemCache` **merges** onto the cached entry and `safeParse`-gates the result; its param is `Partial<IncrementalRem> & {remId}`. Upstream's version REPLACES — re-accepting it silently restores the vanishing-rem bug. |
+| `src/lib/incremental_rem/cache.ts` | **HIGH** | 2026-08-13 fix: `updateIncrementalRemCache` **merges** onto the cached entry and `safeParse`-gates the result; its param is `Partial<IncrementalRem> & {remId}`. Upstream's version REPLACES — re-accepting it silently restores the vanishing-rem bug. Plus `withCacheLock` (#44). **2026-08-15:** every fork write must go through upstream's `writeIncRemCaches`, which updates the full cache AND the slim projection; queue selection reads ONLY the slim key, so a writer that skips it silently feeds the queue stale priorities and due dates. |
 | `src/widgets/priority_light.tsx` | low | 2026-08-13 fix: the optimistic write passes a genuine partial (no `as any`); relies on cache.ts merging. |
 | `src/widgets/priority.tsx` | low | 2026-08-13 fix: the optimistic write no longer fabricates `nextRepDate: Date.now()` on the `!incRemInfo` path. |
 | `src/lib/action_guard.ts` | none | Fork-only new file (2026-08-14) — the drop-if-in-flight guard for queue commands. |
@@ -355,6 +364,9 @@ Only files the fork has modified can conflict. Reference: the "Current Deviation
 | `src/widgets/editor_review.tsx` | low | Deviation 13 (`pdfReader` gate on `PageControls`); #13 stamp now records the priority this function WROTE (`newPriority`), not the pre-write read. |
 | `src/lib/history_edit.ts` | low | #13: uses `priorityStampFor` rather than a raw `priority:`. |
 | `src/lib/queue_session.ts` | low | Deviation 13: `pushIncRemEvent` returns early when `sessionAnalytics` is off (#21). |
+| `src/lib/queue_prefetch.ts` | **HIGH** | **New upstream file, fork-edited 2026-08-15.** Deviation 10's `nextRepDate` tiebreak and bug-hunt #15's scope-index `Map` live here now — selection moved out of `GetNextCard`. Same remeda multi-projection rule; the lodash array form is the `9e2a2bb` crash. |
+| `src/widgets/increm_notes_sidebar.tsx` | low | 2026-08-15: `'rem'` is deliberately NOT in `DOCUMENT_TYPES` — rem-type reaches the sidebar only via the ✎ toggle (`isRemExtract`). With it in the set the sidebar auto-followed every rem-type IncRem and stacked rems on top of each other. |
+| `src/widgets/flashcard_history.tsx` / `rem_history.tsx` | low | Keep upstream's `entryId` const AND the fork's `export` on the component (Deviation 13). |
 | `CLAUDE.md` | none | Fork-only doc, absent upstream — cannot conflict. |
 | `src/components/ExtractViewer.tsx` | **HIGH** | Deviation 11: the **verbatim `be390d5` file** + the `✎` sidebar toggle. Upstream rewrote this file after that commit, so expect a wholesale conflict; keep ours unless upstream passes Deviation 11's re-test. |
 | `src/register/settings.ts` | **HIGH** | Deviation 1: the three `COLLAPSE_TOP_BAR_CSS` selectors must use `pluginIframeSelector`. |
@@ -1768,4 +1780,119 @@ fork-changed files were missing conflict-map rows (`webpack.config.js` the sharp
 stated the superseded rotation rule (`< 1 day`, which would silently disable `Rotation: 0`);
 Deviation 14 omitted `QueueDistribution`'s measurement pass. **In-app smoke tests are still
 outstanding — none of the 21 agents ran the plugin.**
+
+---
+
+### 2026-08-15 — Merge (upstream sync to `9d2ea3a`) + in-app testing
+
+**Upstream commit(s):** `5f8ccdd` to `9d2ea3a` (PR #307; 27 commits, 48 files, +6176/-661)
+**Conflicts resolved:** `README.md`, `public/manifest.json`, `src/lib/incremental_rem/cache.ts`, `src/register/callbacks.ts`, `src/register/events.ts`, `src/widgets/flashcard_history.tsx`, `src/widgets/rem_history.tsx` (7 of 48)
+**Custom code preserved:** Yes — adapted (one wholesale re-application, see Notes)
+**Compilation verified:** Yes — `tsc` **13**, unchanged baseline; production build + validate + zip pass; webpack still excludes the 23 gate-denied bundles; deny-list ids all still resolve.
+
+**What upstream shipped.** The headline is a rewrite of `GetNextCard` around a **prefetch buffer**
+(new `lib/queue_prefetch.ts`). Upstream measured RemNote's callback deadline at ~1s — *"993ms landed,
+1088ms was dropped"* — and moved selection off the callback so it answers from module state in ~0-1ms
+with no bridge traffic, adding `verifyPreviousDecision` / `confirmServed` / `rollbackServed` so a
+candidate RemNote silently drops returns to the buffer instead of being consumed. Also: a **slim cache
+projection** (`allIncrementalRemSlimKey` + `writeIncRemCaches`) that queue selection now reads
+*exclusively*, per-KB history shards, and a card-priority snapshot layer.
+
+**Resolutions:**
+- `README.md` — fork-owned (Deviation 12), kept wholesale.
+- `public/manifest.json` — kept fork `id`/`name`/`repoUrl`/`unlisted`; version **1.0.44** (ours was
+  already ahead of upstream's 1.0.39, so bumped rather than regressed).
+- `flashcard_history.tsx` / `rem_history.tsx` — kept upstream's new `entryId` const AND the fork's
+  `export` (Deviation 13's combined History tab).
+- `cache.ts` — kept `withCacheLock` and the merge + `safeParse` gate, but routed every write through
+  upstream's `writeIncRemCaches`. This one matters: queue selection now reads only the slim key, so a
+  fork writer that updated just `allIncrementalRemKey` would silently feed the queue stale priorities.
+- `events.ts` — kept the Deviation 9 bucket call AND upstream's new `primeQueuePrefetch`.
+- `callbacks.ts` — **took upstream's rewritten `GetNextCard` wholesale** (the runbook's "adapt
+  manually, never auto-resolve" case) and re-applied the fork's deviations onto it: all **18**
+  plugin-scoped CSS selectors re-pointed at `pluginIframeSelector`, and the queue item's `pluginId`
+  resolved from the fork's manifest id. Both would otherwise have silently reverted to upstream's
+  hardcoded id.
+
+**Moved, not lost:** Deviation 10's `nextRepDate` tiebreak and bug-hunt #15's scope-index `Map`
+followed the selection logic into `queue_prefetch.ts`.
+
+**Superseded and deliberately dropped:** the fork's `GetNextCard` latency instrumentation (upstream's
+`startTimer` / `callSeq` / `verifyPreviousDecision` is strictly better) and Deviation 9's
+`callbacks.ts` call site (upstream writes the same ` + N` counter inline).
+
+**Measured after the merge:** `GetNextCard` answers in **0-1ms** (was 291ms on a 2010-IncRem KB);
+the prefetch builds ~3 verified candidates in 5-163ms; upstream's history sharding migrated 733
+entries cleanly; `🔁 same slot asked again` fires exactly as upstream documents.
+
+---
+
+### ⚠️ STILL OPEN — RemNote regression: an all-IncRem queue shows "you have finished all your cards"
+
+**User-confirmed still present after the `9d2ea3a` merge (2026-08-15). Accepted and parked — we wait
+for RemNote or upstream. Do not spend more time on it without new evidence.**
+
+When every flashcard is done and only IncRems remain, opening the queue renders RemNote's completion
+screen and the IncRems never appear. Decompiling RemNote's queue bundle showed why: `loadCards`
+commits `currentCard = null` and renders that screen **before** the plugin is asked — `GetNextCard`
+is reached only from a fire-and-forget "full" preload — and `numRemainingCards()` does not count the
+`pendingPluginCard` it stores, so a late answer is unreachable. Its nine sibling card providers all
+count their held cards; only the plugin one does not.
+
+Ruled out on our side, each with evidence: the `pluginId` (correct id confirmed in-app, and the fork
+returned upstream's wrong literal for four working months); latency (0-1ms post-merge, 25-291ms
+before); our recent changes (reproduced on the published GitHub build); and SDK version skew (we are
+on the newest ever published, `0.0.46` from June 2024).
+
+**Workaround for the user:** start the queue somewhere with at least one due flashcard — a document's
+Practice button, or practice-ahead. Once the loop is running, IncRems come through normally,
+including after RemNote's own cards run out.
+
+---
+
+### 2026-08-15 — Fix (in-app testing: two gating bugs, and a missed QueueEnter)
+
+**Upstream commit(s):** N/A (local)
+**Conflicts resolved:** None
+**Custom code preserved:** Yes
+**Compilation verified:** Yes (`tsc` 13; production build + validate + zip pass)
+
+First real in-app testing of the fork, driven through a Chrome DevTools MCP session. Twenty-one
+static review agents had missed all three of these.
+
+- `src/widgets/priority.tsx` — **the cardSurface gating INVERTED a third flag.**
+  `showAddCardPriorityButton` is defined as *"IncRem section shown, but neither card section is"*, so
+  gating `showCardSection` and `showInheritanceSection` to false flipped it TRUE for every IncRem,
+  putting a "Set Card Priority for Inheritance" button — which writes exactly the CardPriority tags
+  the gating exists to suppress — into the ⚡ popup on every queue item. The fix made the problem
+  *more* visible, not less.
+- `src/widgets/increm_notes_sidebar.tsx` — `'rem'` was in `DOCUMENT_TYPES`, so the sidebar rendered
+  for every rem-type IncRem whether or not the ✎ toggle had been pressed. Once open it re-rendered
+  onto each new queue item, painting the previous rem and the current one on top of each other, and
+  contradicting Deviation 11's "nothing auto-opens the sidebar".
+- `src/register/events.ts` — **QueueEnter was missed entirely on a hard page-load into
+  `/flashcards`** (a bookmark, or a reload while reviewing): the plugin is still booting when the
+  event fires. No scope, no session caches, no counter, no injection, for that whole session. The
+  handler is now extracted to `runQueueEnter` and re-run by an activation bootstrap that **waits for
+  `inc_rem_cache_fully_loaded`** — without the wait it read an empty cache and confidently reported
+  "0 due IncRems" on a 2010-IncRem KB.
+
+**Verified in-app and working:** the queue counter and its band distribution (counts summing exactly
+to the counter, ringed band tracking each item's priority, live decrement after a review); the
+already-processed row (Deviation 8) including its schedule-neutral tooltips; the offset picker
+(clearable input, unit switching, `3 weeks → Sat, Sep 5 (21d)`); the invalid-rotation amber warning on
+real data; the `(OpenLink)` flow (external tab opened, Rem document correctly suppressed, queue
+advanced); the ✎ sidebar pause/resume; the settings popup and its rewritten Queue Info Bar
+description; the native panel reduced to the fork's signpost; all 27 omnibar commands prefixed and
+renamed; and the distribution wrapping intact at a 420px viewport.
+
+**Known cosmetic issue, not fixed:** at ~420px the queue toolbar's P-chip overlaps RemNote's card
+counter. Desktop is unaffected and upstream's chip has the same behaviour.
+
+**Not testable this way, still outstanding:** true mobile — RemNote blocks its web app on a mobile
+user-agent, and the plugin's `isMobile` comes from `getOperatingSystem()` returning `ios`/`android`,
+which only the native app reports. So the `allExceptMobile` info-bar path, the chip's mobile modes and
+forced light mode remain unverified. Also untested: the `Ctrl+G` / `Opt+T` / `Opt+B` key *bindings*
+(synthetic key events do not reach RemNote's top document from a plugin iframe), Dismiss, and
+Review-in-Editor's now-gated PDF controls.
 

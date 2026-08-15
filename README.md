@@ -117,6 +117,11 @@ cards run out.
 **Workaround:** start the queue somewhere that has at least one due flashcard — a document's
 **Practice** button, or practice-ahead — and your Incremental Rems will come through as usual.
 
+Still present after syncing with upstream on 2026-08-15, which rewrote this area (the plugin now
+answers RemNote in about a millisecond instead of a few hundred). That ruled out speed as the cause
+and confirmed the problem is on RemNote's side, so the fork is waiting on a fix there rather than
+working around it further.
+
 ## Intentionally different / removed
 
 - Upstream's green **🎯 Target Incremental Rem** boxed read-only queue view is replaced by the editable document view described above.
