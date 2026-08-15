@@ -278,12 +278,20 @@ Checked against this fork:
 - **The fork's own mitigations are ACTIVE and directly on point.** The whole
   `UNREADABLE_PRIORITY_FALLBACK` chain — `priorityStampFor`, `seedPriorityForTimer`, the `P?` chip and
   the neutral info bar — exists precisely because a slot can be unreadable, which is this bug.
-- **The scan/repair TOOLING is DENIED.** `scanKbForDetachedSlots`, `repairDetachedCardPriorities` and
-  `testDeleteOrphanProperties` live in the `debug` widget, and `probe-slot-api` /
-  `dump-raw-powerup-slots` are commands — all on the `debugTools` deny-list. The code is still in the
-  bundle-less source, so **if this KB ever shows detached slots, flip `FORK_FEATURES.debugTools` to
-  `true`, run the scan/repair, then flip it back.** No standing change needed; recorded so nobody has
-  to rediscover where the tooling went.
+- **The scan/repair TOOLING is now ENABLED as insurance (user decision, 2026-08-15).**
+  `scanKbForDetachedSlots`, `repairDetachedCardPriorities` and `testDeleteOrphanProperties` live in
+  the `debug` widget, and `probe-slot-api` / `dump-raw-powerup-slots` are commands — all under
+  `FORK_FEATURES.debugTools`, which was `false` and is now **`true`** so the tooling is reachable
+  without a code change if this KB ever shows detached slots.
+
+  > 🔔 **REMINDER FOR A FUTURE SESSION: turn `debugTools` back OFF when it is no longer wanted.**
+  > It was enabled purely as insurance against the slot-detachment bug above, not because the
+  > workflow needs it. Cost of leaving it on: 7 extra `Incremental: …` entries in the omnibar
+  > (`debug-incremental-everything`, `probe-slot-api`, `dump-raw-powerup-slots`,
+  > `test-console-function`, `jump-to-rem-by-id`, `test-mobile-detection`,
+  > `debug_clear_flashcard_history`) and 2 extra widget bundles — the zip went 12.0MB → 12.6MB,
+  > 78 → 82 entries. Nothing here runs on its own; every entry is user-invoked, so it is inert
+  > until used. Ask the fork owner before flipping it back.
 
 **Merge rule:** at a sync, upstream's `commands.ts`/`widgets.ts`/`menus.ts` merge clean (untouched by this deviation) — but **re-verify the deny-list ids still match** (upstream renames = silently re-enabled feature; grep each denied id post-merge) and re-apply the flag edits if upstream rewrites the touched regions. If upstream adds new commands/widgets in a disabled subsystem, add their ids to the group. **Popup check:** the IE Settings popup renders only `FORK_IE_LAYOUT` ids, so a newly added upstream setting will not appear until its id is added there (deliberate — new upstream settings are opt-in for this fork).
 

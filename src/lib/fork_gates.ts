@@ -56,8 +56,24 @@ export const FORK_FEATURES = {
   readPoints: false,
   /** Video debug surface (viewers stay compiled for data safety). */
   videoSurface: false,
-  /** Debug / diagnostics / raw-slot repair commands and widgets. */
-  debugTools: false,
+  /**
+   * Debug / diagnostics / raw-slot repair commands and widgets.
+   *
+   * ⚠️ **ON as an insurance policy (2026-08-15, user decision) — turn it back OFF
+   * once it is no longer wanted.** This is the only route to the slot-detachment
+   * scan and repair tooling (`scanKbForDetachedSlots`,
+   * `repairDetachedCardPriorities`, `testDeleteOrphanProperties` in the `debug`
+   * widget, plus `probe-slot-api` and `dump-raw-powerup-slots`), which exists
+   * because RemNote's storage/sync overhaul re-pointed powerup property
+   * references at orphaned slot Rems — see the two REMNOTE_SUPPORT_*.md reports
+   * in the repo root.
+   *
+   * The cost of leaving it on: 7 extra `Incremental: …` entries in the omnibar
+   * and 2 extra widget bundles in `dist`/the zip (webpack derives its exclusions
+   * from this deny-list). Nothing here runs on its own — every one of these is
+   * user-invoked — so it is inert until used.
+   */
+  debugTools: true,
   /** Priority Review Documents (Opt+Shift+R). */
   priorityReviewDocs: false,
   /** Fork-built combined History sidebar tab replacing the three upstream tabs. */
