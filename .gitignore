@@ -5,3 +5,11 @@ dist-ssr
 *.local
 *.zip
 site/
+
+# MCP / local agent tooling — never committed (local dev setup, absolute paths,
+# and potentially credentials). Applies to any MCP config, not just this one.
+.mcp.json
+.mcp/
+mcp.json
+*.mcp.json
+.claude/settings.local.json
