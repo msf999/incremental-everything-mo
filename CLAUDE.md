@@ -247,6 +247,15 @@ Fix options, if it is ever worth doing: (1) make `ExtractViewer`'s background cl
 
 **What changed:** `README.md` is replaced wholesale: a fork notice linking upstream (`bjsi/incremental-everything` + the MkDocs site), followed by a human-readable description of every fork difference and how to use it (Rotation/First Added, the queue bar + offset picker, `(OpenLink)`, shortcuts, outline-first queue + ✎ sidebar toggle, auto-skip, the queue info bar's priority distribution and the queue priority chip, ordering tiebreak, the single settings window, omnibar command naming, removed items, versioning). `README_ES.md` and `README_PT-BR.md` are **deleted** (translations are upstream's concern, not the fork's).
 
+**Also deleted (2026-08-15): `.github/workflows/docs.yml`.** Upstream's "Deploy MkDocs to GitHub
+Pages" action, which publishes *their* documentation site (`hugomarins.github.io/incremental-everything`)
+on every push touching `docs/**` or `mkdocs.yml`. For an unlisted personal fork it publishes nothing
+anyone reads and burns Actions minutes on every push. It was also the sole blocker on the fork's first
+push: GitHub refuses to let an OAuth token *create* a workflow file without `workflow` scope, and the
+fork owner preferred deleting it over widening the token. Same trade-off as the translated READMEs —
+expect a modify/delete conflict whenever upstream touches it, and re-delete. `.github/pull_request_template.md`
+and `.github/ISSUE_TEMPLATE/` are untouched; neither needs that scope.
+
 **Merge rule:** `README.md` is **fork-owned** — at a sync, resolve conflicts by keeping ours wholesale; upstream README changes are only a prompt to check whether a new upstream feature deserves a mention in our "different from upstream" framing. If upstream re-adds or modifies `README_ES.md` / `README_PT-BR.md`, delete them again (expect modify/delete conflicts). Per AI System Instruction 10, refresh `README.md` whenever fork behaviour changes.
 
 ### 13. Fork feature gates — unused upstream subsystems disabled (`fork_gates.ts` + flag edits)
@@ -376,6 +385,7 @@ Only files the fork has modified can conflict. Reference: the "Current Deviation
 | `src/components/IncRemTable.tsx` | low | Deviation 10: "Queue Order" `nextRepDate` tiebreak. |
 | `README.md` | reconcile | **Fork-owned** (Deviation 12): keep ours wholesale; upstream's README changes only prompt a content review. |
 | `README_ES.md` / `README_PT-BR.md` | reconcile | Deleted by the fork (Deviation 12) — re-delete if upstream re-adds; expect modify/delete conflicts. |
+| `.github/workflows/docs.yml` | reconcile | Deleted by the fork (Deviation 12) — upstream's MkDocs→GitHub Pages action, useless for an unlisted fork and the reason the first push needed `workflow` token scope. Re-delete if upstream re-adds; expect modify/delete conflicts. |
 | `src/lib/fork_gates.ts` | none | Fork-only new file (Deviation 13) — cannot conflict; re-verify deny-list ids after each sync. |
 | `src/widgets/history_sidebar.tsx` | none | Fork-only new file (Deviation 13) — cannot conflict. |
 | `src/widgets/incremental_history.tsx` / `flashcard_history.tsx` / `rem_history.tsx` | low | Deviation 13: `export` on the component + `if (!FORK_FEATURES.combinedHistoryTab) renderWidget(X)` guard + `FORK_FEATURES` import. |
