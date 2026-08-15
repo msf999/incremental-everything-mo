@@ -1041,7 +1041,16 @@ function Priority() {
   const safeIncAbsPriority = incAbsPriority ?? fastPriorityValues?.inc ?? incRemInfo?.priority ?? defaultIncPriority ?? 50;
   const safeCardAbsPriority = cardAbsPriority ?? fastPriorityValues?.card ?? cardInfo?.priority ?? defaultCardPriority ?? 50;
 
-  const showAddCardPriorityButton = showIncSection && !showCardSection && !showInheritanceSection;
+  // FORK (2026-08-15, found by in-app testing): gate this too.
+  //
+  // It is defined as "IncRem section shown, but neither card section is" — so
+  // gating showCardSection and showInheritanceSection on FORK_FEATURES.cardSurface
+  // made BOTH false and flipped this to TRUE for every IncRem, surfacing a
+  // "Set Card Priority for Inheritance" button that writes exactly the
+  // CardPriority tags the gating exists to prevent. The cardSurface fix made this
+  // MORE visible, not less; static review did not catch the inverted dependency.
+  const showAddCardPriorityButton =
+    FORK_FEATURES.cardSurface && showIncSection && !showCardSection && !showInheritanceSection;
 
   /* Deprecated: We now always show the inheritance section even if no cards exist, to allow setting future priority.
   if (!showIncSection && !showCardSection && !showInheritanceSection) {

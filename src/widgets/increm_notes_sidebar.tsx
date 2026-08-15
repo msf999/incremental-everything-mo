@@ -23,11 +23,20 @@ import {
 import { findAllRemsForPDF, findAllRemsForHTML, isHtmlSource } from '../lib/pdfUtils';
 
 // Types where showing the document notes sidebar makes sense.
-// 'rem' is included so plain Incremental-Rem extracts get an EDITABLE notes
-// surface here: the in-queue ExtractViewer is read-only because an editable
-// DocumentViewer can't hold focus inside the queue (Flashcard) pane, so all
-// rem editing is routed to this sidebar pane (which holds focus correctly).
-const DOCUMENT_TYPES = new Set(['pdf', 'html', 'pdf-highlight', 'html-highlight', 'rem']);
+//
+// FORK (2026-08-15, found by in-app testing): 'rem' is deliberately NOT in this
+// set. Rem-type extracts still get an editable surface here, but ONLY via
+// `isRemExtract` below — i.e. only when the ✎ toggle in ExtractViewer has
+// published this rem's id to `incremNotesSidebarRemIdKey`.
+//
+// With 'rem' in the set, `isDocumentType` was true for EVERY rem-type IncRem
+// whether or not the user had opened the sidebar, so once it was open it
+// re-rendered itself onto each new queue item — painting the previous rem and
+// the current one on top of each other (doubled property rows, two Inc Rems
+// counters, the old rem's children bleeding through). It also contradicted
+// Deviation 11, whose entire point is that the ✎ toggle is the only way in and
+// that nothing auto-opens the sidebar.
+const DOCUMENT_TYPES = new Set(['pdf', 'html', 'pdf-highlight', 'html-highlight']);
 const HIGHLIGHT_TYPES = new Set(['pdf-highlight', 'html-highlight']);
 
 interface DiscoveredIncRem {
