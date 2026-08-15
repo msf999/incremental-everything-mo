@@ -367,7 +367,9 @@ export function registerQueueEnterListener(
   resetSessionItemCounter: ResetSessionItemCounter
 ) {
 
-  plugin.event.addListener(AppEvents.QueueEnter, undefined, async ({ subQueueId }) => {
+  // FORK (2026-08-15): extracted from the listener so the activation bootstrap
+  // below can run the exact same pre-calculation. See the note there.
+  const runQueueEnter = async ({ subQueueId }: { subQueueId?: string }) => {
     console.log('QUEUE ENTER: Starting session pre-calculation for subQueueId:', subQueueId);
 
     // Safety net: clear stale incremental queue flag from a previous session
@@ -601,7 +603,61 @@ export function registerQueueEnterListener(
       // nothing in this handler depends on it, and the callback degrades to a
       // flashcard turn if it is asked before the first build lands.
       void primeQueuePrefetch(plugin, subQueueId);
-  });
+  };
+
+  plugin.event.addListener(AppEvents.QueueEnter, undefined, runQueueEnter);
+
+  // FORK (2026-08-15, found by in-app testing): run the same pre-calculation when
+  // the plugin activates while the queue is ALREADY open.
+  //
+  // QueueEnter fires once, when RemNote opens the queue. On a hard page-load
+  // straight into /flashcards — a bookmark, or a reload while reviewing — the
+  // plugin is still booting at that moment, so it registers this listener after
+  // the event has already gone by and never hears it. The consequences are
+  // silent and total for that session: no document scope, no session caches, no
+  // ` + N` counter, and GetNextCard answering from an empty prefetch, so no
+  // IncRem is ever injected. Observed directly: a reload on /flashcards produced
+  // no `QUEUE ENTER` line at all, and the 6-8s IncRem cache load on a large KB
+  // widens the window considerably.
+  //
+  // Fire-and-forget and idempotent: the handler resets session state before it
+  // rebuilds, so the worst case if RemNote *did* deliver the event is that the
+  // pre-calculation runs twice.
+  void (async () => {
+    try {
+      const url = await plugin.window.getURL();
+      if (!url || !url.includes('/flashcards')) return;
+
+      // WAIT for the IncRem cache before running, or the pre-calculation reads an
+      // empty cache and produces a session with 0 due IncRems — worse than doing
+      // nothing, because the counter and prefetch are then confidently wrong.
+      // Verified: without this the bootstrap logged "Incremental Rem cache is
+      // empty!" and "0 due IncRems" on a 2010-IncRem KB, because the cache load
+      // takes 6-8s and had only just started.
+      const CACHE_WAIT_MS = 45000;
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < CACHE_WAIT_MS) {
+        if (await plugin.storage.getSession<boolean>('inc_rem_cache_fully_loaded')) break;
+        await new Promise((r) => setTimeout(r, 400));
+      }
+      const loaded = await plugin.storage.getSession<boolean>('inc_rem_cache_fully_loaded');
+      if (!loaded) {
+        console.warn(
+          '[QueueEnter] activation bootstrap: IncRem cache still not loaded after ' +
+            `${CACHE_WAIT_MS}ms — running anyway, the counter may read low.`
+        );
+      }
+      console.log(
+        '[QueueEnter] plugin activated while the queue was already open — ' +
+          `running session pre-calculation now (the event itself was missed; waited ${
+            Date.now() - startedAt
+          }ms for the cache).`
+      );
+      await runQueueEnter({ subQueueId: undefined });
+    } catch (err) {
+      console.error('[QueueEnter] activation bootstrap failed', err);
+    }
+  })();
 }
 
 // Shared Set for coordinating between QueueCompleteCard and GlobalRemChanged listeners
