@@ -13,6 +13,7 @@ import { IncRemTable, IncRemWithDetails, DocumentInfo } from '../components';
 import type { IncRemListState } from '../components';
 import { buildDocumentScope } from '../lib/scope_helpers';
 import { seedPriorityForTimer } from '../lib/incremental_rem/types';
+import { FORK_FEATURES } from '../lib/fork_gates';
 import {
   BarChart,
   Bar,
@@ -899,7 +900,7 @@ export function IncRemMainView() {
             selectedDocumentId={selectedDocumentId}
             onDocumentFilterChange={handleDocumentFilterChange}
             onPriorityChange={handlePriorityChange}
-            onReviewInEditor={handleReviewInEditor}
+            onReviewInEditor={FORK_FEATURES.editorReviewTimer ? handleReviewInEditor : undefined} // FORK (2026-10-10): option
             initialState={initialState}
             onStateChange={handleStateChange}
             sortingRandomness={initialData?.randomness ?? 0}

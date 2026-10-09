@@ -44,7 +44,7 @@ async function handleEditorReview(
   plugin: RNPlugin,
   remId: string,
   intervalDays: number,
-  newPriority: number,
+  newPriority: number | undefined, // FORK (#13): undefined = unreadable priority and an untouched slider — leave the slot alone
   reviewTimeMinutes: number,
   /** When set, the handler writes this timestamp as nextRepDate instead of the computed one. */
   overrideNextRepDate?: number,
@@ -58,7 +58,7 @@ async function handleEditorReview(
   if (!incRem) return null;
 
   // recordHistory: false — the rep entry appended below carries this priority.
-  await setIncRemPriority(plugin, rem, newPriority, { recordHistory: false });
+  if (newPriority !== undefined) await setIncRemPriority(plugin, rem, newPriority, { recordHistory: false });
 
   const computedNextRepDate = Date.now() + intervalDays * 1000 * 60 * 60 * 24;
   const newNextRepDate = overrideNextRepDate ?? computedNextRepDate;
@@ -102,7 +102,7 @@ async function handleEditorReview(
     // unreadable it recorded nothing at all, losing the repair `setIncRemPriority`
     // had just made. newPriority is the user's explicit slider value and is
     // unconditionally persisted, so it is always the truthful stamp.
-    priority: newPriority,
+    ...(newPriority !== undefined ? { priority: newPriority } : {}), // FORK (#13)
     eventType: 'executeRepetition' as const,
   };
 
@@ -111,7 +111,12 @@ async function handleEditorReview(
 
   const newHistory: IncrementalRep[] = [...(incRem.history || []), repEntry];
 
-  await updateSRSDataForRem(plugin, remId, newNextRepDate, newHistory);
+  // FORK (2026-08-14 #9, extended 2026-10-10): a failed write must not look like a saved review.
+  const persisted = await updateSRSDataForRem(plugin, remId, newNextRepDate, newHistory);
+  if (!persisted) {
+    await plugin.app.toast('Repetition NOT saved — nothing was recorded. Please try again.');
+    return null;
+  }
   await addToIncrementalHistory(plugin, remId);
 
   const updatedIncRem = await getIncrementalRemFromRem(plugin, rem);
@@ -217,6 +222,9 @@ const EditorReviewInput: React.FC<{
   const [leavePrompt, setLeavePrompt] = useState<PendingTimerStart | null>(null);
   const [carryMinutes, setCarryMinutes] = useState<string>('0');
   const leaveResolvedRef = useRef(false);
+  const leaveInFlightRef = useRef(false); // FORK (bb758b8 sync): drop-if-in-flight for the leave overlay
+  const seededFromFallbackRef = useRef(false); // FORK (#13): slider seeded from the unreadable-priority placeholder
+  const priorityTouchedRef = useRef(false);
   const carryToTargetMsRef = useRef(0);
   const [customIntervalMode, setCustomIntervalMode] = useState(false);
   const [customInterval, setCustomInterval] = useState<string>('');
@@ -269,6 +277,7 @@ const EditorReviewInput: React.FC<{
       // Set the calculated interval from the scheduling algorithm
       setDays(String(scheduleData?.newInterval || 1));
       setPriority(incRemData?.priority ?? 10);
+      seededFromFallbackRef.current = incRemData?.prioritySource === 'fallback'; // FORK (#13)
 
       // Store the current nextRepDate for regression checks
       if (incRemData) {
@@ -407,7 +416,9 @@ const EditorReviewInput: React.FC<{
       const numMinutes = parseFloat(reviewTimeMinutes) || 0;
 
       if (!isNaN(numDays)) {
-        const result = await handleEditorReview(plugin, remId, numDays, priority, numMinutes, dateOverride, note);
+        // FORK (#13): never launder the unreadable-priority placeholder into the slot.
+        const priorityToWrite = seededFromFallbackRef.current && !priorityTouchedRef.current ? undefined : priority;
+        const result = await handleEditorReview(plugin, remId, numDays, priorityToWrite, numMinutes, dateOverride, note);
         if (result) {
           await recordIncRemRep(plugin, remId, Math.round(numMinutes * 60 * 1000));
 
@@ -564,7 +575,10 @@ const EditorReviewInput: React.FC<{
   const resolveLeave = useCallback(
     async (mode: LeaveTurnMode) => {
       if (!activeReviewKind) return;
-
+      // FORK (bb758b8 sync): drop-if-in-flight, like the queue buttons (2026-08-14 #5/#6).
+      if (leaveInFlightRef.current) return;
+      leaveInFlightRef.current = true;
+      try {
       const carry = Math.max(0, parseFloat(carryMinutes) || 0);
       const carrySeconds = Math.round(carry * 60);
       carryToTargetMsRef.current = carrySeconds * 1000;
@@ -588,6 +602,9 @@ const EditorReviewInput: React.FC<{
       const pending = leavePrompt;
       setLeavePrompt(null);
       await executeStartTimer(pending?.intervalOverride, pending?.dateOverride);
+      } finally {
+        leaveInFlightRef.current = false;
+      }
     },
     [plugin, activeReviewKind, activeReviewRemId, activeReview, carryMinutes, leavePrompt, executeStartTimer]
   );
@@ -670,6 +687,7 @@ const EditorReviewInput: React.FC<{
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat) return; // FORK (bb758b8 sync): a held key must not resolve the overlay twice
       // The leave overlay owns the keyboard while it is up: Enter takes the
       // non-destructive option (item stays due), Esc backs out entirely.
       if (leavePrompt) {
@@ -1150,7 +1168,7 @@ const EditorReviewInput: React.FC<{
 
             <PrioritySlider
               value={priority}
-              onChange={setPriority}
+              onChange={(v) => { priorityTouchedRef.current = true; setPriority(v); }} // FORK (#13)
               useAbsoluteColoring
             />
 

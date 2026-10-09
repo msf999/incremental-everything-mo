@@ -1,6 +1,7 @@
 import React from 'react';
 import { renderWidget, usePlugin, WidgetLocation, useRunAsync, RNPlugin } from '@remnote/plugin-sdk';
 import { IncrementalRep, repCountsForStats } from '../lib/incremental_rem/types';
+import { FORK_FEATURES } from '../lib/fork_gates';
 import { formatDuration } from '../lib/utils';
 import dayjs from 'dayjs';
 import { getIncrementalRemFromRem } from '../lib/incremental_rem';
@@ -1060,7 +1061,8 @@ function RepetitionHistoryPopup() {
                         >
                             Show Aggregated
                         </button>
-                        {!!cardCount && cardCount > 0 && remId && (
+                        {/* FORK (2026-10-10): the flashcard history popup is denied (cardSurface). */}
+                        {FORK_FEATURES.cardSurface && !!cardCount && cardCount > 0 && remId && (
                             <button
                                 onClick={async () => {
                                     // Open only — NEVER close first. closePopup

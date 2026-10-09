@@ -14,6 +14,7 @@ import type { IncRemListState } from '../components';
 import '../style.css';
 import '../App.css';
 import { seedPriorityForTimer } from '../lib/incremental_rem/types';
+import { FORK_FEATURES } from '../lib/fork_gates';
 
 const INC_REM_LIST_STATE_KEY = 'inc-rem-list-state';
 
@@ -281,7 +282,7 @@ export function IncRemList() {
       onRemClick={handleRemClick}
       onClose={handleClose}
       onPriorityChange={handlePriorityChange}
-      onReviewInEditor={handleReviewInEditor}
+      onReviewInEditor={FORK_FEATURES.editorReviewTimer ? handleReviewInEditor : undefined} // FORK (2026-10-10): option
       initialState={initialState}
       onStateChange={handleStateChange}
       sortingRandomness={initialData?.randomness ?? 0}

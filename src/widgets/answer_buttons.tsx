@@ -1160,16 +1160,19 @@ export function AnswerButtons() {
               pre-write history and append, losing a repetition or recording two for one
               review. The fork's own notes already described the lock as covering "every action
               button". */}
-          <Button
-            disabled={isBusy}
-            onClick={() =>
-              runExclusive(async () => {
-                await handleReviewInEditorRem(plugin, rem, remType);
-              })
-            }
-          >
-            <div style={buttonStyles.label}>📝 Review with Timer</div>
-          </Button>
+          {/* FORK (2026-10-10): Review with Timer is an option (FORK_FEATURES.editorReviewTimer). */}
+          {FORK_FEATURES.editorReviewTimer && (
+            <Button
+              disabled={isBusy}
+              onClick={() =>
+                runExclusive(async () => {
+                  await handleReviewInEditorRem(plugin, rem, remType);
+                })
+              }
+            >
+              <div style={buttonStyles.label}>📝 Review with Timer</div>
+            </Button>
+          )}
 
           <Button
             onClick={() => setNoteOpen((o) => !o)}
