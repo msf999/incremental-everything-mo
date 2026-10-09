@@ -426,6 +426,15 @@ export function registerCallbacks(plugin: ReactRNPlugin) {
 
         .dark .rn-queue__card-counter:after {
           content: ' + ${dueCount}';
+        }
+
+        /* FORK (2026-10-10): RemNote's Beautiful queue variant draws its counter as
+           "N Left" in a different element (.queue__count, inside the chrome bar), so
+           the suffix above never applied there. Scoped to the Beautiful chrome so it
+           can never double up in Compact. */
+        .queue-beautiful-chrome .queue__count:after {
+          content: '+ ${dueCount}';
+          margin-left: 0.3em; /* .queue__count is a flex row, which trims a leading space */
         }`.trim()
         );
       }

@@ -18,7 +18,7 @@
 // getWidgetContext().cardId — see the poll below. (Listening to QueueLoadCard
 // alone, as this file did until 2026-08-14, left every sibling after the first
 // showing the anchor card's stats.)
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AppEvents,
   renderWidget,
@@ -45,6 +45,7 @@ import {
 import { useIESetting } from '../lib/settings';
 import { IncrementalRem } from '../lib/incremental_rem';
 import { resolveQueuePriority } from '../lib/queue_priority_source';
+import { reportQueueInfoBarHeight } from '../lib/queue_info_bar_dock';
 import { calculateRelativePercentile, percentileToHslColor } from '../lib/utils';
 
 function QueueInfoBar() {
@@ -210,6 +211,29 @@ function QueueInfoBar() {
     [cardId, (ctx as any)?.cardId]
   );
 
+  // FORK (Deviation 14, 2026-10-10): report the rendered height so the Beautiful
+  // queue can reserve exactly that much room above the answer buttons and dock the
+  // bar there (lib/queue_info_bar_dock.ts). 0 while it renders nothing — an IncRem
+  // turn, or the bar switched off — so no band is reserved then. Hooks, so they sit
+  // above the early returns below.
+  const rendersBar = !!info && !isIncrementalQueueActive && shouldShow;
+  const barObserverRef = useRef<ResizeObserver | null>(null);
+  const barRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      barObserverRef.current?.disconnect();
+      barObserverRef.current = null;
+      if (!el) return;
+      const observer = new ResizeObserver(() => {
+        void reportQueueInfoBarHeight(plugin, el.offsetHeight);
+      });
+      observer.observe(el);
+      barObserverRef.current = observer;
+    },
+    [plugin]
+  );
+  useEffect(() => {
+    if (!rendersBar) void reportQueueInfoBarHeight(plugin, 0);
+  }, [plugin, rendersBar]);
 
   if (!info) return null;
   if (isIncrementalQueueActive) return null;
@@ -231,7 +255,7 @@ function QueueInfoBar() {
       : QUEUE_PRIORITY_NEUTRAL_COLOR;
 
   return (
-    <div style={{ padding: QUEUE_INFO_BAR_OUTER_PADDING }}>
+    <div ref={barRef} style={{ padding: QUEUE_INFO_BAR_OUTER_PADDING }}>
       <div style={getQueueInfoBarStyle(priorityColor)}>
         {/* The card's band is ringed in the bar — for a card, that is its
             document's priority, the same value the toolbar chip shows. */}

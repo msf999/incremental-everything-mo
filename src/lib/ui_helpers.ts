@@ -82,6 +82,13 @@ export function registerQueueCounter(
     .dark .rn-queue__card-counter:after {
       content: '${suffix}';
     }
+
+    /* FORK (2026-10-10): the Beautiful queue variant's counter is .queue__count
+       ("N Left") inside the chrome bar; scoped there so Compact never doubles up. */
+    .queue-beautiful-chrome .queue__count:after {
+      content: '${suffix.trim()}';
+      margin-left: 0.3em; /* .queue__count is a flex row, which trims a leading space */
+    }
   `.trim();
 
   plugin.app.registerCSS(queueCounterId, css);

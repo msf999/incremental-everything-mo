@@ -1,6 +1,6 @@
 # Mo's Incremental Everything
 
-> **This is a personal fork of [Incremental RemNote](https://github.com/bjsi/incremental-everything)** (formerly *Incremental Everything*) by Jamesb, Hugomarins and Jonathangimeno. All credit for the plugin itself — incremental reading, prioritization, scheduling, analytics, and everything else it does — belongs upstream; read their README and [documentation site](https://hugomarins.github.io/incremental-remnote/) first. This fork is **unlisted** on RemNote, tracks upstream (currently synced to upstream v1.0.150, commit `bb758b8` of 2026-10-08; this fork is version 1.0.151), and layers the changes described below on top.
+> **This is a personal fork of [Incremental RemNote](https://github.com/bjsi/incremental-everything)** (formerly *Incremental Everything*) by Jamesb, Hugomarins and Jonathangimeno. All credit for the plugin itself — incremental reading, prioritization, scheduling, analytics, and everything else it does — belongs upstream; read their README and [documentation site](https://hugomarins.github.io/incremental-remnote/) first. This fork is **unlisted** on RemNote, tracks upstream (currently synced to upstream v1.0.150, commit `bb758b8` of 2026-10-08; this fork is version 1.0.152), and layers the changes described below on top.
 
 This document only describes **what is different from upstream**. If a feature isn't mentioned here, it works exactly as in the original plugin.
 
@@ -100,6 +100,10 @@ The percentage is a **rank, not a share**. Since a lower priority number means m
 A flashcard has no priority of its own, so it shows **its document's** — and only that one document's: the lookup stops there and never walks further up, so an item inside a document you haven't prioritised shows no chip at all. If that source was an Incremental Rem and has since been dismissed, the chip shows the last priority its review history recorded. Clicking opens the priority editor, but only on an Incremental Rem — under a flashcard the number belongs to the document, not the card.
 
 Set it under **General → Queue → Priority Chip in Queue Top Bar**: always show (the default) / always hide / only on web / only on mobile.
+
+### Both queue variants
+
+Everything here works in RemNote's **Compact** and **Beautiful** queue variants. In Beautiful: the priority chip sits in the top bar's action row (next to the +, ✎ and ⋯ icons) rather than in the card's corner where upstream draws its badge; the info bar under flashcards is docked just above the answer buttons, below RemNote's AI Explanation, exactly as upstream docks its own bar; and the counter reads **`N Left + M`**, M being the due Incremental Rems (upstream's suffix only appears in Compact). An Incremental Rem fills the card down to the button row, and the Options row and offset picker grow the button area while the item shrinks to make room.
 
 ### Deterministic ordering among equal priorities
 

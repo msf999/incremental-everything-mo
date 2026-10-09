@@ -33,10 +33,23 @@ import { cardInfoBarDockCssId, cardInfoBarHeightKey, pluginIframeSelector } from
    cannot read an element's height. */
 
 // FORK (Deviation 1): the fork's manifest id differs from upstream's; build from the shared selector.
-const IFRAME = `${pluginIframeSelector}[src*="widgetName=card_info_bar&"]`;
-// The innermost widget wrapper that holds our iframe.
-const WRAPPER = `.fade-in-first-load:has(${IFRAME}):not(:has(.fade-in-first-load ${IFRAME}))`;
-const ROOT = `.spacedRepetition:has(> .queue-beautiful-scroll-surface ${IFRAME})`;
+// FORK (Deviation 14, 2026-10-10): the selectors are built per widget, because the
+// fork's own queue_info_bar (lib/queue_info_bar_dock.ts) docks with these same
+// rules — one copy of the RemNote-DOM-dependent CSS serves both bars. Defaults
+// reproduce upstream's card_info_bar behaviour exactly.
+export type DockTarget = {
+  widgetName: string;
+  /** Pad the host wrapper when the bar sits in-flow (upstream's bar has no padding of its own). */
+  inFlowPadding: boolean;
+};
+const DEFAULT_TARGET: DockTarget = { widgetName: 'card_info_bar', inFlowPadding: true };
+function dockSelectors(widgetName: string) {
+  const IFRAME = `${pluginIframeSelector}[src*="widgetName=${widgetName}&"]`;
+  // The innermost widget wrapper that holds our iframe.
+  const WRAPPER = `.fade-in-first-load:has(${IFRAME}):not(:has(.fade-in-first-load ${IFRAME}))`;
+  const ROOT = `.spacedRepetition:has(> .queue-beautiful-scroll-surface ${IFRAME})`;
+  return { IFRAME, WRAPPER, ROOT };
+}
 
 // Before the widget reports its height. One row of the bar.
 const DEFAULT_BAR_HEIGHT = 38;
@@ -47,15 +60,20 @@ const SUGGESTED_TAB_HEIGHT = 25;
 // Matches the controls' px-8 on desktop, so the bar lines up with the buttons.
 const SIDE_INSET = 32;
 
-export function buildCardInfoBarDockCss(barHeight: number): string {
+export function buildCardInfoBarDockCss(barHeight: number, target: DockTarget = DEFAULT_TARGET): string {
+  const { IFRAME, WRAPPER, ROOT } = dockSelectors(target.widgetName);
   // A bar that renders nothing (no priority, IncRem queue) reserves no space.
   const band = barHeight > 0 ? barHeight + GAP_ABOVE_BUTTONS : 0;
   return `
   /* Spacing from the card above, when the bar sits in-flow (Compact queue, or
      any queue where the dock rules below don't apply). */
-  ${WRAPPER} {
+  ${
+    target.inFlowPadding
+      ? `${WRAPPER} {
     padding-top: 30px;
     padding-bottom: 10px;
+  }`
+      : ''
   }
 
   ${ROOT} {

@@ -31,6 +31,7 @@ import {
 import { registerTrueFalseClusterTracker, registerTrueFalseCommands, registerTrueFalsePowerups } from '../register/true_false';
 import { autoRefreshPriorityQueueId, enableHideInQueueIntegrationId, enableFlashcardPrioritisationId, pdfHighlightBordersReloadKey, priorityBandColorsReloadKey, cardInfoBarHeightKey } from '../lib/consts';
 import { registerCardInfoBarDockCss } from '../lib/card_info_bar_dock';
+import { installQueueInfoBarDock } from '../lib/queue_info_bar_dock'; // FORK (Deviation 14)
 import { refreshKbPriorityQueueAtStartup } from '../lib/priority_review_document/queue_doc';
 import { bandVerboseLogsEnabled } from '../lib/priority_bands';
 import { registerIncrementalRemTracker } from '../register/tracker';
@@ -143,6 +144,7 @@ async function onActivate(plugin: ReactRNPlugin) {
   if (FORK_FEATURES.pdfReader) registerWindowSourcesPresence(plugin); // FORK (Deviation 13): feeds only pin-source-quote
   await registerWidgets(plugin);
   await registerForkWidgets(plugin); // FORK (Deviation 13): combined History tab
+  installQueueInfoBarDock(plugin); // FORK (Deviation 14): dock queue_info_bar in the Beautiful queue
 
   // Register CSS rules
   // PDF highlight CSS is (re)registered reactively: the "peek" toggle (command +
