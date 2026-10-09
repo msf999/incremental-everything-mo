@@ -1,6 +1,6 @@
 # Mo's Incremental Everything
 
-> **This is a personal fork of [Incremental Everything](https://github.com/bjsi/incremental-everything)** by Jamesb, Hugomarins and Jonathangimeno. All credit for the plugin itself — incremental reading, prioritization, scheduling, analytics, and everything else it does — belongs upstream; read their README and [documentation site](https://hugomarins.github.io/incremental-everything/) first. This fork is **unlisted** on Remnote, tracks upstream (currently synced to upstream v1.0.39, commit `9d2ea3a` of 2026-08-12), and layers the changes described below on top.
+> **This is a personal fork of [Incremental RemNote](https://github.com/bjsi/incremental-everything)** (formerly *Incremental Everything*) by Jamesb, Hugomarins and Jonathangimeno. All credit for the plugin itself — incremental reading, prioritization, scheduling, analytics, and everything else it does — belongs upstream; read their README and [documentation site](https://hugomarins.github.io/incremental-remnote/) first. This fork is **unlisted** on RemNote, tracks upstream (currently synced to upstream v1.0.150, commit `bb758b8` of 2026-10-08; this fork is version 1.0.151), and layers the changes described below on top.
 
 This document only describes **what is different from upstream**. If a feature isn't mentioned here, it works exactly as in the original plugin.
 
@@ -12,7 +12,7 @@ Both appear as visible properties under every Incremental Rem.
 
 ### Rotation
 
-A plain-text scheduling override. Give a Rem a `Rotation` like `10 days`, `3 weeks`, `6 months`, `4.5w` — or just `10`, which means days — and reviewing it with **Next** always reschedules it that far out, bypassing the SRS scheduler entirely. Set it to `Default` (or leave it empty) for normal scheduling.
+A plain-text scheduling override. Give a Rem a `Rotation` like `10 days`, `3 weeks`, `6 months`, `4.5w` — or just `10`, which means days — and reviewing it with **Next** always reschedules it that far out, bypassing the SRS scheduler entirely. Set it to `Default` (or leave it empty) for normal scheduling — which is upstream's: the **Multiplier** scheduler by default (next interval = the item's current interval × 1.5) or the **Saturating Curve**, chosen in the settings window or per Rem in the Reschedule popup. A Rotation overrides either.
 
 Rotations are whole days: anything *between* zero and a day (`2 hours`, `30m`, `0.5`) is rejected, because the next-review date is stored as a day reference and sub-day precision cannot survive it.
 
@@ -37,13 +37,15 @@ The answer-button row is rebuilt into six buttons, identical on desktop and mobi
 - **Open Editor** (green outline) — records the review **and opens the Rem in-app** (no browser tab), so you can process it immediately. Scheduling happens before navigation, so the review is never lost.
 - **Skip** (purple outline) — advances **without recording a review or rescheduling** (the item stays due).
 - **Dismiss** (red outline) — as upstream.
-- **⚙️ Options** toggles a second row holding the power-user tools: Reschedule, Change Priority, Review with Timer, Scroll to Highlight, Scroll to Bookmark, Review Note, Read point, the Web-Clipper URL button, and Help.
+- **⚙️ Options** toggles a second row holding the power-user tools: Reschedule, Change Priority, Review Note, the Web-Clipper URL button (when the item has one), and Help. Review with Timer, Scroll to Highlight / Bookmark and Read point join the row only when their subsystems are switched on (see *Options, off by default* and *Slimmed down* below).
 
 ### Custom scheduling: the chevron offset picker
 
 **Next**, **Open Editor** and **Skip** are split buttons. Pressing the **▼ chevron** opens a picker row beneath the buttons: a −/+ stepper with a typeable number, a **Days / Weeks / Months** toggle (months are calendar-aware), a live preview of the landing date, and one Apply button that reads back your choice (e.g. *"Next in 3 weeks"*). Enter applies, Escape closes.
 
 The chosen offset does whatever its button does: **Next** records a review at that offset, **Open Editor** does the same and opens the editor, **Skip** reschedules with **no** review recorded.
+
+A picked offset is a **one-off**. On the Multiplier scheduler the item keeps growing from the interval it already had, so *Next in 3 weeks* does not turn a 5-day item into a 3-week one — upstream's Reschedule popup is the place to set a new base interval. A Skip-with-offset likewise moves only the date and leaves the item's rhythm alone.
 
 ### `(OpenLink)` titles
 
@@ -59,7 +61,7 @@ This needs **popups allowed for RemNote** in your browser, especially with more 
 | `Opt+T` | Next item in queue (alternate binding, same as upstream's `Cmd/Ctrl+Right`) |
 | `Opt+B` | Skip — advance without recording a review |
 
-Two upstream defaults collided with Chrome DevTools, which matters when RemNote runs in a browser tab, and were moved: **Review in Editor** `Ctrl+Shift+J` → `Ctrl+Shift+E`, and **Toggle Ignore Tag** `Ctrl+Shift+I` → `Ctrl+Shift+G`.
+Two upstream defaults collided with Chrome DevTools, which matters when RemNote runs in a browser tab, and were moved: **Review in Editor** `Ctrl+Shift+J` → `Ctrl+Shift+E` (a command that is off by default here now, see below), and **Toggle Ignore Tag** `Ctrl+Shift+I` → `Ctrl+Shift+G`.
 
 ## Queue behaviour
 
@@ -108,35 +110,45 @@ When several due items share a priority, the **most overdue comes first** (both 
 - Upstream's green **🎯 Target Incremental Rem** boxed read-only queue view is replaced by the editable document view described above.
 - Upstream's "Open Editor in New Tab" button is replaced by the in-app Open Editor flow.
 - The Saturday/Monday quick-reschedule dropdowns became the granular offset picker.
+- Upstream's `×1.5` / `curve` scheduler chip on the Next and Open Editor buttons is not shown; the sublabel keeps just the next date.
+- Upstream's spoiler protection (**Hold Back Spoiler IncRems**, which holds an Incremental Rem back while one of its own flashcards is due) is **off** by default here — upstream ships it on. Switch it on under General → Queue.
 - The translated READMEs (ES, PT-BR) are removed in this fork; see upstream for translations.
 
 ## Slimmed down in this fork
 
 This fork disables the upstream subsystems its owner doesn't use (everything remains in the code behind a single flags file, `src/lib/fork_gates.ts` — any of it can be re-enabled by flipping one boolean):
 
-- **All PDF/reader tooling** — the in-reader highlight toolbar (bookmark / extract / tag-as-incremental / peek), PDF Control Panel, source popups (Opt+O / Opt+Shift+O), reading-position memory, and the in-queue reader itself: queue items always show the rem outline (no 📄 Read document button). Read sources with RemNote's own reader.
-- **Flashcard features** — the card info bar, batch card priority, card-maintenance commands (the flashcard-prioritisation engine was already off), and cloze-creation commands. The editor's priority widget is on/off here rather than upstream's three modes, since its third mode existed only to add a card-priority editor beside rems with flashcards. The **Change Priority** popups (⚡ in the queue, and `Opt+P`) no longer offer a *Card Priority* section either: this fork never creates `CardPriority` tags, so the section had nothing to act on.
+- **All PDF/reader tooling** — the in-reader highlight toolbar (bookmark / extract / tag-as-incremental / peek), PDF Control Panel, source popups (Opt+O / Opt+Shift+O), reading-position memory, source pins (Pin Source Quote, AI transcribe), the Logos Bible Software bridge, the tag-rems-with-images scan, and the in-queue reader itself: queue items always show the rem outline (no 📄 Read document button). Read sources with RemNote's own reader.
+- **Flashcard features** — the card info bar, batch card priority, card-maintenance commands (the flashcard-prioritisation engine was already off), True/False cards, the Card Enablement Audit and empty-Extra-Card-Detail cleanup, the hidden-slot migration commands, the flashcard repetition-history popup (so no 🃏 Cards History button in the repetition-history popup), and cloze-creation commands. The editor's priority widget is on/off here rather than upstream's three modes, since its third mode existed only to add a card-priority editor beside rems with flashcards. The **Change Priority** popups (⚡ in the queue, and `Opt+P`) no longer offer a *Card Priority* section either: this fork never creates `CardPriority` tags, so the section had nothing to act on.
 - **Analytics** — Priority/Weighted Shields, Practiced Queues and its per-card session tracking. (The Study Dashboard is kept.)
-- **Editor utilities** — heading/outline restructuring, listify/bulletize, text-case converter, reference finder, read points.
-- **Misc** — video debug surface, all debug/repair commands, Priority Review Documents.
+- **Editor utilities** — heading/outline restructuring, listify/bulletize, text-case converter, Convert Extracted Markup, reference finder, read points.
+- **Misc** — video debug surface, all debug/repair commands, Priority Review Documents and the Priority Queue, the Plugin Hub sidebar panel and onboarding tips, queue cooling, and the Beautiful-queue corner priority badge (the fork's own chip covers it).
 - **Modes & native settings** — Full performance mode is retired (the fork always runs Light) and the startup "running in Light Mode" banner is gone. RemNote's own plugin-settings panel now holds **no settings at all**, just a signpost row: every setting lives in the plugin's settings window (see below).
-- **Migration commands** — Import-with-History, and Copy/Paste Rem Sources (upstream groups the latter with the PDF tooling).
+- **Migration commands** — Import-with-History, Transfer IncRem Data to Parent, and Copy/Paste Rem Sources (upstream groups the latter with the PDF tooling).
+
+**Options, off by default** — merged from upstream but switched off; each is one boolean in the same flags file (or one setting):
+
+- **Review with Timer** — the 📝 button in the queue's Options row, the *Review in Editor* buttons in the IncRem table and list, and the `Ctrl+Shift+E` command (`editorReviewTimer`).
+- **Priority-change history** — upstream now records a history entry every time a priority changes; off here, so the repetition history stays a list of reviews (`priorityChangeHistory`).
+- **Media tools** — Localize External Media (store linked images/audio in RemNote, single or whole tree) and Cycle Image Size (`mediaTools`).
+- **Hold Back Spoiler IncRems** — a setting, visible under General → Queue, off by default (on upstream).
+- Upstream's **per-type schedulers and initial intervals** (documents / videos / highlights / rems) are hidden from the settings window; the general scheduler and interval apply to every type.
 
 **Changed:** the three history sidebar tabs (Incremental / Flashcard / Visited Rems) are merged into **one "History" tab** with collapsible sections. Kept: the 📚 Inc Rems counter under document titles, the No-IncRem queue timer, Sorting Criteria, all IncRem priority tools, and repetition history (Ctrl+Shift+H).
 
 
 ## Settings, in one window
 
-Every setting now lives in the plugin's own window — open it from the omnibar with **"Incremental: Settings"** (quick code `ies`). RemNote's plugin-settings panel carries only a pointer to it.
+Every setting now lives in the plugin's own window — open it from the omnibar with **"Incremental: Settings"** (quick code `is`). RemNote's plugin-settings panel carries only a pointer to it.
 
-The window is reorganised into **three sections** holding the 17 settings that still do something here (settings belonging to disabled subsystems are hidden, not deleted — their stored values survive):
+The window is reorganised into **three sections** holding the 19 settings that still do something here (settings belonging to disabled subsystems are hidden, not deleted — their stored values survive):
 
-1. **General** — split into *Queue* (queue info bar, priority chip, collapse top bar, isolated card view) and *Appearance* (priority widget in the editor, left borders, hidden tags, table badges).
-2. **Priority & Scheduling** — *Priority* (default IncRem priority, step size), then *Scheduling* (initial interval, the Beta-scheduler switch, and only the selected curve's parameters).
+1. **General** — split into *Queue* (queue info bar, priority chip, collapse top bar, isolated card view, spoiler hold-back) and *Appearance* (priority widget in the editor, left borders, hidden tags, table badges).
+2. **Priority & Scheduling** — *Priority* (default IncRem priority, step size), then *Scheduling* (initial interval, the Default Scheduler switch — Multiplier or Saturating Curve — the multiplier, and the curve's first-review and max intervals).
 3. **Advanced** — Hide-in-Queue integration, flashcard response-time limit.
 
-The Hide-in-Queue warning about duplicate powerups — the one thing here that can genuinely break the plugin — renders as a red callout rather than a sentence buried in the description. Note that moving that setting out of RemNote's panel resets it to its default (off); re-enable it here if you used it.
+The Hide-in-Queue warning about duplicate powerups — the one thing here that can genuinely break the plugin — renders as a red callout rather than a sentence buried in the description.
 
 ## Commands in the omnibar
 
-Every command this plugin registers is prefixed **`Incremental: `** in the omnibar, so they group together and are findable.
+Every command this plugin registers is prefixed **`Incremental: `** in the omnibar, so they group together and are findable (upstream's own `Incremental RemNote:` prefix is replaced, not stacked).
