@@ -12,6 +12,7 @@ import {
   incremNotesSidebarRemIdKey,
   currentIncrementalRemTypeKey,
 } from './consts';
+import { urgentPriorityLimit } from './consts'; // FORK (Deviation 9)
 import { IncrementalRem } from './incremental_rem';
 import { QueueSessionCache } from './card_priority';
 
@@ -74,6 +75,8 @@ export interface DueIncRemStats {
   count: number;
   /** Due IncRems split into priority buckets [0-10, 11-30, 31-60, 61-100]. */
   priorityBuckets: DueIncRemPriorityBuckets;
+  /** FORK (Deviation 9): due IncRems with priority below `urgentPriorityLimit` (10) — the bar's 0-band. */
+  urgentCount: number;
 }
 
 /**
@@ -115,6 +118,7 @@ export async function calculateDueIncRemStats(
   const toStats = (dueIncRems: IncrementalRem[]): DueIncRemStats => ({
     count: dueIncRems.length,
     priorityBuckets: getDueIncRemPriorityBuckets(dueIncRems),
+    urgentCount: dueIncRems.filter((rem) => rem.priority < urgentPriorityLimit).length,
   });
 
   // Priority Review Docs always calculate from scope

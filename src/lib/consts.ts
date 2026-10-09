@@ -467,6 +467,9 @@ export const cardInfoBarHeightKey = 'card-info-bar-height';
 // FORK (Deviation 14): the fork's queue_info_bar docks the same way (lib/queue_info_bar_dock.ts).
 export const queueInfoBarDockCssId = 'queue-info-bar-dock';
 export const queueInfoBarHeightKey = 'queue-info-bar-height';
+// FORK (Deviation 9, 2026-10-10): the queue counter's parenthesised figure counts the due
+// IncRems whose priority is BELOW this — the distribution bar's 0-band ("priority 9 and lower").
+export const urgentPriorityLimit = 10;
 export const collapseTopBarCssId = 'incremental-everything-collapse-top-bar'; // CSS registration ID
 export const incrementalQueueActiveKey = 'incremental-queue-active';
 export const activeHighlightIdKey = 'active-highlight-id-key';

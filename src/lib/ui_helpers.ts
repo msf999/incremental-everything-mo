@@ -63,13 +63,14 @@ export async function togglePdfHighlightBorders(plugin: ReactRNPlugin): Promise<
 export function registerQueueCounter(
   plugin: ReactRNPlugin,
   count: number,
-  priorityBuckets?: [number, number, number, number]
+  priorityBuckets?: [number, number, number, number],
+  urgentCount?: number // FORK (Deviation 9, 2026-10-10): due IncRems with priority below 10, shown in parentheses
 ): void {
   // FORK (Deviation 14): the bucket breakdown moved to the queue info bar, where
   // it can be labelled and colour-coded. The top counter keeps the plain count;
   // callers still pass buckets (used only for the console line below).
   const distribution = priorityBuckets ? ` (${priorityBuckets.join(', ')})` : '';
-  const suffix = ` + ${count}`;
+  const suffix = ` + ${count}` + (typeof urgentCount === 'number' ? ` (${urgentCount})` : '');
   const css = `
     .rn-queue__card-counter {
       /*visibility: hidden;*/

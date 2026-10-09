@@ -10,6 +10,7 @@ import {
   incRemDisabledDeviceKey,
   deferSpoilerIncRemsId,
 } from './consts';
+import { urgentPriorityLimit } from './consts'; // FORK (Deviation 9)
 import { getIESetting } from './settings';
 import { getIncrementalRemFromRem, IncrementalRem, SlimIncRem } from './incremental_rem';
 import {
@@ -133,6 +134,8 @@ type PrefetchState = {
   cleanExhausted: boolean;
   /** Due-and-in-scope count, for the queue counter CSS. */
   dueCount: number;
+  /** FORK (Deviation 9): how many of `dueCount` have priority below urgentPriorityLimit (10). */
+  urgentDueCount: number;
   cardsPerRem: CardsPerRem;
   /** Mirror of noIncRemTimerKey: ms timestamp, or null when no timer is set. */
   timerEndsAt: number | null;
@@ -173,6 +176,7 @@ const emptyState = (previous?: PrefetchState): PrefetchState => ({
   deferredBuffer: [],
   cleanExhausted: false,
   dueCount: 0,
+  urgentDueCount: 0,
   cardsPerRem: previous?.cardsPerRem ?? DEFAULT_CARDS_PER_REM,
   timerEndsAt: previous?.timerEndsAt ?? null,
   deviceDisabled: previous?.deviceDisabled ?? false,
@@ -231,6 +235,11 @@ export function readDueCount(): number {
   return state.dueCount;
 }
 
+// FORK (Deviation 9): the parenthesised figure of the queue counter.
+export function readUrgentDueCount(): number {
+  return state.urgentDueCount;
+}
+
 export function isPrefetchReadyFor(info: PrefetchQueueInfo): boolean {
   return state.ready && state.buildKey === makeBuildKey(info);
 }
@@ -273,6 +282,7 @@ export function takePrefetchedCandidate(
   state.pending = next;
   // Keep the queue counter honest between rebuilds; the next build recomputes it.
   if (state.dueCount > 0) state.dueCount--;
+  if (next.priority < urgentPriorityLimit && state.urgentDueCount > 0) state.urgentDueCount--; // FORK (Deviation 9)
   return next;
 }
 
@@ -313,12 +323,13 @@ function burn(plugin: ReactRNPlugin, remId: RemId) {
  */
 function noteIncRemDisplayed(plugin: ReactRNPlugin, remId: RemId) {
   if (state.seen.has(remId) || state.pending?.remId === remId) return;
-  const inBuffer = (list: SlimIncRem[]) => list.some((c) => c.remId === remId);
-  const wasBuffered = inBuffer(state.buffer) || inBuffer(state.deferredBuffer);
-  if (!wasBuffered) return;
+  const removed =
+    state.buffer.find((c) => c.remId === remId) ?? state.deferredBuffer.find((c) => c.remId === remId);
+  if (!removed) return;
   state.buffer = state.buffer.filter((c) => c.remId !== remId);
   state.deferredBuffer = state.deferredBuffer.filter((c) => c.remId !== remId);
   if (state.dueCount > 0) state.dueCount--;
+  if (removed.priority < urgentPriorityLimit && state.urgentDueCount > 0) state.urgentDueCount--; // FORK (Deviation 9)
   burn(plugin, remId);
   console.log(
     `🩹 IncRem ${remId} was on screen after all — removed from the prefetch buffer so it is not served again.`
@@ -366,6 +377,7 @@ export function rollbackServed(): SlimIncRem | null {
   state.pending = null;
   state.buffer.unshift(served);
   state.dueCount++;
+  if (served.priority < urgentPriorityLimit) state.urgentDueCount++; // FORK (Deviation 9)
   return served;
 }
 
@@ -724,6 +736,7 @@ export async function buildQueuePrefetch(
     // Deferred rems ARE still due — they are postponed within the session, not
     // excluded from it — so they stay in the counter.
     state.dueCount = filtered.length;
+    state.urgentDueCount = filtered.filter((c) => c.priority < urgentPriorityLimit).length; // FORK (Deviation 9)
     state.buildKey = makeBuildKey(info);
     state.ready = true;
 

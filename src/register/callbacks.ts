@@ -27,6 +27,7 @@ import {
   isPrefetchReadyFor,
   readCardsPerRem,
   readDueCount,
+  readUrgentDueCount, // FORK (Deviation 9)
   readGates,
   resetQueuePrefetch,
   rollbackServed,
@@ -397,6 +398,7 @@ export function registerCallbacks(plugin: ReactRNPlugin) {
       const intervalBetweenIncRem =
         typeof cardsPerRem === 'number' ? cardsPerRem + 1 : cardsPerRem;
       const dueCount = readDueCount();
+      const urgentDueCount = readUrgentDueCount(); // FORK (Deviation 9): the parenthesised figure
 
       // Queue counter suffix (" + N" due IncRems). Never awaited, as before.
       //
@@ -421,11 +423,11 @@ export function registerCallbacks(plugin: ReactRNPlugin) {
         }
 
         .light .rn-queue__card-counter:after {
-          content: ' + ${dueCount}';
+          content: ' + ${dueCount} (${urgentDueCount})';
         }
 
         .dark .rn-queue__card-counter:after {
-          content: ' + ${dueCount}';
+          content: ' + ${dueCount} (${urgentDueCount})';
         }
 
         /* FORK (2026-10-10): RemNote's Beautiful queue variant draws its counter as
@@ -433,7 +435,7 @@ export function registerCallbacks(plugin: ReactRNPlugin) {
            the suffix above never applied there. Scoped to the Beautiful chrome so it
            can never double up in Compact. */
         .queue-beautiful-chrome .queue__count:after {
-          content: '+ ${dueCount}';
+          content: '+ ${dueCount} (${urgentDueCount})';
           margin-left: 0.3em; /* .queue__count is a flex row, which trims a leading space */
         }`.trim()
         );

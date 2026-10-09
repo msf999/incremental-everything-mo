@@ -757,7 +757,12 @@ export function registerQueueEnterListener(
 
       // FORK (Deviation 9): pass the priority buckets too — the console line and
       // the fork's distribution depend on them.
-      registerQueueCounter(plugin, dueIncRemStats.count, dueIncRemStats.priorityBuckets);
+      registerQueueCounter(
+        plugin,
+        dueIncRemStats.count,
+        dueIncRemStats.priorityBuckets,
+        dueIncRemStats.urgentCount // FORK (Deviation 9): the parenthesised priority-below-10 figure
+      );
 
       // Prime the IncRem prefetch buffer LAST, once the document scope and the
       // session caches it depends on are all resolved. From here the GetNextCard
