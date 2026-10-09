@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   renderWidget,
   useSyncedStorageState,
@@ -13,12 +13,12 @@ import {
 import '../style.css';
 import '../App.css';
 import { PriorityBadge } from '../components';
+import { MasteryDrillCardList } from '../components/MasteryDrillCardList';
 import { getCardPriority, setCardPriority } from '../lib/card_priority';
 import { InlinePriorityEditor } from '../components/InlineEditors';
 import { useIESetting } from '../lib/settings';
 import { masteryDrillMinDelayMinutesId, oldItemThresholdId } from '../lib/consts';
-
-export type FinalDrillItem = string | { cardId: string; kbId?: string; addedAt?: number };
+import { FinalDrillItem, drillItemCardId, isDrillItemInKb } from '../lib/mastery_drill_audit';
 
 function FinalDrill() {
   const plugin = usePlugin();
@@ -26,6 +26,8 @@ function FinalDrill() {
 
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
   const [filteredIds, setFilteredIds] = useState<string[]>([]);
+  // Every item of this KB, cooling or not — what the card list shows.
+  const [kbItems, setKbItems] = useState<FinalDrillItem[]>([]);
   const [delayedCount, setDelayedCount] = useState<number>(0);
   const [oldItemsCount, setOldItemsCount] = useState<number>(0);
   const recheckTimerRef = useRef<ReturnType<typeof setTimeout>>();
@@ -50,9 +52,8 @@ function FinalDrill() {
       const results: { cardId: string; priority: number }[] = [];
       for (const item of finalDrillIdsRaw) {
         if (cancelled) return;
-        const isRelevant = typeof item === 'string' ? isPrimary : item.kbId === currentKbId;
-        if (!isRelevant) continue;
-        const cardId = typeof item === 'string' ? item : item.cardId;
+        if (!isDrillItemInKb(item, currentKbId, isPrimary)) continue;
+        const cardId = drillItemCardId(item);
         const card = await plugin.card.findOne(cardId);
         if (!card?.remId || cancelled) continue;
         const rem = await plugin.rem.findOne(card.remId);
@@ -70,8 +71,7 @@ function FinalDrill() {
     const toRemoveIds = new Set(
       lowPriorityCardData.filter(({ priority }) => priority > lowPriorityThreshold).map(({ cardId }) => cardId)
     );
-    const getCardId = (item: FinalDrillItem) => typeof item === 'string' ? item : item.cardId;
-    await setFinalDrillIdsRaw(finalDrillIdsRaw.filter(item => !toRemoveIds.has(getCardId(item))));
+    await setFinalDrillIdsRaw(finalDrillIdsRaw.filter(item => !toRemoveIds.has(drillItemCardId(item))));
     setShowClearLowPriorityView(false);
   };
 
@@ -96,6 +96,7 @@ function FinalDrill() {
       const currentKbId = currentKb._id;
 
       const activeIds: string[] = [];
+      const relevantItems: FinalDrillItem[] = [];
       let delayed = 0;
       let oldCount = 0;
       let earliestUnblock: number | undefined;
@@ -104,10 +105,10 @@ function FinalDrill() {
       const minDelayMs = minDelayMinutes * 60 * 1000;
 
       for (const item of finalDrillIdsRaw) {
-        const isRelevant = typeof item === 'string' ? isPrimary : item.kbId === currentKbId;
-        if (!isRelevant) continue;
+        if (!isDrillItemInKb(item, currentKbId, isPrimary)) continue;
+        relevantItems.push(item);
 
-        const cardId = typeof item === 'string' ? item : item.cardId;
+        const cardId = drillItemCardId(item);
         const addedAt = typeof item === 'string' ? undefined : item.addedAt;
 
         if (addedAt) {
@@ -127,6 +128,7 @@ function FinalDrill() {
 
       if (!cancelled) {
         setFilteredIds(activeIds);
+        setKbItems(relevantItems);
         setDelayedCount(delayed);
         setOldItemsCount(oldCount);
         setIsLoaded(true);
@@ -148,6 +150,131 @@ function FinalDrill() {
       clearTimeout(recheckTimerRef.current);
     };
   }, [finalDrillIdsRaw, plugin, oldItemThreshold, minDelayMinutes]);
+
+  // --- Resurrection guard ---------------------------------------------------------------
+  // RemNote's embedded <Queue> snapshots `cardIds` when its controller is built (QueueMain does
+  // `useState(() => new QueueController(..., {...props}, ...))`), so later prop updates never
+  // reach it. Worse: when that queue runs dry it clears its internal `usedCards` set and reloads
+  // the ORIGINAL snapshot. That is why a card taken out with "Remove from Drill" (or Edit Later,
+  // or rated Good) reappears later in the same session no matter how many times you remove it —
+  // removeCurrentCardFromQueue does drop it from the live queue, but the reload puts it back.
+  //
+  // The snapshot cannot be updated in place, so instead:
+  //   1. we freeze the list ourselves (queueCardIds) so our copy matches the controller's exactly;
+  //   2. anything in that snapshot which has since left the drill list is "stale" and gets skipped
+  //      the moment RemNote presents it again;
+  //   3. if the whole reloaded snapshot is stale, skipping alone would loop forever, so after a
+  //      few consecutive skips we remount the embed (queueEpoch) — remounting is the only way to
+  //      hand the controller a fresh card list. That fires QueueEnter again, so queue_session.ts
+  //      closes the drill session and opens a new one; that is expected, not a leak.
+  //
+  // Stale is derived as "snapshot minus live list" rather than "not in the live list" on purpose:
+  // a cluster anchor that was never in the drill list is never in the snapshot either, so it can
+  // never be skipped by mistake. See the Card Cluster note on removeCurrentFromDrill below.
+  const MAX_CONSECUTIVE_SKIPS = 3;
+  // Traces one line per card load. Off by default: the two paths that act (skip, rebuild) log
+  // unconditionally, so a resurrection still leaves a record without this. Flip it to true to
+  // watch the guard's bookkeeping on every card — stale/snapshot/live counts — when validating
+  // a change to it.
+  const DRILL_GUARD_DEBUG = false;
+  const [queueCardIds, setQueueCardIds] = useState<string[] | null>(null);
+  const [queueEpoch, setQueueEpoch] = useState(0);
+  const consecutiveSkipsRef = useRef(0);
+  const lastSkippedIdRef = useRef<string | null>(null);
+
+  // Seed (and after a rebuild, re-seed) the frozen list the embedded Queue is mounted with.
+  useEffect(() => {
+    if (!isLoaded) return;
+    if (filteredIds.length === 0) {
+      if (queueCardIds !== null) setQueueCardIds(null);
+      return;
+    }
+    if (queueCardIds === null) setQueueCardIds(filteredIds);
+  }, [isLoaded, filteredIds, queueCardIds]);
+
+  const staleQueueIds = useMemo(() => {
+    if (!queueCardIds) return new Set<string>();
+    const live = new Set(filteredIds);
+    return new Set(queueCardIds.filter((id) => !live.has(id)));
+  }, [queueCardIds, filteredIds]);
+
+  // Read through a ref, so the guard below evaluates staleness once per card load rather than
+  // re-running whenever the list changes. That distinction matters: a card you just rated Good
+  // leaves the list while it is still the current card, and re-evaluating then would skip
+  // whatever card the queue had already moved on to.
+  const staleQueueIdsRef = useRef(staleQueueIds);
+  useEffect(() => {
+    staleQueueIdsRef.current = staleQueueIds;
+  }, [staleQueueIds]);
+
+  // Same reason: the guard must not re-run when the list changes, so it reads the count through
+  // a ref rather than closing over it.
+  const filteredIdsRef = useRef(filteredIds);
+  useEffect(() => {
+    filteredIdsRef.current = filteredIds;
+  }, [filteredIds]);
+
+  const currentDrillCardId = useTrackerPlugin(
+    async (rp) => (await rp.storage.getSession<string>('finalDrillCurrentCardId')) ?? null,
+    []
+  );
+
+  useEffect(() => {
+    if (!currentDrillCardId || !queueCardIds) {
+      if (DRILL_GUARD_DEBUG && currentDrillCardId) {
+        console.log(`[MasteryDrill] guard: card ${currentDrillCardId} loaded while the queue is being rebuilt — standing by.`);
+      }
+      return;
+    }
+
+    if (DRILL_GUARD_DEBUG) {
+      console.log(
+        `[MasteryDrill] guard: card ${currentDrillCardId} loaded — stale=${staleQueueIdsRef.current.has(currentDrillCardId)}, snapshot=${queueCardIds.length}, live=${filteredIdsRef.current.length}, staleInSnapshot=${staleQueueIdsRef.current.size}`
+      );
+    }
+
+    if (!staleQueueIdsRef.current.has(currentDrillCardId)) {
+      consecutiveSkipsRef.current = 0;
+      lastSkippedIdRef.current = null;
+      return;
+    }
+    if (lastSkippedIdRef.current === currentDrillCardId) return;
+    lastSkippedIdRef.current = currentDrillCardId;
+
+    consecutiveSkipsRef.current += 1;
+    const skips = consecutiveSkipsRef.current;
+
+    if (skips > MAX_CONSECUTIVE_SKIPS) {
+      console.log(
+        `[MasteryDrill] ${MAX_CONSECUTIVE_SKIPS} stale cards in a row — the embedded queue reloaded its original card list. Rebuilding it from the current drill list (${filteredIdsRef.current.length} card${filteredIdsRef.current.length !== 1 ? 's' : ''}).`
+      );
+      consecutiveSkipsRef.current = 0;
+      lastSkippedIdRef.current = null;
+      setQueueCardIds(null);
+      setQueueEpoch((e) => e + 1);
+      return;
+    }
+
+    (async () => {
+      try {
+        // Confirm against RemNote's live controller before acting: if the queue has already moved
+        // past this card, removeCurrentCardFromQueue would drop an unrelated (unseen) card.
+        const live = await plugin.queue.getCurrentCard();
+        if (live?._id !== currentDrillCardId) {
+          if (DRILL_GUARD_DEBUG) {
+            console.log(`[MasteryDrill] guard: queue already moved past ${currentDrillCardId} (now ${live?._id ?? 'none'}) — not skipping.`);
+          }
+          return;
+        }
+        console.log(
+          `[MasteryDrill] Card ${currentDrillCardId} is no longer in the drill (or is cooling) but was presented again — skipping it (${skips}/${MAX_CONSECUTIVE_SKIPS}).`
+        );
+        await plugin.queue.removeCurrentCardFromQueue(false);
+      } catch (error) {
+        console.error('[MasteryDrill] Failed to skip a stale card:', error);
+      }
+    })();
+  }, [currentDrillCardId, queueCardIds, plugin]);
 
   const clearOldItems = async () => {
     const currentKb = await plugin.kb.getCurrentKnowledgeBaseData();
@@ -206,7 +333,6 @@ function FinalDrill() {
 
   const confirmEditLater = async () => {
     const message = editLaterMessage.trim() || "Mastery Drill";
-    const getCardId = (item: FinalDrillItem) => typeof item === 'string' ? item : item.cardId;
 
     if (editLaterContext === 'editing') {
       if (!editingCardId) return;
@@ -216,7 +342,7 @@ function FinalDrill() {
         if (rem) {
           await rem.addPowerup(BuiltInPowerupCodes.EditLater);
           await rem.setPowerupProperty(BuiltInPowerupCodes.EditLater, "Message", [message]);
-          const newIds = finalDrillIdsRaw.filter(item => getCardId(item) !== editingCardId);
+          const newIds = finalDrillIdsRaw.filter(item => drillItemCardId(item) !== editingCardId);
           await setFinalDrillIdsRaw(newIds);
           await plugin.app.toast("Card marked for Edit Later and removed from drill.");
           setEditingRemId(null);
@@ -232,7 +358,7 @@ function FinalDrill() {
         if (rem) {
           await rem.addPowerup(BuiltInPowerupCodes.EditLater);
           await rem.setPowerupProperty(BuiltInPowerupCodes.EditLater, "Message", [message]);
-          const newIds = finalDrillIdsRaw.filter(item => getCardId(item) !== cardId);
+          const newIds = finalDrillIdsRaw.filter(item => drillItemCardId(item) !== cardId);
           await setFinalDrillIdsRaw(newIds);
           await plugin.queue.removeCurrentCardFromQueue(false);
           await plugin.app.toast("Card marked for Edit Later and removed from drill.");
@@ -249,17 +375,43 @@ function FinalDrill() {
     setEditLaterMessage('');
   };
 
+  // KNOWN LIMITATION — Card Clusters.
+  // Every per-card toolbar action above (Go to Rem, Edit Later, Edit Current, the priority
+  // badge) and this one resolve the target through `finalDrillCurrentCardId`, which
+  // queue_session.ts writes from QueueLoadCard. Inside a cluster that id is the cluster
+  // ANCHOR and never advances to the visible sibling, so on siblings 2..n these actions act
+  // on the wrong card: Remove from Drill drops the anchor's id (usually not even in the drill
+  // list) while the sibling stays, and the card keeps coming back.
+  //
+  // Measured 2026-09-05 against RemNote's own queue controller, in a document sub-queue with a
+  // 4-sibling table cluster: `window.queueController.currentCard.cardId` (what
+  // plugin.queue.getCurrentCard() resolves, and what QueueLoadCard broadcasts) stayed pinned to
+  // the anchor for all four siblings, while the cluster component's own
+  // `state.currentCompoundCardIdToTest` advanced each time. So getCurrentCard() is NOT a way out.
+  // The `clusterVisibleCardId` bridge (card_info_bar.tsx) does not exist here either — that
+  // widget is not mounted inside the drill popup. See registerDrillCardRatingListener in
+  // register/events.ts for the matching gap on the recording side.
+  //
+  // Left unfixed deliberately: clusters reaching the drill is already rare (see events.ts), and
+  // the cost of a wrong-card action is one stale card in the list, not data loss.
   const removeCurrentFromDrill = async () => {
     const cardId = await plugin.storage.getSession<string>("finalDrillCurrentCardId");
     if (!cardId) {
       await plugin.app.toast("No current card found.");
       return;
     }
-    const getCardId = (item: FinalDrillItem) => typeof item === 'string' ? item : item.cardId;
-    const newIds = finalDrillIdsRaw.filter(item => getCardId(item) !== cardId);
+    const newIds = finalDrillIdsRaw.filter(item => drillItemCardId(item) !== cardId);
     await setFinalDrillIdsRaw(newIds);
     await plugin.queue.removeCurrentCardFromQueue(false);
     await plugin.app.toast("Card removed from Mastery Drill.");
+  };
+
+  const goToRem = async (remId: string) => {
+    const rem = await plugin.rem.findOne(remId);
+    if (!rem) return;
+    await plugin.window.openRem(rem);
+    await plugin.storage.setSession("finalDrillResumeTrigger", Date.now());
+    await plugin.widget.closePopup();
   };
 
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -267,6 +419,57 @@ function FinalDrill() {
   useEffect(() => {
     setTimeout(() => containerRef.current?.focus(), 100);
   }, []);
+
+  // The card list replaces the queue area while the queue itself stays mounted off-screen, so
+  // the window-level rating keys below must stand down while it is open — otherwise ←/→ in the
+  // list would move the hidden queue.
+  const [showCardList, setShowCardList] = useState(false);
+  const showCardListRef = useRef(false);
+  useEffect(() => {
+    showCardListRef.current = showCardList;
+  }, [showCardList]);
+
+  const closeCardList = () => {
+    setShowCardList(false);
+    setTimeout(() => containerRef.current?.focus(), 50);
+  };
+
+  const removeCardsFromDrill = async (cardIds: string[]) => {
+    const ids = new Set(cardIds);
+    await setFinalDrillIdsRaw(finalDrillIdsRaw.filter(item => !ids.has(drillItemCardId(item))));
+    // The queue behind the list keeps showing a removed card until it is rated; take it out now.
+    const currentId = await plugin.storage.getSession<string>("finalDrillCurrentCardId");
+    if (currentId && ids.has(currentId)) {
+      const live = await plugin.queue.getCurrentCard();
+      if (live?._id === currentId) await plugin.queue.removeCurrentCardFromQueue(false);
+    }
+    await plugin.app.toast(`Removed ${cardIds.length} card${cardIds.length !== 1 ? 's' : ''} from Mastery Drill.`);
+  };
+
+  const cardListView = showCardList && (
+    <MasteryDrillCardList
+      items={kbItems}
+      minDelayMinutes={minDelayMinutes}
+      onRemove={removeCardsFromDrill}
+      onGoToRem={goToRem}
+      onClose={closeCardList}
+    />
+  );
+
+  const listCardsButton = (
+    <button
+      onClick={() => setShowCardList(true)}
+      className="text-xs px-2 py-1 rounded whitespace-nowrap"
+      style={{
+        color: 'var(--rn-clr-content-primary)',
+        border: '1px solid var(--rn-clr-border-primary)',
+        backgroundColor: 'var(--rn-clr-background-primary)',
+      }}
+      title="List every card in the drill and check whether RemNote can show it (L)"
+    >
+      List Cards
+    </button>
+  );
 
   useEffect(() => {
     const SCORE_MAP: Record<string, QueueInteractionScore> = {
@@ -278,8 +481,15 @@ function FinalDrill() {
     };
 
     const handler = async (e: KeyboardEvent) => {
+      if (showCardListRef.current) return;
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
+
+      if ((e.key === 'l' || e.key === 'L') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        setShowCardList(true);
+        return;
+      }
 
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
@@ -597,6 +807,9 @@ function FinalDrill() {
 
   if (filteredIds.length === 0) {
     const isCoolingDown = delayedCount > 0;
+    if (showCardList) {
+      return <div className="h-full w-full flex flex-col">{cardListView}</div>;
+    }
     return (
       <div
         ref={containerRef}
@@ -616,6 +829,7 @@ function FinalDrill() {
             <p className="text-xs mt-2" style={{ color: 'var(--rn-clr-content-tertiary)' }}>
               The drill will refresh automatically when the first card is ready.
             </p>
+            <div className="mt-4">{listCardsButton}</div>
           </>
         ) : (
           <>
@@ -639,7 +853,11 @@ function FinalDrill() {
         {/* Row 1: Queue management */}
         <div className="flex items-center gap-2 px-2 pt-2 pb-1">
           <span className="font-bold text-lg whitespace-nowrap flex-shrink-0">Mastery Drill</span>
-          <span className="text-xs px-2 py-1 rounded bg-red-100 text-red-800 whitespace-nowrap">
+          <span
+            onClick={() => setShowCardList(true)}
+            className="text-xs px-2 py-1 rounded bg-red-100 text-red-800 whitespace-nowrap cursor-pointer"
+            title="List every card in the drill (L)"
+          >
             {filteredIds.length} Remaining
           </span>
           {delayedCount > 0 && (
@@ -655,6 +873,7 @@ function FinalDrill() {
               {delayedCount} cooling
             </span>
           )}
+          {listCardsButton}
           <button
             onClick={() => setShowClearAllConfirm(true)}
             className="text-xs px-2 py-1 rounded border border-red-200 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/20 whitespace-nowrap"
@@ -708,17 +927,9 @@ function FinalDrill() {
           <button
             onClick={async () => {
               const cardId = await plugin.storage.getSession<string>("finalDrillCurrentCardId");
-              if (cardId) {
-                const card = await plugin.card.findOne(cardId);
-                if (card && card.remId) {
-                  const rem = await plugin.rem.findOne(card.remId);
-                  if (rem) {
-                    await plugin.window.openRem(rem);
-                    await plugin.storage.setSession("finalDrillResumeTrigger", Date.now());
-                    await plugin.widget.closePopup();
-                  }
-                }
-              }
+              if (!cardId) return;
+              const card = await plugin.card.findOne(cardId);
+              if (card?.remId) await goToRem(card.remId);
             }}
             className="px-3 py-1.5 text-sm rounded transition-colors shadow-sm font-medium whitespace-nowrap"
             style={{
@@ -774,7 +985,7 @@ function FinalDrill() {
               onChange={setEditingPriority}
               onSave={async () => {
                 const rem = await plugin.rem.findOne(currentCardData.remId);
-                if (rem) await setCardPriority(plugin, rem, editingPriority, 'manual');
+                if (rem) await setCardPriority(plugin, rem, editingPriority, 'manual', false, { event: 'drill' });
                 setEditingPriority(null);
               }}
               onCancel={() => setEditingPriority(null)}
@@ -813,20 +1024,36 @@ function FinalDrill() {
 
       <div
         className="flex-grow relative min-h-0 overflow-hidden"
+        // Collapsed while the card list takes its place (the Queue inside is moved off-screen).
+        style={showCardList ? { flex: '0 0 0px' } : undefined}
         onMouseDown={() => {
           // After a click inside the Queue embed the iframe may steal focus.
           // Re-focus our container so the window-level keydown listener keeps working.
           setTimeout(() => containerRef.current?.focus(), 50);
         }}
       >
-        {isLoaded ? (
-          <Queue cardIds={filteredIds} width="100%" height="auto" />
+        {isLoaded && queueCardIds ? (
+          // key={queueEpoch}: the only way to give the controller a card list it will actually
+          // read is to remount the embed. See the resurrection guard above.
+          //
+          // The wrapper moves off-screen while the card list is open. The embed is not drawn in
+          // this iframe: RemNote paints it in a layer ABOVE the iframe at the placeholder's
+          // position, so it would cover the list wherever the two overlap.
+          // The SDK re-reads that position on any attribute mutation in the plugin tree, so
+          // moving the wrapper moves the embed. Unmounting instead would end the drill session.
+          <div
+            className="h-full w-full"
+            style={showCardList ? { position: 'fixed', top: '200vh', left: 0 } : undefined}
+          >
+            <Queue key={queueEpoch} cardIds={queueCardIds} width="100%" height="auto" />
+          </div>
         ) : (
           <div className="h-full w-full flex items-center justify-center" style={{ color: 'var(--rn-clr-content-secondary)' }}>
             Loading…
           </div>
         )}
       </div>
+      {cardListView}
     </div>
   );
 }

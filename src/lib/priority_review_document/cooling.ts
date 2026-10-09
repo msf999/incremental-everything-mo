@@ -1,0 +1,572 @@
+/**
+ * Cooling — spoiler protection across sessions for the Priority Queue.
+ *
+ * RemNote's own bury rule keeps a card out of the queue while ANOTHER card of
+ * the same Rem was seen in the last hour (see `bury_protection` in the app
+ * bundle). Anki buries siblings until the next day. Neither is enough for a
+ * mature card: a descriptor whose answer was read as context yesterday, or an
+ * Alt+Z cloze whose sibling cloze was graded three days ago, is still a free
+ * recall — and FSRS will reward it with years of unearned stability.
+ *
+ * A Rem is COOLING when it still owes the queue a card and a card that gives
+ * that answer away was graded recently and has since moved on. While cooling
+ * it is left out of the Priority Queue document and is ineligible to set the
+ * Priority Shield. Cooling ends on its own: the window is measured from the
+ * moment the spoiling card was seen, and scales with the cooled card's own
+ * interval — a mature card is both more damaged by a free recall and cheaper
+ * to delay, so it waits longer.
+ *
+ * This module is PURE. It knows nothing about RemNote: the gatherer
+ * (`cooling_gather.ts`) reads cards and the tree and hands it plain facts, so
+ * the rules can be tested from fixtures alone. Nothing here is stored: the
+ * cooling set is a function of card data and is recomputed on every refresh,
+ * which is what makes it impossible for it to go stale or be lost when synced
+ * storage is wiped. Only the user's overrides (release now, extend, never cool)
+ * persist — see `cooling_store.ts`.
+ */
+
+export const DAY_MS = 86_400_000;
+
+/**
+ * How the spoiling card relates to the cooled Rem. Each is a distinct way one
+ * review can put another card's answer on screen.
+ */
+export type CoolingRelation =
+  /** Another card of the same Rem: the other direction, another cloze in the same text. */
+  | 'same-rem'
+  /** Another Alt+Z cloze under the same parent extract: each quotes the whole sentence. */
+  | 'cloze-sibling'
+  /** The parent extract itself was read as an IncRem, or its own card was graded. */
+  | 'parent-extract'
+  /** One of this Rem's own Alt+Z cloze children was graded. */
+  | 'own-cloze-child'
+  /** A child or grandchild card was graded, and its context line displayed this Rem's answer. */
+  | 'descendant'
+  /**
+   * This Rem is an answer line of a multi-line card, and that card was graded:
+   * its back showed this line in full. Answer lines normally go first (see
+   * `answer-line-due`), so this covers the multi-line card reviewed before them —
+   * RemNote's queue order is random.
+   */
+  | 'multi-line-card'
+  /**
+   * This Rem is a descriptor with a due BACKWARD card, which answers with its
+   * concept — and a card of that concept (forward, backward or a cloze in it)
+   * was shown. RemNote buries the same pairing for an hour; this extends it.
+   */
+  | 'concept-reviewed'
+  /**
+   * This Rem is a multi-line card and one of its answer lines — a child marked
+   * as a card item, with a card of its own — was graded. That review put part
+   * of this Rem's answer on screen. Only answer lines count: other children of
+   * a multi-line card show just its question as context.
+   */
+  | 'answer-line'
+  /**
+   * This Rem is a multi-line card and one of its answer lines still has a due
+   * card. The order is inverted for multi-line cards: the answer lines go first
+   * (each is a smaller question inside the big one), and the multi-line card
+   * waits for them, then cools from their review. Not a window: it holds while
+   * the answer line is due (see `whileDue`).
+   */
+  | 'answer-line-due'
+  /**
+   * The card itself was created recently and has never been shown. SuperMemo
+   * counts creating an item as its first repetition; this keeps a card you just
+   * wrote out of the queue for a fixed number of days (not the interval formula
+   * — a new card has no interval).
+   */
+  | 'just-created';
+
+export const COOLING_RELATION_LABELS: Record<CoolingRelation, string> = {
+  'same-rem': 'another card of this Rem was reviewed',
+  'cloze-sibling': 'a sibling Alt+Z cloze was reviewed',
+  'parent-extract': 'the parent extract was read',
+  'own-cloze-child': 'one of its Alt+Z clozes was reviewed',
+  descendant: 'a descendant card showed its answer as context',
+  'concept-reviewed': 'its concept was reviewed',
+  'answer-line': 'one of its answer lines was reviewed',
+  'answer-line-due': 'one of its answer lines is due and goes first',
+  'multi-line-card': 'its multi-line card was reviewed',
+  'just-created': 'a card of it was created',
+};
+
+/**
+ * One reason in words: the relation's label and how long ago its card was seen.
+ * A hold has no "ago" — it lasts while the answer line is due, not from a
+ * viewing.
+ */
+export function coolingReasonText(relation: CoolingRelation, ago: string): string {
+  if (relation === 'answer-line-due') return COOLING_RELATION_LABELS[relation];
+  return `${COOLING_RELATION_LABELS[relation]} ${ago}`;
+}
+
+export interface CoolingParams {
+  /** Fraction of the cooled card's interval that becomes cooling time. */
+  intervalFraction: number;
+  /** Floor of the window in days — a new card's sibling still buries it for this long. */
+  minDays: number;
+  /** Ceiling of the window in days. */
+  maxDays: number;
+  /** Fixed window for a never-shown card counted from its creation (0 = off). Defaults to 1. */
+  newCardDays?: number;
+}
+
+export const DEFAULT_COOLING_PARAMS: CoolingParams = {
+  intervalFraction: 0.05,
+  minDays: 1,
+  maxDays: 15,
+  newCardDays: 1,
+};
+
+/** A due card of the candidate: what would be spoiled. */
+export interface DueCardFact {
+  cardId: string;
+  /** Last scheduled interval in days; 0 for a never-practised card. */
+  intervalDays: number;
+}
+
+/** A card (or an IncRem read) that could have shown the candidate's answer. */
+export interface SpoilerSeenEvent {
+  relation: CoolingRelation;
+  /** The Rem that owns the spoiling card (or the extract that was read). */
+  sourceRemId: string;
+  sourceLabel?: string;
+  /** Absent for an IncRem read. */
+  cardId?: string;
+  /** When it was last shown. */
+  seenAt: number;
+  /**
+   * True when the spoiling card is itself still due. A pair that is both due
+   * is not a cooling case: RemNote's hour-long bury already separates them
+   * within a session, and holding the candidate would only stall the pair.
+   */
+  stillDue: boolean;
+  /**
+   * A fixed window for this event, replacing the candidate's interval-derived
+   * one — used by `just-created`, whose length is its own setting.
+   */
+  windowDays?: number;
+  /**
+   * A hold rather than a sighting (`answer-line-due`): the event counts only
+   * WHILE the source is still due, and `seenAt` is when it came due (so a
+   * "release now" lets it go until the source comes due again). It holds the
+   * candidate for one full window from now: the review that ends it starts
+   * that window, and it has not happened yet.
+   */
+  whileDue?: boolean;
+}
+
+export interface CoolingCandidate {
+  remId: string;
+  label?: string;
+  priority?: number;
+  dueCards: DueCardFact[];
+  seen: SpoilerSeenEvent[];
+}
+
+export interface CoolingReason {
+  relation: CoolingRelation;
+  sourceRemId: string;
+  sourceLabel?: string;
+  cardId?: string;
+  seenAt: number;
+  /** seenAt + window. */
+  until: number;
+  /** The window this reason used, in days. */
+  windowDays: number;
+}
+
+export interface CoolingVerdict {
+  remId: string;
+  label?: string;
+  priority?: number;
+  /** When cooling ends — the latest of every reason, or the user's extension. */
+  until: number;
+  windowDays: number;
+  /** The interval the window was derived from: the longest among the due cards. */
+  intervalDays: number;
+  /** Empty only when the Rem is cooling purely by extension. */
+  reasons: CoolingReason[];
+  /** Set when a user extension is what decides `until`. */
+  extendedUntil?: number;
+}
+
+/**
+ * What the user has said about specific Rems. The only cooling state that is
+ * ever persisted; everything else is recomputed.
+ */
+export interface CoolingOverrides {
+  /**
+   * remId → timestamp of a "release now". Events seen at or before that
+   * instant no longer cool the Rem; a sibling graded afterwards cools it again.
+   */
+  released: Record<string, number>;
+  /** remId → keep cooling until at least this timestamp. */
+  extended: Record<string, number>;
+  /** Rems that must never cool. */
+  never: string[];
+}
+
+export const EMPTY_COOLING_OVERRIDES: CoolingOverrides = {
+  released: {},
+  extended: {},
+  never: [],
+};
+
+/**
+ * Days of cooling for a card of the given interval:
+ *   clamp( ceil( interval × fraction ), min, max )
+ * With the defaults: 10d → 1d, 60d → 3d, 200d → 10d, a year or more → 15d.
+ */
+export function coolingWindowDays(
+  intervalDays: number,
+  params: CoolingParams = DEFAULT_COOLING_PARAMS
+): number {
+  const min = Math.max(0, params.minDays);
+  const max = Math.max(min, params.maxDays);
+  const fraction = Math.max(0, params.intervalFraction);
+  const raw = Math.ceil(Math.max(0, intervalDays) * fraction);
+  return Math.min(max, Math.max(min, raw));
+}
+
+// --- card facts ------------------------------------------------------------
+
+/** The subset of the SDK Card this module reads. Plain data, so fixtures are trivial. */
+export interface CardLike {
+  _id: string;
+  nextRepetitionTime?: number | null;
+  lastRepetitionTime?: number | null;
+  repetitionHistory?: { date: number; score: number }[] | null;
+  /** RemNote's card type ('forward' | 'backward' | { clozeId }), or the cache's 'cloze' tag. */
+  type?: unknown;
+  /** When the card record was created. Per card; never compare it to the Rem's createdAt. */
+  createdAt?: number | null;
+}
+
+/**
+ * True when a card was created within `days` of `now` and has never been shown.
+ * "Never shown" is read from its repetition history, not from its due date equal
+ * to its creation time: a direction switched on for the first time is due a few
+ * seconds after it is created (measured). A direction switched off and back on
+ * returns its ORIGINAL record, creation date and history included, so it is not
+ * mistaken for new.
+ */
+export function isRecentlyCreatedUnseen(card: CardLike, now: number, days: number): boolean {
+  if (days <= 0) return false;
+  if (typeof card.createdAt !== 'number' || card.createdAt <= 0) return false;
+  if (cardLastSeenAt(card) !== null) return false;
+  return now - card.createdAt < days * DAY_MS;
+}
+
+/**
+ * True when the Rem's text holds an image with occlusion boxes — an Image
+ * Occlusion Rem, one card per box. Such Rems never cool: with "Hide All, Test
+ * One" on, every other box stays covered, so a sibling box's review spoils
+ * nothing (RemNote's own bury skips those siblings too). That setting is the
+ * Rem field `hato`, which the plugin API does not expose, so the Rem is
+ * exempted whichever way it is set.
+ */
+export function isImageOcclusionText(...texts: unknown[]): boolean {
+  return texts.some(
+    (text) =>
+      Array.isArray(text) &&
+      text.some(
+        (el) =>
+          !!el &&
+          typeof el === 'object' &&
+          (el as { i?: unknown }).i === 'i' &&
+          Array.isArray((el as { blocks?: unknown }).blocks) &&
+          (el as { blocks: unknown[] }).blocks.length > 0
+      )
+  );
+}
+
+/** RemType.DESCRIPTOR in the SDK; kept as a literal so this module stays SDK-free. */
+export const REM_TYPE_DESCRIPTOR = 2;
+
+/** A card's direction as the cache stores it: 'forward', 'backward', 'cloze', or null. */
+export function cardTypeTag(type: unknown): 'forward' | 'backward' | 'cloze' | null {
+  if (type === 'forward' || type === 'backward' || type === 'cloze') return type;
+  if (type && typeof type === 'object') return 'cloze';
+  return null;
+}
+
+export function isBackwardCard(card: CardLike): boolean {
+  return cardTypeTag(card.type) === 'backward';
+}
+
+/**
+ * The concept a descriptor's backward card answers with: the nearest ancestor
+ * that is not itself a descriptor. Descriptors can nest — "pode ser transmitido
+ * por estações de navios?" under "transmitidos por quem" under "Recibos de
+ * socorro" answers with the grandparent — so the chain is walked past every
+ * descriptor. `ancestors` runs from the parent upwards; null when every Rem in
+ * it is a descriptor, or it is empty.
+ */
+export function pickConceptAncestor(ancestors: { _id: string; type?: number | null }[]): string | null {
+  for (const a of ancestors) {
+    if (!a) return null;
+    if (a.type !== REM_TYPE_DESCRIPTOR) return a._id;
+  }
+  return null;
+}
+
+/**
+ * Scores at which the card was actually on screen. Values are RemNote's
+ * QueueInteractionScore: AGAIN 0, TOO_EARLY 0.01, HARD 0.5, GOOD 1, EASY 1.5,
+ * VIEWED_AS_LEECH 2. RESET (3), MANUAL_DATE (4) and MANUAL_EASE (5) are
+ * bookkeeping — the card was not shown — and are excluded. TOO_EARLY counts:
+ * the question was displayed even though it was skipped.
+ */
+const VIEWED_SCORES = new Set([0, 0.01, 0.5, 1, 1.5, 2]);
+
+/** When the card was last shown, or null if never. */
+export function cardLastSeenAt(card: CardLike): number | null {
+  let last: number | null = null;
+  for (const rep of card.repetitionHistory ?? []) {
+    if (!rep || typeof rep.date !== 'number') continue;
+    if (!VIEWED_SCORES.has(rep.score)) continue;
+    if (last === null || rep.date > last) last = rep.date;
+  }
+  if (last === null && typeof card.lastRepetitionTime === 'number') {
+    last = card.lastRepetitionTime;
+  }
+  return last;
+}
+
+/**
+ * The card's last scheduled interval in days: next due minus last seen. A card
+ * never shown, or one whose due date is not ahead of its last review, reads as
+ * 0 — which the window formula turns into the minimum cooling.
+ */
+export function cardIntervalDays(card: CardLike): number {
+  const next = card.nextRepetitionTime;
+  const last = cardLastSeenAt(card);
+  if (typeof next !== 'number' || last === null || next <= last) return 0;
+  return (next - last) / DAY_MS;
+}
+
+/**
+ * Card facts rebuilt from a card-priority cache entry, so cooling can run with
+ * no card read at all. The cache keeps, per card and in the same order, the
+ * next due date (`cardsNextRep`) and when the card was last shown
+ * (`cardsLastSeen`, computed with {@link cardLastSeenAt} when the entry was
+ * built). Card ids are not cached; each fact gets a stable positional id, which
+ * only ever labels a cooling reason.
+ *
+ * An entry built before `cardsLastSeen` existed yields cards with no viewing,
+ * so it can never cool anything — the fail-open direction.
+ */
+export function cardsFromCacheInfo(info: {
+  remId: string;
+  cardsNextRep?: (number | null)[];
+  cardsLastSeen?: (number | null)[];
+  cardsType?: (string | null)[];
+  cardsCreatedAt?: (number | null)[];
+}): CardLike[] {
+  const next = info.cardsNextRep ?? [];
+  const seen = info.cardsLastSeen ?? [];
+  const types = info.cardsType ?? [];
+  const created = info.cardsCreatedAt ?? [];
+  return next.map((nextRepetitionTime, i) => ({
+    _id: `${info.remId}#${i}`,
+    nextRepetitionTime,
+    lastRepetitionTime: seen[i] ?? null,
+    type: types[i] ?? null,
+    createdAt: created[i] ?? null,
+  }));
+}
+
+/**
+ * How soon RemNote makes a rated card due again, at the least: every rating in
+ * a 90-day sample (Sep 2026) scheduled the next one 60 minutes or more ahead —
+ * Forgot and Skip exactly an hour, Hard/Good/Easy a day or more.
+ */
+export const RATED_CARD_MIN_GAP_MS = 60 * 60_000;
+
+/**
+ * Adds the ratings a queue session just saw to one Rem's card facts. A plugin
+ * read does not wait for pending writes, and the card cache's facts carry no
+ * real card ids, so the card rated a moment ago can still look unseen and due —
+ * and its sibling would not cool. `ratedAt` maps the Rem's rated card ids →
+ * when the session saw them rated. A fact already holding that rating is kept
+ * as it is; a matching fact without it gains it; a rating with no matching fact
+ * (cache facts) is added as a fact of its own, which is all cooling needs: a
+ * card of the Rem seen at that moment and not due again for an hour. That fact
+ * sits beside the card's own (still due) cache fact, so it reads as "another
+ * card of this Rem" even when the card itself comes back — the queue judges a
+ * loading card with {@link withoutOwnSightings} for that reason.
+ */
+export function withSessionRatings(cards: CardLike[], ratedAt: ReadonlyMap<string, number>): CardLike[] {
+  if (ratedAt.size === 0) return cards;
+  const rated = (card: CardLike, at: number): CardLike => ({
+    ...card,
+    repetitionHistory: [...(card.repetitionHistory ?? []), { date: at, score: 1 }],
+    nextRepetitionTime: Math.max(card.nextRepetitionTime ?? 0, at + RATED_CARD_MIN_GAP_MS),
+  });
+  const matched = new Set<string>();
+  const out = cards.map((card) => {
+    const at = ratedAt.get(card._id);
+    if (at === undefined) return card;
+    matched.add(card._id);
+    const seen = cardLastSeenAt(card);
+    // The stored rating is dated a moment before the event that reported it.
+    if (seen !== null && seen >= at - 5_000) return card;
+    return rated(card, at);
+  });
+  for (const [cardId, at] of ratedAt) {
+    if (!matched.has(cardId)) out.push(rated({ _id: cardId, nextRepetitionTime: null, repetitionHistory: [] }, at));
+  }
+  return out;
+}
+
+/**
+ * The candidate as one of its own cards sees it: a card never spoils itself.
+ * `same-rem` sightings of that card are dropped. A Rem-wide verdict can name
+ * the very card that is loading — a session sighting laid over card-cache
+ * facts, which carry no real ids, becomes an extra "other" card; and with real
+ * ids, a card left behind or rated Forgot is a seen, not-due sibling of the
+ * Rem's other due cards when it comes back.
+ */
+export function withoutOwnSightings(candidate: CoolingCandidate, cardId: string): CoolingCandidate {
+  const seen = candidate.seen.filter((e) => !(e.relation === 'same-rem' && e.cardId === cardId));
+  return seen.length === candidate.seen.length ? candidate : { ...candidate, seen };
+}
+
+/**
+ * The queue's due predicate: `?? Infinity` so a card with no schedule
+ * (disabled, table row, markup removed) never reads as due.
+ */
+export function isCardDue(card: CardLike, now: number): boolean {
+  return (card.nextRepetitionTime ?? Infinity) <= now;
+}
+
+// --- the verdict -----------------------------------------------------------
+
+/**
+ * Decides whether a candidate is cooling right now.
+ *
+ * The window belongs to the CANDIDATE: it is derived from the longest interval
+ * among its due cards, the one a free recall would inflate the most. Each seen
+ * event that is not itself still due, that happened after any release, and
+ * whose window has not yet run out, becomes a reason; the Rem cools until the
+ * latest of them. A user extension can only lengthen that.
+ *
+ * `since` widens "right now" to "at any moment since": a reason whose window
+ * closed after `since` still counts, and the verdict's `until` may then lie in
+ * the past. The Priority Shield passes the start of the local day — its own
+ * rule counts only cards already overdue then, so a Rem that was cooling at the
+ * start of the day stays out of that day's shield instead of lowering it the
+ * minute its window closes. Everything else judges at `now` (the default).
+ */
+export function evaluateCooling(
+  candidate: CoolingCandidate,
+  now: number,
+  params: CoolingParams = DEFAULT_COOLING_PARAMS,
+  overrides: CoolingOverrides = EMPTY_COOLING_OVERRIDES,
+  since: number = now
+): CoolingVerdict | null {
+  if (candidate.dueCards.length === 0) return null;
+  if (overrides.never.includes(candidate.remId)) return null;
+  since = Math.min(since, now);
+
+  const intervalDays = Math.max(0, ...candidate.dueCards.map((c) => c.intervalDays));
+  const windowDays = coolingWindowDays(intervalDays, params);
+  const windowMs = windowDays * DAY_MS;
+  const releasedAt = overrides.released[candidate.remId] ?? -Infinity;
+
+  const reasons: CoolingReason[] = [];
+  for (const event of candidate.seen) {
+    // A sighting counts once its card has moved on; a hold, only while it has not.
+    if (event.whileDue ? !event.stillDue : event.stillDue) continue;
+    // A timestamp from the future is a clock skew, not a review from tomorrow.
+    const seenAt = Math.min(event.seenAt, now);
+    if (seenAt <= releasedAt) continue;
+    const eventWindowDays = typeof event.windowDays === 'number' ? Math.max(0, event.windowDays) : windowDays;
+    if (eventWindowDays <= 0) continue;
+    const until = (event.whileDue ? now : seenAt) + eventWindowDays * DAY_MS;
+    if (until <= since) continue;
+    reasons.push({
+      relation: event.relation,
+      sourceRemId: event.sourceRemId,
+      sourceLabel: event.sourceLabel,
+      cardId: event.cardId,
+      seenAt,
+      until,
+      windowDays: eventWindowDays,
+    });
+  }
+  reasons.sort((a, b) => b.until - a.until);
+
+  const extendedUntil = overrides.extended[candidate.remId];
+  const extensionApplies = typeof extendedUntil === 'number' && extendedUntil > since;
+
+  if (reasons.length === 0 && !extensionApplies) return null;
+
+  const reasonUntil = reasons.length ? reasons[0].until : -Infinity;
+  const until = extensionApplies ? Math.max(reasonUntil, extendedUntil) : reasonUntil;
+
+  return {
+    remId: candidate.remId,
+    label: candidate.label,
+    priority: candidate.priority,
+    until,
+    // The window of the reason that decides `until`, so the list shows the
+    // length that is actually holding the Rem.
+    windowDays: reasons.length ? reasons[0].windowDays : windowDays,
+    intervalDays,
+    reasons,
+    extendedUntil: extensionApplies && extendedUntil >= reasonUntil ? extendedUntil : undefined,
+  };
+}
+
+/**
+ * Drops overrides that can no longer change any verdict, so the synced record
+ * stays a handful of entries: a release older than the longest possible window
+ * only suppresses events that have expired anyway, and an extension in the
+ * past extends nothing. "Never" entries are the user's standing decision and
+ * are kept.
+ */
+export function pruneCoolingOverrides(
+  overrides: CoolingOverrides,
+  now: number,
+  params: CoolingParams = DEFAULT_COOLING_PARAMS
+): CoolingOverrides {
+  const horizon = now - Math.max(params.minDays, params.maxDays, params.newCardDays ?? 0) * DAY_MS;
+  const released: Record<string, number> = {};
+  for (const [remId, at] of Object.entries(overrides.released ?? {})) {
+    if (typeof at === 'number' && at > horizon) released[remId] = at;
+  }
+  const extended: Record<string, number> = {};
+  for (const [remId, until] of Object.entries(overrides.extended ?? {})) {
+    if (typeof until === 'number' && until > now) extended[remId] = until;
+  }
+  return { released, extended, never: [...new Set(overrides.never ?? [])] };
+}
+
+/** The start of the local day containing `now` — the Priority Shield's horizon. */
+export function startOfLocalDay(now: number = Date.now()): number {
+  const d = new Date(now);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+/**
+ * The answer lines a multi-line card is waiting for: the Rems behind its
+ * `answer-line-due` reasons, in the order the reasons list them.
+ */
+export function dueAnswerLineIds(verdict: CoolingVerdict): string[] {
+  return [
+    ...new Set(verdict.reasons.filter((r) => r.relation === 'answer-line-due').map((r) => r.sourceRemId)),
+  ];
+}
+
+/** Removes cooling Rems from any list keyed by remId — the shield's exclusion. */
+export function excludeCooling<T extends { remId: string }>(
+  items: T[],
+  cooling: ReadonlySet<string>
+): T[] {
+  if (cooling.size === 0) return items;
+  return items.filter((item) => !cooling.has(item.remId));
+}

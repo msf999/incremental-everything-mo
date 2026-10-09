@@ -12,9 +12,54 @@ Flashcard Rem | Test and strengthen memory of atomic knowledge through active re
 
 (Table adapted from the [Pleasurable Learning channel](https://www.youtube.com/watch?v=W9gZZ_UOJhg))
 
-During a study session, Incremental Everything presents your Incremental Rems one by one (intermingled with your flashcards). To interact with them, you'll use the Answer Buttons bar at the bottom of the screen.
+During a study session, Incremental RemNote presents your Incremental Rems one by one (intermingled with your flashcards). To interact with them, you'll use the Answer Buttons bar at the bottom of the screen.
 
 Each button is designed for a specific action to manage your learning flow efficiently.
+
+---
+
+## Spoiler Protection
+
+An extract and the flashcard it gives away are often both due in the same session, and the queue used to show them in whatever order came up. When the extract came first, it handed you the answer: the recall was no longer a recall, and the grade you gave the card afterwards measured nothing.
+
+The plugin now **holds an Incremental Rem back while a flashcard it would spoil is still due.** The card comes up first, you grade it honestly, and the extract returns to the running immediately afterwards — usually a few items later in the same session. Nothing is skipped; only the order changes.
+
+### When it releases
+
+The hold is always temporary. The Incremental Rem is shown as soon as any of these becomes true:
+
+* **You grade the card.** The card stops being due, the Rem stops being a spoiler, and it re-enters the running at its normal priority position. Where several cards hold it — its own plus a few `Alt+Z` clozes — it is released once the last of them is graded.
+* **Nothing unspoiled is left.** If every remaining due Incremental Rem is holding for a card, the highest-priority one is shown anyway rather than showing you nothing.
+* **No flashcards remain.** With the flashcard queue empty, there is nothing left to spoil, so held items are released.
+
+So a held Incremental Rem is never lost, and never postponed past the end of the session.
+
+### What counts as a spoiler
+
+Two kinds of flashcard hold an Incremental Rem back:
+
+* **Cards on the Rem itself.** You extract a paragraph, then cloze part of it in place, so the same Rem is both the extract and the card.
+* **Cards on its direct [`Alt+Z` cloze children](IR-Flow--Reading-Extracting-and-Clozing.md#create-cloze-altz-altshiftz).** An `Alt+Z` cloze is a separate child Rem that quotes the parent's sentence with one span blanked out — so the parent gives it away just as surely, even when the parent carries no card of its own. This was the common case the first version missed: a plain extract you had clozed underneath had nothing for the check to look at, and sailed through.
+
+Everything else is out of scope. **Deeper descendants are not checked**, and neither are children clozed by other means — only the direct children `Alt+Z` marks as its own. An extract can certainly spoil those too, but finding them means walking the whole subtree of every candidate, which is a much heavier operation than reading one tag.
+
+Two behaviours are worth knowing:
+
+* **Brand-new, never-practiced cards do count.** This is the case that matters most: nothing has been recalled yet, so the extract would be teaching you the answer before your first look at the card.
+* **Disabled cards do not count.** If you switch a two-way card down to one direction in the queue, the direction you turned off stops holding anything back — even though it keeps its review history. The same is true for cards whose practice you have disabled entirely.
+
+### Limits
+
+* **Normal queue only.** *Practice All* and *In Order* are unaffected. In those modes every card in scope is going to be shown regardless of its due date, so every dual-type Rem would qualify as a spoiler at once and nothing would ever release them.
+* **New cards behind a daily limit.** If the card holding an extract back is a new one that your daily new-card limit has not reached yet, the extract stays held until the end of the session, then is released. It still gets reviewed — just later than its priority would normally place it.
+
+### Across sessions: cooling
+
+This hold is within a session. Its counterpart across days is **cooling** in the [Priority Queue](Priority-Review-Document.md#cooling-spoiler-protection-across-sessions): a flashcard Rem whose answer was shown by a recent review — another card of the same Rem, a sibling `Alt+Z` cloze, the parent extract, or a descendant's context line — is kept out of the Priority Queue for a window that grows with the card's interval, and cannot set the Priority Shield meanwhile.
+
+### Turning it off
+
+**Hold Back Spoiler IncRems** in the IE Settings popup, under *Queue*. On by default. Switching it off restores the previous behaviour, where an extract and the cards it spoils appear in whatever order the queue produces.
 
 ---
 
@@ -23,7 +68,7 @@ Each button is designed for a specific action to manage your learning flow effic
 Here is a breakdown of each button and its function, from left to right.
 
 * **[Next](#next):** (Shortcut: `Cmd+Right` on Mac, `Ctrl+Right` on Windows/Linux)
-This is your primary action. Clicking "Next" marks the item as reviewed, calculates the next time you should see it based on the scheduling algorithm, and advances to the next item in your queue. The subtitle (e.g., "in 3 days") shows you the new interval that was just calculated.
+This is your primary action. Clicking "Next" marks the item as reviewed, calculates the next time you should see it based on the scheduling algorithm, and advances to the next item in your queue. The subtitle (e.g., "×1.5 in 3 days") shows the interval that will be set, preceded by a chip naming the [scheduler](IncRem-Scheduler.md#scheduler-indicator) that produced it.
 
   * **Swipe-to-Reschedule:** (New!) A new gesture for faster scheduling when reviewing Incremental Rems:
       * **Click and slide UP:** Automatically schedules for **tomorrow**.
@@ -37,20 +82,23 @@ This button opens a popup that gives you manual control over the item's schedule
 * **[Dismiss](#dismiss):** (Shortcut: `Ctrl+D`)
 When you have finished processing an item and no longer wish to see it in your queue, click "Dismiss" (or press `Ctrl+D`). This permanently finishes the item by removing its `Incremental` power-up. This shortcut also works in the Editor to dismiss the focused Incremental Rem.
 
-* **[Change Priority](#change-priority):** (Shortcut: `Ctrl+P` for full widget and `Ctrl+Alt+P` for light widget)
+* **[Change Priority](#change-priority):** (Shortcut: `Opt+P` / `Alt+P` for full widget and `Ctrl+Opt+P` / `Ctrl+Alt+P` for light widget)
 This opens the advanced priority popup. The label on the button itself provides rich, at-a-glance information:
+
   * **The Number:** The Rem's absolute priority value (0-100, lower is more important).
   * **The Percentiles:** The Rem's rank within your entire Knowledge Base (`% of KB`) and within the current document (`% of Doc`).
   * **The Color:** The background color shifts from red (high priority) to blue (low priority) for an instant visual cue of its importance.
 
 * **[Review in Editor](#review-in-editor):** (Shortcut: `Ctrl+Shift+J`) *(Previously called "Review & Open")*
 This is a powerful workflow tool. It performs a sequence of actions:
+
   1. It first **reviews** the item (rescheduling it) and **opens** the Rem in the editor, exiting the queue.
   2. It immediately starts an **Editor Review Timer**. When finished, clicking **"End Review"** stops the timer and routes you back to your queue document.
 This is perfect to avoid friction with the queue interface, and when an item inspires you to do more detailed work, like extensive note-taking or using other features like the AI assistant.
 
 * **Scroll to Highlight / Scroll to Bookmark:**
 This button appears for **PDF highlights, HTML highlights, and Incremental Rems with PDF sources**. 
+
   * If you are reviewing a highlight, clicking this instantly snaps your view back to the highlight's position in the document.
   * If you are reviewing a full PDF chapter (an Incremental Rem with a PDF source), this button acts as a **Scroll to Bookmark**. It jumps directly to your last recorded reading position within that chapter/PDF/IncRem.
   * *See the [PDF-Incremental-Reading-Workflow#4-pdf-highlight-toolbar-utilities](PDF-Incremental-Reading-Workflow.md) guide to learn how bookmark positions are automatically tracked when extracting highlights.*
@@ -80,6 +128,7 @@ When the current Incremental Rem is a plain **Rem** (a text/note extract, not a 
 
 * **PDF Switcher (multi-PDF Inc Rems):**
 When the current Inc Rem has **more than one PDF source**, a small PDF dropdown appears in the top bar next to the 📝 Document Notes icon. Selecting a different PDF:
+
   - **Pins it as active** for this Inc Rem (stored in synced storage as the new default for future queue opens, the Editor Review Timer, the PDF Control Panel, etc.),
   - **Re-renders the Reader on the new PDF** immediately — the queue card stays the same, just the PDF view swaps. The new PDF's bookmark auto-scroll, page controls, and reading-time writes all follow.
   - The switcher is hidden for **PDF highlights and HTML hosts** (highlights are tied to a specific PDF; switching would orphan the queue card).
@@ -148,10 +197,16 @@ This is your most-used button (shortcut: `Cmd+Right` on Mac, `Ctrl+Right` on Win
 
 #### The Scheduling Algorithm
 
-The "Next" button uses a simple but effective exponential scheduling algorithm. The interval for the next repetition is calculated with the formula:
-`newInterval = multiplier ** numberOfReviews`
+The "Next" button calculates the next interval with one of two schedulers:
 
-In simple terms: each time you review an item, the plugin looks at how many times you've seen it before and raises a **multiplier** (a value you can set in the plugin settings, defaulting to 1.5) to that power. This causes the review intervals to grow exponentially (e.g., 2 days, 3 days, 5 days, 7 days, 11 days, and so on), ensuring you see familiar material less frequently over time.
+* **Multiplier:** `next interval = ⌈current interval × multiplier⌉`. The multiplier defaults to 1.5, so an item left alone goes 2, 3, 5, 8, 12, 18 days — and an interval you chose yourself is carried forward: 50 days becomes 75, then 113.
+* **Saturating Curve:** intervals depend only on the number of reviews. They start at a comfortable **First Review Interval** (default 5 days) and gradually approach a **Max Interval** ceiling (default 30 days) without ever exceeding it — better suited to material that needs many reviews, such as a whole book.
+
+Each Incremental Rem uses one of them: its own choice if you set one, otherwise the setting for its type, otherwise the *Default Scheduler*. A small chip on the Next button tells you which — `×1.5` for the multiplier, `curve` for the saturating curve.
+
+![The Next button with a ×1.5 chip before "in 24 days"](assets/scheduler-indication-in-next-button.png){ width="900" }
+
+📖 **Full details:** the [IncRem Scheduler](IncRem-Scheduler.md) page covers both schedulers, [how one is chosen for each item](IncRem-Scheduler.md#which-scheduler) and the [settings](IncRem-Scheduler.md#settings-reference) that control them. To see how a due item is then picked for the queue, read [Scheduling and the Queue](IncRem-Scheduler.md#scheduling-and-the-queue).
 
 #### The "One Memory, One Action" Principle
 
@@ -176,13 +231,18 @@ Use "Reschedule" when you encounter a complex topic that you're not mentally pre
 
 Instead of struggling or just clicking "Next" (a futile review), you can use "Reschedule" to punt the advanced topic a month into the future. This gives you time to encounter and process first the more basic foundational material you have already imported to your knowledge base, so you'll be ready when the complex topic reappears.
 
-**A caveat:**
-Using "Reschedule" is a **one-time override**. The custom interval you set applies only to the next review. After that, the "Next" button will resume its normal scheduling based on your total number of reviews, not the custom interval you previously set. If an interval feels off again in the future, simply use "Reschedule" again.
+**What happens at the next review depends on the item's scheduler:**
+
+- On the **Saturating Curve**, Reschedule is a **one-time override**. The next "Next" returns to the curve, which only counts reviews — right for a book you are merely postponing.
+- On the **Multiplier** scheduler, the interval you set is **kept**: the next "Next" multiplies it. Set 50 days and the following intervals are 75, then 113.
+
+**Scheduler row:**
+The popup shows which scheduler the item uses and lets you change it for this Rem alone: `←` / `→` switch between **× Multiplier** and **Saturating Curve**, and with the multiplier selected `↑` / `↓` (or typing) set this Rem's own value. A preview line shows the intervals that would follow. See [Changing it for one Rem](IncRem-Scheduler.md#per-rem-scheduler).
 
 **📝 Note field:**
 The popup includes an optional **Note** input — record *why* you postponed ("waiting for prerequisite chapter", "revisit after exam"). The note is stored on this reschedule's history entry and shown later in the [Repetition History popup](Plugin-Widgets-Reference.md#212-increm-repetition-history-aggregated-view), so future-you knows what past-you was thinking.
 
-![Reschedule Widget](assets/reschedule.png){ width="400" }
+![The Reschedule popup with its Scheduler row: × Multiplier selected, the multiplier at 1.5 and the preview "After that: 36 → 54 → 81 days"](assets/reschedule-with-scheduler.png){ width="400" }
 
 #### Technical Note: Reschedule Event Types
 
@@ -199,8 +259,11 @@ The plugin differentiates how repetition/reschedule events are tracked based on 
 | `dismissed` | [Dismiss](#dismiss) button / tag removal | ❌ No | Event marker (orange) |
 
 **Key distinction:**
+
 - **Review actions** (`rep`, `rescheduledInQueue`, `executeRepetition`) count for interval calculation because you engaged with and reviewed the content before scheduling the next review
-- **Administrative adjustments** (`rescheduledInEditor`, `manualDateReset`) only change the schedule without confirming a review—useful for planning but don't advance the SRS algorithm
+- **Administrative adjustments** (`rescheduledInEditor`, `manualDateReset`) only change the schedule without confirming a review—useful for planning but don't advance the review count
+
+"Counts for Interval" is about the **review count**, which is what the Saturating Curve uses. The [Multiplier scheduler](IncRem-Scheduler.md#multiplier-scheduler) works from the interval the item is on instead, so there an editor reschedule or a manual date edit does set the interval the next review multiplies.
 
 ### Dismiss
 
@@ -210,6 +273,8 @@ This button (shortcut: `Ctrl+D`) signifies the end of a passive item's life cycl
 The primary goal of incremental reading is to process source materials (like articles, book chapters or paragraphs) and extract the most valuable, "golden nugget" pieces of information. You do this by turning them into active recall prompts (flashcards and clozes).
 
 Once you have reviewed the entire source and are confident you've extracted all the key knowledge into flashcards, the original passive material has served its purpose. Click "Dismiss" to remove the source text from your queue, leaving only the efficient, active-recall cards you created from it.
+
+**What gets recorded:** a repetition is written into the item's history — with the time you spent on it — **only when the queue was actually on that item's Incremental turn**, which is always the case for the **Dismiss** button. `Ctrl+D` reaches further: it also dismisses a Rem you have merely *selected* or opened in the previewer (`P`) while the queue is showing a flashcard or a different item. In that case nothing was being reviewed, so no repetition is recorded and no queue item is skipped — the history is transferred to the Dismissed state and the power-up removed, exactly like `Ctrl+D` in the editor. A toast names the Rem that was dismissed, since the queue itself does not move.
 
 ### Change Priority
 
@@ -227,21 +292,25 @@ For a deep dive into how the priority system works, please see the [Prioritizati
 This button (shortcut `Ctrl+Shift+J`) provides a seamless bridge between the focused queue environment and the full-power RemNote editor.
 
 It performs a powerful sequence of actions:
+
 1. It registers the item as conceptually "reviewed" (rescheduling it for the future, just like the "Next" button).
 2. It instantly **navigates you to the editor** for that Rem, exiting the queue.
 3. It **automatically starts the Editor Review Timer** for that session.
   * *Note for PDF Notes*: If the item is a `pdf-note`, this button carefully opens the Rem as a full page in the editor rather than triggering the PDF viewer, maintaining your note-taking context.
 
+**With a Rem selected, `Ctrl+Shift+J` targets that Rem instead.** Open something in the previewer (`P`), select it, and the shortcut opens the [Execute Repetition popup](Reviewing-Items-in-the-Editor.md#opened-from-the-queue-previewer) for it — the editor flow, where you set the review time and interval yourself and nothing is written until you confirm. Recording a review there **deducts** those minutes from the item the queue is showing, since that is where they were spent; starting the timer instead asks what to do with the turn you are leaving. The button above, and the shortcut with nothing selected, still act on the queue item itself.
+
 #### The Workflow Loop
 Once you are in the editor with the timer running, you can perform heavy editing, restructuring, or use AI tools. 
 When you are completely finished processing the item:
-1. Click **"End Review"** on the Timer Widget. 
-2. The timer will conclude, record your repetition (along with the time spent), and **navigate you back to the original queue document**.
-3. You must then press `Cmd+Shift+P` (or your Practice shortcut / the Practice button) to instantly dive back into the queue and continue.
+
+1. Click **"End Review and Back to Queue"** on the Timer Widget. 
+2. The timer will conclude, record your repetition (along with the time spent), and **reopen the queue you came from** — the same document queue, or the Global Queue if that is where you were — so you carry on with the next item.
 
 ####  When to use it
 
 Use "Review in Editor" whenever the queue interface feels too limited for the task at hand. This workflow is ideal for situations where you need to:
+
 * See the broader **context** of a Rem within your outliner.
 * Perform **heavy editing** or restructuring.
 * Use other features not fully available in the queue, like **"Ask AI"** or AI **Create Flashcards**.
@@ -303,6 +372,12 @@ See also: [Using the RemNote Clipper](https://help.remnote.com/en/articles/60308
 
 When reviewing flashcards in the queue, the **Card Info Bar** widget (formerly *Card Priority Display*) shows additional card statistics and FSRS memory state information alongside the priority and shield data.
 
+In the Beautiful queue variant the bar is docked just above the answer buttons. See [Card Info Bar in the Beautiful queue](Plugin-Widgets-Reference.md#card-info-bar-beautiful).
+
+![The answer side of a card in the Beautiful queue: the AI Explanation panel, then the Card Info Bar with priority, shields and FSRS figures, then the four answer buttons](assets/card-info-bar-docked-answer.png){ width="900" }
+
+![The question side of a card in the Beautiful queue: the Card Info Bar docked just above the Reveal Answer button, well below the card text](assets/card-info-bar-docked-question.png){ width="900" }
+
 ### What's Displayed
 
 The info bar includes (from left to right):
@@ -313,18 +388,20 @@ The info bar includes (from left to right):
 |(2) **Card Shield** | Shield status (if enabled) |
 |(3) **Weighted Shield** | Exponential priority-weighted workload percentage (if enabled) |
 |(4) **Reps & Time** | Total number of reviews (with **lapses** in red parentheses), cumulative review time, **card age**, and **cost** (per year of age/coverage) for this card. Hover over it for an explanatory tooltip. |
-|(5)(6) **D · S · R · SInc** | FSRS Difficulty, Stability (and time passed since last review), Retrievability, and Stability Increase (if enabled) |
-|(7) **🔬** | Opens the Flashcard Repetition History popup |
-|(8) **Incremental Rem Status Indicator** | An icon displayed on the right border whenever the current card is also an Incremental Rem |
+|(5) **D · S · R** | FSRS Difficulty, Stability (time passed since last review, and the stability a Good rating would leave) and Retrievability |
+|(6) **SInc** | Stability Increase — how much stability a Good rating would add |
+|(7) **U-Factor** | Used-Interval Increase, comparing the next interval to the one you just cleared (if enabled) |
+|(8) **🔬** | Opens the Flashcard Repetition History popup |
+|(9) **Incremental Rem Status Indicator** | An icon displayed on the right border whenever the current card is also an Incremental Rem |
 
-![Card Info Bar](assets/card-priority-display.png){ width="900" }
+![Card Info Bar](assets/card-info-bar.png){ width="900" }
 
 ![Card Toolbar in the Queue](assets/card-priority-display-full-queue.png){ width="900" }
 
 **Understanding D, S, and R:**
 
 *   **Difficulty (D):** How hard it is to maintain a memory of something. The higher the difficulty, the harder it is to increase its Stability and maintain it in the long term. The larger the number, the greater the difficulty. Its value ranges from 1 (easiest) to 10 (hardest). Difficulty increases when you forget (rate "Again") and decreases when you recall easily. Hover over the DSR stats to see the projected **Next Difficulty** for each of the four grading options (Again, Hard, Good, Easy).
-*   **Stability (S):** The expected interval (in days) at which your recall probability equals 90%. It is the **storage strength** of memory. A stability of 30d means you'd need to review the card in approximately 30 days to have a 90% chance of recalling it. The exact time passed since your last review of this card is shown in parentheses next to it (e.g., `(6.2 m passed)`).
+*   **Stability (S):** The expected interval (in days) at which your recall probability equals 90%. It is the **storage strength** of memory. A stability of 30d means you'd need to review the card in approximately 30 days to have a 90% chance of recalling it. The exact time passed since your last review of this card is shown in parentheses next to it (e.g., `(6.2 m passed)`), followed by an arrow pointing to the **stability a Good rating would leave the card with** — `S: 2.5y (1.3y passed) → 4.2y`. If your [Requested Retention](#requested-retention) is not the 90% default, the interval that stability actually converts to follows it: `→ 4.2y (int. 1.7y)`.
 *   **Retrievability (R):** Your estimated probability of recalling this card *right now* (memory's **retrieval strength**).The lower it is, the higher the probability that the memory will be forgotten. Shown as a percentage with color coding: 🟢 green (≥90%), 🟡 yellow (≥70%), 🔴 red (<70%).
 *   **Stability Increase (SInc):** How much your memory stability will grow after answering. Shown as a multiplier (e.g., `1.42×`) for the **Good** grade. Hover over it to see the SInc for all three recall grades (Hard / Good / Easy) along with the projected new stability after each. A value of `1.0×` means no growth; higher values mean faster learning. SInc is influenced by the card's current Difficulty, Stability, and Retrievability — reviewing at lower retrievability (closer to forgetting) produces a larger stability increase, reflecting the [desirable difficulty](https://en.wikipedia.org/wiki/Desirable_difficulty) principle.
 
@@ -332,9 +409,10 @@ The info bar includes (from left to right):
 
 Clicking the 🔬 button (or pressing `Ctrl+Shift+H`) opens a detailed popup showing the card's full review history — similar to RemNote's built-in Practice History. You can close this popup anytime by pressing `Esc`.
 
-![Flashcard Repetition History](assets/flashcard-rep-history.png){ width="900" }
+![Flashcard Repetition History](assets/flashcard-rep-history-2.png){ width="900" }
 
 **Header & Summary Information:**
+
 *   **Rem Name:** The document's parent name is displayed bolded at the very top.
 *   **Total Reviews & Time:** An aggregate sum of your historical effort, the **card age**, the **coverage** (time until next scheduled review), and the **cost** (ignoring any reviews that occurred before a manual Date Reset).
 *   **Optimum Next Repetition Date:** Calculates the optimal review date you *should* practice based directly on FSRS stability formulas (`Last practice date + Stability`). Hover for a tooltip explaining discrepancies with the scheduled date.
@@ -343,6 +421,7 @@ Clicking the 🔬 button (or pressing `Ctrl+Shift+H`) opens a detailed popup sho
 *   **Retrievability Gradient:** The *R* metric is color-coded using a dynamic gradient transitioning from pure red (≤ 70%) to green (100%).
 
 **Each row contains:**
+
 *   **Rating:** The score given (Again, Hard, Good, Easy), color-coded.
 *   **Response Time:** How long you spent answering.
 *   **Target Date:** When the review was originally scheduled.
@@ -355,6 +434,85 @@ Clicking the 🔬 button (or pressing `Ctrl+Shift+H`) opens a detailed popup sho
 
 The heading summary also shows the current **SInc** for all three recall grades, color-coded: 🟠 Hard / 🟢 Good / 🔵 Easy. Hover for a tooltip with projected stability values.
 
+### Forgetting Curve
+
+Every FSRS figure above describes the card *right now*. The **Forgetting Curve** shows how it got there and where it is going: the card's whole history replayed into the retrievability FSRS predicts, and a forecast of what each of the four answer buttons would do to it.
+
+It appears in two places — at the top of the [Queue Dashboard](History-Queue-Dashboard-and-Mastery-Drill.md#practiced-queues-history-live-dashboard) for the card on screen, and inside the [Flashcard Repetition History](#flashcard-repetition-history) popup for every card of a Rem.
+
+![The Forgetting Curve in the Queue Dashboard being switched from Linear to Log, then the 🔬 button opening the Flashcard Repetition History popup, where the same card carries its own curve](assets/forgetting-curve.gif){ width="700" }
+
+#### The two panels
+
+![The Forgetting Curve on a logarithmic time axis: the retrievability panel with the history line running green above the 90% target and turning blue as it approaches it, four dashed forecast branches past "now", and below it the stability staircase labelled ×1.44, ×1.39, ×1.54, ×3.04 and ×1.04, both panels spanning 3 days to 14.4 years](assets/forgetting-curve-log-scale.png){ width="900" }
+
+**Retrievability** (top). A solid line through the past, snapping back to 100% at each repetition and decaying between them, then four dashed branches from *now* — one per answer button, with **Good** drawn heavier because it is the answer that describes the card's normal trajectory. A dashed horizontal rule marks your [Requested Retention](#requested-retention), and a vertical rule of the matching colour marks each repetition.
+
+The history line is coloured by retrievability, on the same scale the info bar uses for its **R** value: green at 100%, through yellow, to fully red at 70% and anything below. So a glance tells you whether the card was caught near its scheduled moment or left to decay well past it, and a card the info bar calls red draws a red curve.
+
+Past *now* that same line carries on, in long dashes, as **If not reviewed** — the card left alone, decaying on the stability it has. It is the baseline the four branches are measured against: each one shows what an answer buys you *over doing nothing*, which is the comparison that makes them mean anything.
+
+The weights say which is which. What the card is really doing — its history and that projection — is drawn heaviest; the four branches are hypotheses and sit lighter, with **Good** picked out among them. The projection cannot rely on colour to separate itself, since it is painted by retrievability and so is green on a healthy card, exactly like Good: its much longer dashes are what tell them apart.
+
+**Stability** (bottom). A staircase on a logarithmic axis, labelled with the **×SInc** each repetition bought — the same Stability Increase shown in the info bar, but for every review rather than the next one. This is the part a plain forgetting curve hides: two cards sitting at the same retrievability today can be on completely different paths. Where repetitions are too close together for their labels to fit, hovering a step gives the number and the stability either side of it.
+
+Past *now* the staircase fans out into the same four branches, in the same colours, showing what each answer would leave the card's stability at. There is no "if not reviewed" line here: stability only moves when a card is answered, so leaving it alone would draw a flat continuation of the last step and say nothing. They run flat, because stability only moves when a card is reviewed. Their ×SInc is not written on the chart — four more labels there would crowd it — so hover anywhere in the forecast to read all four, each with the multiplier it applies.
+
+#### Log and linear time
+
+The **Log** / **Linear** toggle changes the time axis, and the two answer different questions.
+
+**Log** is the default. A mature card spends days in its first intervals and years in review; on a linear axis its first weeks are a few pixels and everything interesting about its early life is invisible. The log axis gives both ends room. Once a card is a day old the axis starts at 12 hours, so its same-day learning steps sit on the left edge rather than claiming the width and a one-day interval stays clear of it. The axis opens on the window where **Easy** reaches your target retention — the whole of the next stability, which costs almost no width because a log axis compresses its right-hand end.
+
+![The Forgetting Curve on the log axis with five numbered notes: (1) the axis starts at 12 hours, with the first review and its same-day learning steps on the left edge; (2) two brackets of equal width, the first two weeks and the 5.6 years without a review, both a 28-fold stretch of time; (3) the gentle-looking slide from the 90% target to 64% over those years; (4) the two-year forecast past "now" squeezed into a sliver at the right end; (5) the stability step of ×10.61 bought by the review just made](assets/forgetting-curve-log-axis-explained.png){ width="900" }
+
+*How to read the log axis: equal widths are equal ratios of time, not equal durations.*
+
+**Linear** shows real elapsed time, so intervals are comparable by eye. Here every day added to the right steals width from every day already drawn, so the window is balanced between the forecast and the history:
+
+- It aims to follow **Good** down to your target retention — the whole next interval, which is what shows how long that memory is meant to last.
+- But the history is owed width first, and how much depends on how many repetitions it has to fit: 5% of the chart per review, at least a quarter and at most two thirds. A card with a handful of reviews reads fine in a quarter of the width and gets the full forecast; a card with twenty keeps two thirds and the forecast stops short of the target.
+- Whatever the history needs, the window always runs at least until **Good** is 6 points above target, so there is always a forecast to read.
+
+![Two cards opening on the linear axis, with numbered notes. A card with 3 reviews: brackets under the axis mark the history at 25% of the width (2.2 years) and the forecast at 75% (6.7 years), and a ring on the end of the Good branch at about 91%, just above the 90% target. A card with 14 or more reviews: the history at 67% of the width (5.6 years), the forecast at 33% (2.8 years), and Good ending at about 92%](assets/forgetting-curve-linear-opening.png){ width="900" }
+
+*The number of reviews, not the length of the history, decides how much of the width the past keeps.*
+
+Both scales size the window by the *forecast's* timescale, which collapses after a lapse: stability drops to days while the card's history is still years, and the branches would end up in a sliver at the right edge. So the window also never ends sooner than 40% of the card's age past *now*, whichever reaches further. The whole history stays on screen either way.
+
+![The same card on a linear time axis: its first six months are compressed against the left edge while the axis runs to 6.2 years, and a tooltip reads "2mo since first review, Retrievability 100.0%, Stability 1.1y"](assets/forgetting-curve-linear-scale.png){ width="900" }
+
+*The same card as above, on the linear axis: the repetitions that the log axis spread across half the chart are now crowded into its first fifth — which is the trade the toggle makes.*
+
+#### Zooming
+
+- **Drag** across either panel to zoom to that range.
+- **Scroll** to zoom around the pointer — outwards as well as in.
+- **Double-click**, or press **Reset zoom**, to return to the opening window.
+
+Both panels share the axis, so either one drives both, and the vertical scales refit to what is on screen.
+
+![A card with many reviews on the linear axis: the Forecast button stretches the window from 7.9 to 10.3 years, History brings it back, and scrolling then zooms into the card's first months until its learning-phase repetitions stand apart, with their ×SInc labels readable](assets/forgetting-curve-zoom.gif){ width="700" }
+
+On the linear axis, two presets jump to the ends of the balance described above:
+
+- **History** stops the forecast where **Good** is 6 points above target, giving the repetitions the most room.
+- **Forecast** runs **Good** all the way down to your target retention, whatever that costs the history.
+
+![A card with 3 reviews on the linear axis: History shortens the window to 4.4 years, Forecast stretches it to 9.7 years with Good ending on the 90% target, and Reset zoom returns to the 8.9-year opening window; hovering each button shows what it does](assets/forgetting-curve-zoom-history-forecast.gif){ width="700" }
+
+The opening window is always one of the two or somewhere between them. The buttons light up to show which preset the view matches, so on a card whose opening window already runs to the target, **Forecast** is lit from the start; a view you zoomed by hand lights neither. **Reset zoom** only appears once the view differs from the opening one. The presets are hidden on the log axis, which has room for both at once, and on cards where the two would draw the same window. Like any zoom, the choice is per card: the next card opens on its own window.
+
+![The same 3-review card three times, with numbered notes. History preset: the History button lit, Reset zoom shown, the axis ending at 4.4 years and Good ringed at 96%. Opening view: neither preset lit, the axis ending at 8.9 years and Good ringed at about 91%. Forecast preset: the Forecast button lit, the axis ending at 9.7 years and Good ringed at 90%, on the target line](assets/forgetting-curve-linear-presets.png){ width="900" }
+
+Zooming out goes well past where the chart opens. The forecast is computed until **Easy** decays to 50% — the point at which that memory is as likely gone as recalled — so you can follow every branch far beyond the next repetition and watch the four separate. On a mature card that is a long way out: FSRS's curve is a power law with a heavy tail, and 50% arrives at roughly ninety times the stability, so do not be surprised to find the axis running into centuries.
+
+#### What the curve is, and is not
+
+The curve is computed by the plugin's own FSRS implementation, from the weights and retention in [FSRS settings](Plugin-Settings-Reference.md#fsrs) — **not** from the scheduler RemNote actually runs on the card, which the plugin API does not expose. It therefore describes your real scheduling only where those settings match it. If your cards use a per-document scheduler, or Anki SM-2, or FSRS with different weights, treat the curve as an estimate of that model rather than a record of RemNote's decisions.
+
+To hide it in the Queue Dashboard, set **Forgetting Curve** to *Hidden* in [Queue Dashboard settings](Plugin-Settings-Reference.md#queue-dashboard). In the Repetition History popup it follows **Display FSRS DSR Stats**.
+
 ### FSRS Configuration
 
 The plugin includes a built-in implementation of the [FSRS v6.1.1 algorithm](https://github.com/open-spaced-repetition/fsrs4anki/wiki/The-Algorithm) that replays each card's repetition history to compute D, S, and R. This is necessary because RemNote does not expose FSRS state through its plugin SDK.
@@ -365,12 +523,25 @@ To get accurate D/S/R values that match RemNote's internal calculations, you nee
 
 1.  Go to **RemNote Settings → Schedulers → Global Default Scheduler**.
 2.  Copy the weights array (19 or 21 comma-separated numbers).
-3.  Go to **Plugin Settings → Incremental Everything → FSRS Global Weights**.
+3.  Go to **Plugin Settings → Incremental RemNote → FSRS Global Weights**.
 4.  Paste the weights string (e.g., `[1, 3, 10, 45, 7.011, 0.46, ...]`).
 
 If left empty, the official FSRS v6.1.1 default weights are used, which will produce approximate but likely inaccurate values for your specific study patterns.
 
 ![DSR Settings](assets/DSR-settings.png){ width="800" }
+
+#### Requested Retention
+
+FSRS defines stability as *the interval at which recall probability is 90%*. That is why "S: 4.2y" and "your next review is in 4.2 years" are usually the same sentence — but only if your scheduler is aiming at 90%.
+
+If you set a different **requested retention** in RemNote, the interval you get is no longer the stability. Tell the plugin which value you use in **Plugin Settings → Incremental RemNote → Requested Retention** (default `90%`), and the card info bar reports the scheduling you will really see:
+
+*   **The interval behind the next stability.** The `→ 4.2y` after Stability is still the *stability* a Good rating produces; the interval it converts to is printed right after it — `→ 4.2y (int. 1.7y)` at 95%.
+*   **The U-Factor.** It divides by the interval you will actually get, so it stops overstating how far your reviews are being pushed out. Off the 90% default a second value appears in parentheses — `U-Factor: 3.11× (3.30×)` — the first the real one, the second the textbook figure at 90% retention.
+
+The conversion follows straight from inverting the forgetting curve: the interval is `stability × (R^(1/DECAY) − 1) / FACTOR`, which is exactly `1×` at 90%, shorter for a stricter retention (≈`0.40×` at 95%) and longer for a looser one (≈`1.91×` at 85%).
+
+> **Note:** D, S and R themselves are properties of your memory and do **not** depend on this setting — only the interval-derived figures do.
 
 #### Limitation: Global Weights Only
 
@@ -386,6 +557,7 @@ For most users who use a single global scheduler, this is not an issue — just 
 |---------|------|-------------|
 | **Display FSRS DSR Stats** | Boolean | Toggle D/S/R display on or off (default: on) |
 | **FSRS Global Weights** | String | Your FSRS weights, comma-separated (accepts 19 or 21 values, with or without brackets) |
+| **Requested Retention** | Number | The recall probability your scheduler aims for, as a percentage (default: `90`). See [Requested Retention](#requested-retention) |
 
 
 ---
@@ -395,6 +567,7 @@ For most users who use a single global scheduler, this is not an issue — just 
 The **Incremental Rem History** widget automatically records and displays the Incremental Rems you have viewed in your queue.
 
 **Key Features:**
+
 *   **Searchable History:** Easily find previously viewed items using the search bar.
 *   **Context Aware:** Shows history specific to the current Knowledge Base.
 *   **Recency Tracking:** Displays how long ago you viewed each item.

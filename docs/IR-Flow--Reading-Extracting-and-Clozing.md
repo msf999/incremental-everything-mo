@@ -72,7 +72,7 @@ Not all incremental reading involves PDFs. For articles pasted into RemNote, lon
 - **Err on the side of larger chunks first.** It is always easier to split a large rem into two than to merge two overly-granular ones. Start with chapters; refine into sections only when the chapter proves too long to read in one session.
 - **Use the Priority System to sequence your splits.** Assign the most important chapter the highest priority. You will naturally split it more finely because you encounter it more often.
 - **A rem that is "too long" is a signal, not a problem.** When you open a rem in the queue and feel you cannot make progress in one session, that is the cue to split it — right there, immediately, before hitting Next. Create two or three child rems from the headings you see, schedule the first, and dismiss the parent.
-- **The parent rem is not wasted after splitting.** After its children are created and queued, apply the **Remove from Queue** powerup to the parent (via the `/rfq` command, or the editor command palette) to suppress it from the queue. Its children are now doing the work. *Requires the [Hide-in-Queue integration](Utilities.md#queue-display-utilities) enabled or the standalone Hide in Queue plugin installed.*
+- **The parent rem is not wasted after splitting.** After its children are created and queued, apply the **Remove from Queue** powerup to the parent (via the `/rfq` command, or the editor command palette) to suppress it from the queue. Its children are now doing the work. *Requires the [Hide-in-Queue integration](Utilities-Queue-Display.md) enabled or the standalone Hide in Queue plugin installed.*
 
 ---
 
@@ -88,13 +88,27 @@ When reading a long Incremental Rem (a chapter, article, or section), you isolat
    - Creates a **child Rem** containing the selected text.
    - Highlights the original selection in **blue** in the parent Rem and inserts a **reference pin** (↗) next to it — clicking the pin navigates to the new child.
    - Adds a **back-reference pin** at the end of the child Rem pointing back to the parent, maintaining full traceability.
-   - If the parent Rem was itself extracted from a **PDF highlight**, the child inherits a direct pin to the original PDF source as well.
-   - **Hides the parent Rem from queue display** so its original slot is suppressed — the children take over. The mechanism depends on what's installed: if the **Remove from Queue** powerup is registered (via the [Hide-in-Queue integration](Utilities.md#queue-display-utilities) setting *or* the standalone Hide in Queue plugin), it's applied to the parent directly (survives extract relocation cleanly); otherwise the **Remove Parent** powerup is applied to the extract itself as a fallback (works for normal review, but if you later move the extract under a different parent, that new parent will be hidden too — see [Create Extract behavior](Utilities.md#create-extract-source-rem-hiding-behavior)).
+   - Inherits the parent's **source pins** — see [Source pins are inherited](#source-pins) below.
+   - **Hides the parent Rem from queue display** so its original slot is suppressed — the children take over. The mechanism depends on what's installed: if the **Remove from Queue** powerup is registered (via the [Hide-in-Queue integration](Utilities-Queue-Display.md) setting *or* the standalone Hide in Queue plugin), it's applied to the parent directly (survives extract relocation cleanly); otherwise the **Remove Parent** powerup is applied to the extract itself as a fallback (works for normal review, but if you later move the extract under a different parent, that new parent will be hidden too — see [Create Extract behavior](Utilities-Queue-Display.md#create-extract-source-rem-hiding-behavior)).
    - Initializes the new Rem as an **Incremental Rem** (with `Alt+X`: inherited or default priority; with `Alt+Shift+X`: opens the Priority popup).
 
 This process is called **"shredding"** a document: you pass through it incrementally, pulling out what matters and leaving the rest behind.
 
 ![Extract Selection Demo](assets/extract-selected-text.gif)
+
+### Source Pins Are Inherited { #source-pins }
+
+Every extract ends with a back-reference pin to its parent, so after two or three rounds of shredding the passage you are reviewing sits several hops away from the page it came from. To keep the way back short, an extract also copies every pin its parent held to an **original reading source** — a PDF highlight or a web highlight — so the bridge to the source survives each level of sub-extraction instead of thinning out one hop per round.
+
+What counts as a source is decided by the highlight's own built-in RemNote powerup, not by the `pdfextract` tag this plugin adds. That matters because the tag is only applied by the [Create Incremental Rem toolbar](Create-Incremental-Rem-from-PDF-Highlights.md): a highlight you made incremental any other way — RemNote's native extraction, `Alt+X` pressed straight on the highlight, a pin you built by hand — carries no tag, yet its pin is inherited just the same. The tag still qualifies on its own, so nothing that used to be inherited stops being inherited.
+
+Three details worth knowing:
+
+- **All source pins are carried, not just the first.** A Rem that cites two highlights passes both down.
+- **Web highlights count too**, alongside PDF ones.
+- **Both sides of a card are scanned**, so a pin sitting on the back of a Rem is inherited as readily as one on the front.
+
+Ancestry pins are deliberately left out. Since the parent of any extract is itself an Incremental Rem, inheriting *those* would make each extract accumulate its whole chain of ancestors; only pins pointing at a terminal reading source travel down.
 
 ---
 
@@ -106,7 +120,7 @@ While reading, you often encounter a key term, definition, or fact that you want
 
 ### Auto-Priority Graduation
 
-Both commands automatically assign a **Card Priority** to every new cloze, implementing the standard incremental reading workflow: the first fact you extract from a passage is the most important, so it should get the highest scheduling priority (lowest priority number). Each successive cloze from the same extract is inherently less critical, so it gets a slightly lower scheduling priority.
+Both commands automatically assign a **Card Priority** to every new cloze, implementing the standard incremental reading workflow: the first fact you extract from a passage is the most important, so it should get the highest scheduling priority — which, since [lower numbers mean higher priority](Prioritization-&-Sorting.md#priority-value-absolute-priority), means the **lowest number**. Each successive cloze from the same extract is inherently less critical, so its number goes **up by one step**, ranking it below the ones before it.
 
 **Formula:**
 
@@ -117,8 +131,9 @@ Both commands automatically assign a **Card Priority** to every new cloze, imple
   - the parent's `#cloze-extract` children (clozes previously extracted from it as siblings of the new one), plus
   - the cards the parent rem owns itself — native cloze markers inside its text and front/back-direction cards if it is a flashcard.
   A first cloze from a plain text extract sees `existingCount = 0` and inherits the parent's priority exactly. A first cloze from a Concept/Descriptor extract (which already has 2 own cards) or from a rem that already contains native clozes starts with a non-zero count, reflecting that the material is already partially cardified.
-- **`stepSize`** — configured in Plugin Settings → Priority Step Size (default: 10).
-- Decrements are **capped at 10**, so even the 15th cloze from the same extract receives at most 10 extra steps.
+
+- **`stepSize`** — how much the number moves per cloze, set by **[Priority Step Size](Plugin-Settings-Reference.md#priority)** (default: `5`). The same setting drives the [Quick Priority shortcuts](Prioritization-&-Sorting.md#quick-priority-shortcuts), so one value defines "one step" everywhere in the plugin.
+- The count is **capped at 10 steps**, so even the 15th cloze from the same extract is only 10 steps below the parent — a long cloze session cannot push a card all the way to priority 100.
 
 **Example** — parent extract at priority 30, step size 5:
 
@@ -146,8 +161,8 @@ Both commands automatically assign a **Card Priority** to every new cloze, imple
    - If the parent is a **Concept rem**, the front portion of the child is rendered in **bold**. If it is a **Descriptor**, it is rendered in **italic** — matching RemNote's native UI conventions.
    - A **back-reference pin** to the parent Rem is appended at the end of the child's text.
    - The parent's selection is marked with **yellow highlight + red font** to signal that this passage has already been cloze-extracted.
-   - The new **cloze child Rem** is tagged with the **Remove Parent** powerup, so the parent (the extract) is hidden from queue display *only* while reviewing this specific cloze. Other flashcard descendants of the same parent (e.g. Descriptor children) still see the parent normally — see [Remove Parent](Utilities.md#remove-parent-rp-new) in Queue Display Utilities.
-   - The child Rem receives a **`cloze-extract` tag**. In the Queue, this tag renders a small violet **↑** badge (hover for a tooltip) to identify its origin. **In the Editor**, these tagged clozes deliberately appear **less conspicuous** (faded, grayscaled, and zoomed out). This visual cue signals that the Rem merely contains material copied from a parent Rem for priority scheduling purposes, so you can safely skip past it when reviewing your notes.
+   - The new **cloze child Rem** is tagged with the **Remove Parent** powerup, so the parent (the extract) is hidden from queue display *only* while reviewing this specific cloze. Other flashcard descendants of the same parent (e.g. Descriptor children) still see the parent normally — see [Remove Parent](Utilities-Queue-Display.md#remove-parent-rp-new) in Queue Display Utilities.
+   - The child Rem receives a **`cloze-extract` tag**. In the Queue, this tag renders a small violet **↑** badge (hover for a tooltip) to identify its origin. **In the Editor**, these tagged clozes — and any Rems nested under them — deliberately appear **less conspicuous** (faded, grayscaled, and zoomed out; hover or focus to read at full strength). This visual cue signals that the Rem merely contains material copied from a parent Rem for priority scheduling purposes, so you can safely skip past it when reviewing your notes.
 
 ### Visual result in the child Rem
 
@@ -169,30 +184,32 @@ RemNote has its own built-in cloze system — marking text with `{curly braces}`
 
 ### Native RemNote Clozes
 
-- **Spoiler protection**: RemNote's scheduler automatically **buries** (hides for ~1 hour) other cloze cards from the same Rem after one is reviewed. This prevents you from accidentally getting spoiled on a related answer you haven't been tested on yet.
+- **Spoiler protection**: RemNote's scheduler automatically **buries** (hides for ~1 hour) other cards (clozes or front/back) from the same Rem after one is reviewed. This prevents you from accidentally getting spoiled on a related answer you haven't been tested on yet.
 - **Compact**: Multiple clozes live inside a single Rem. No extra Rems are created.
 - **Simpler workflow**: Just highlight and mark — no child Rem is generated.
-- **Best for**: Dense material where multiple facts in a single sentence all need to be tested, and you trust RemNote's bury logic to prevent spoilers.
+- **Best for**: Dense material where multiple facts in a single sentence all need to be tested, and you trust RemNote's bury logic to keep the siblings from spoiling each other.
 
 ### `Alt+Z` SuperMemo-style Clozes
 
 - **Standalone Rem**: Each cloze becomes its **own independent Rem** in the knowledge base. This means it has its own scheduling history, its own priority, and can be edited, simplified, or reorganized entirely independently of the parent.
-- **Atomic by design**: Because the child is a separate Rem, you are naturally encouraged to make each card as atomic as possible. Over time, you can simplify the child's wording — removing irrelevant context — making it faster to review and easier to memorize.
-- **Incrementally refineable**: The child can itself be extracted further or restructured. Native clozes inside a parent Rem cannot be individually promoted or separated.
-- **Full context preserved**: The child always carries the full front-and-back of the parent, so you never lose the context in which you learned the fact.
-- **Best for**: Key terms, definitions, and facts you want to make truly independent, atomic, and long-term durable — especially during the first read of a new document.
+- **Prioritized approach**: Each cloze carries its own [Card Priority](Priorities-for-Flashcards.md), and the plugin assigns it for you. Every new cloze taken from the same rem gets a priority **number one step higher** than the one before it — and since [lower numbers mean higher priority](Prioritization-&-Sorting.md#priority-value-absolute-priority), each successive cloze is scheduled as slightly *less* important than its predecessor. That matches how you actually read: the fact you cloze first is the one you judged most worth keeping. One step is the **[Priority Step Size](Plugin-Settings-Reference.md#priority)** setting (default `5`), the same step the [Quick Priority shortcuts](Prioritization-&-Sorting.md#quick-priority-shortcuts) use. The full rule — where the parent's priority comes from, what already counts as an existing cloze, and the 10-step ceiling — is in [Auto-Priority Graduation](#auto-priority-graduation) above.
+- **Atomic by design**: Because the child is a separate Rem, and rewording it won't make you lose content (it already lives in the parent), you are naturally encouraged to make each card as atomic as possible. Over time, you can simplify the child's wording — removing irrelevant context — making it faster to review and easier to memorize.
+- **Full context preserved**: The parent rem will continue to carry the whole content, so you are free to edit the child cloze fearlessly.
+- **The parent will not spoil it**: because the parent still carries the whole sentence, showing it as an extract would hand you the answer. While one of your `Alt+Z` clozes is due, the plugin holds the parent Incremental Rem back until you have graded it — see [Spoiler Protection](Reviewing-Items-in-the-Queue.md#spoiler-protection).
+- **Best for**: The incremental approach, where you return to the same passage over several rounds and go one level deeper each time — the most important fact first, the finer detail later. Creating several clozes in one sitting does **not** put them on equal footing: with a parent at priority 30 and a step of 5, they come out at 30, 35, 40, … so the queue reaches them in the order you judged them, spread across sessions rather than bunched into one.
 
 ### Summary
 
 | | Native RemNote Cloze | `Alt+Z` SuperMemo-style Cloze |
 |---|---|---|
-| Spoiler protection (bury) | Yes | No (each card is independent) |
+| Spoiler protection | Yes — RemNote buries sibling cards for ~1h | Yes — the plugin holds the parent extract back ([Spoiler Protection](Reviewing-Items-in-the-Queue.md#spoiler-protection)); sibling clozes stay independent |
 | Standalone Rem | No | Yes |
-| Individually schedulable | No | Yes |
+| Incrementally introduced to the Queue | No | Yes |
+| Per-card prioritization | No | Yes |
 | Can be simplified over time | No | Yes |
-| Atomic card design | Encouraged by discipline | Structurally enforced |
+| Atomic card design | Difficult, as the context for the other cards in the same rem need to be preserved | Easy to do, structurally enforced |
 | Number of Rems created | 0 (inline) | 1 per cloze |
-| Back-reference to source | No | Yes (pin appended) |
+| Back-reference to source rem | -- | Yes (pin appended) |
 | Visual queue badge | No | Yes (violet ↑ badge) |
 
-The two approaches are **complementary**. Use native clozes for quick, spoiler-safe multi-cloze sentences. Use `Alt+Z` when a concept is important enough to deserve its own card and its own long-term refinement path.
+The two approaches are **complementary**. Use native clozes for quick multi-cloze sentences where RemNote's bury keeps the siblings from spoiling each other. Use `Alt+Z` when you are reading incrementally and want each fact to stand on its own: ranked in the order you found it, arriving in the queue according to their priority rather than alongside its siblings, and free to be simplified over time — because the parent still holds the full context, nothing is lost when you cut the card down to its essentials.

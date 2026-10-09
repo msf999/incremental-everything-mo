@@ -11,13 +11,23 @@ import {
   RemType,
 } from '@remnote/plugin-sdk';
 import { getIncrementalRemFromRem } from '../lib/incremental_rem';
+import { scanCooling } from '../lib/priority_review_document/cooling_gather';
+import { CoolingVerdict } from '../lib/priority_review_document/cooling';
 import { updateIncrementalRemCache } from '../lib/incremental_rem/cache';
 import { IncrementalRep, IncrementalRem } from '../lib/incremental_rem/types';
 import { isPowerupPropertySafe } from '../lib/powerupSlotFilter';
 import { getCardPriority } from '../lib/card_priority';
+import { resolveRawCardPriority, readHiddenSlotRecord, getRawCardPriorityString } from '../lib/card_priority/slot_access';
 import { findNonFlashcardDescendantsWithCardPriority, getSpuriousCardPriorityTags, removeCardPriorityFromSpecificRems, removeCardPriorityFromRem, dumpRemPriorityStructure, findRogueCardPriorityRemsInSubtree, findOrphanedImportedCardPriorities } from '../lib/card_priority/batch';
 import { diagnosePowerupReadPath } from '../lib/powerup_read_diagnostic';
+import {
+  ONBOARDING_TIPS,
+  TipsDiagnostics,
+  readTipsDiagnostics,
+  resetAcknowledgedTips,
+} from '../lib/onboarding_tips';
 import { dumpRawPowerupSlots } from '../lib/raw_slot_dump';
+import { getRemSchedulerInfo } from '../lib/scheduler_choice';
 import { scanKbForDetachedSlots, SlotScanReport } from '../lib/raw_slot_scan';
 import { repairDetachedCardPriorities, testDeleteOrphanProperties, RepairReport } from '../lib/raw_slot_repair';
 import {
@@ -34,6 +44,7 @@ import {
 } from '../lib/updated_at_probe';
 import {
   captureCardPrioritySnapshot,
+  downloadCardPrioritySnapshotFile,
   verifyCardPrioritySnapshot,
   restoreCardPrioritySnapshot,
   loadSnapshot,
@@ -42,6 +53,17 @@ import {
   RestoreReport,
 } from '../lib/card_priority_snapshot';
 import { probeLocalPerKeyLimit, LocalLimitReport } from '../lib/local_storage_probe';
+import { probeRemCardEnablement, probeCardOwnership } from '../lib/card_analytics_export';
+import { probeAliasStructure, AliasProbeReport } from '../lib/alias_probe';
+import {
+  OrphanCardAnalysis,
+  KEEP_REASON_LABELS,
+  KeepReason,
+  MarkupGoneScan,
+  analyzeOrphanCards,
+  deleteCards,
+  scanMarkupGoneCards,
+} from '../lib/orphan_card_cleanup';
 import {
   readCardPriorityStoreMeta,
   clearPersistedCardPriorities,
@@ -64,7 +86,7 @@ import {
   getReadingStatistics,
 } from '../lib/pdfUtils';
 import { formatDuration } from '../lib/utils';
-import { powerupCode, dismissedPowerupCode, dismissedHistorySlotCode, dismissedDateSlotCode, nextRepDateSlotCode, originalIncrementalDateSlotCode, repHistorySlotCode, prioritySlotCode,
+import { powerupCode, dismissedPowerupCode, dismissedHistorySlotCode, dismissedDateSlotCode, nextRepDateSlotCode, originalIncrementalDateSlotCode, repHistorySlotCode, prioritySlotCode, schedulerSlotCode,
   priorityShieldHistoryKey, documentPriorityShieldHistoryKey,
   cardPriorityShieldHistoryKey, documentCardPriorityShieldHistoryKey,
   cardShieldCleanupBackupIndexKey, cardShieldCleanupBackupPrefix,
@@ -428,11 +450,29 @@ function Debug() {
         }
       };
 
+      // The Scheduler slot, verbatim, beside what it resolves to. The slot is
+      // empty on every rem that simply follows the settings, so `stored: null`
+      // with a resolved scheduler is the normal case, not a read failure.
+      const probeSchedulerSlot = async () => {
+        try {
+          const stored = await rem.getPowerupProperty(powerupCode, schedulerSlotCode);
+          const info = await getRemSchedulerInfo(rp, rem);
+          return {
+            stored: stored === '' || stored == null ? null : String(stored),
+            effective: info.scheduler,
+            fromSettings: info.inherited,
+          };
+        } catch (e) {
+          return { error: String(e) };
+        }
+      };
+
       const rawSlotProbe = (await rem.hasPowerup(powerupCode))
         ? {
             priority: await probePrioritySlot(),
             nextRepDate: await probeDateSlot(nextRepDateSlotCode),
             originalIncDate: await probeDateSlot(originalIncrementalDateSlotCode),
+            scheduler: await probeSchedulerSlot(),
           }
         : null;
 
@@ -448,11 +488,31 @@ function Debug() {
       // falls through to the ancestor branch — reporting source 'inherited' and
       // lastUpdated 0 exactly as an untagged rem would. Only the raw slot values
       // distinguish "written here" from "resolved on read".
+      //
+      // The VALUE is read from both slots explicitly, not through
+      // readRawCardPriority: that helper skips the visible slot once this realm
+      // knows it is retired, and this panel exists precisely to show what is in
+      // each of them. `priority` is the effective value — hidden first, exactly
+      // the precedence every reader uses; `priorityLegacy` is whatever the
+      // deprecated visible slot still returns.
+      //
+      // A pre-migration rem keeps its old visible number: the migration deleted
+      // the property CHILD but the underlying slot value survived it, so reading
+      // the visible slot here reported a stale number as though it were the
+      // stored priority — and then flagged the (correct) cache as STALE against
+      // it. Rems created after the migration have nothing there at all.
+      const [hiddenPriority, visiblePriority] = await Promise.all([
+        rem.getPowerupProperty('cardPriority', 'priorityValue').catch(() => null),
+        rem.getPowerupProperty('cardPriority', 'priority').catch(() => null),
+      ]);
       const cardPrioritySlots = {
-        priority: await rem.getPowerupProperty('cardPriority', 'priority'),
+        priority: resolveRawCardPriority(hiddenPriority, visiblePriority),
+        priorityHidden: hiddenPriority || null,
+        priorityLegacy: visiblePriority || null,
         source: await rem.getPowerupProperty('cardPriority', 'prioritySource'),
         lastUpdated: await rem.getPowerupProperty('cardPriority', 'lastUpdated'),
       };
+      const hiddenSlotRecord = await readHiddenSlotRecord(rp);
 
       // What the session cache believes about this rem, next to what the DB
       // actually says. Widgets differ in which one they read — priority_editor
@@ -503,6 +563,7 @@ function Debug() {
         cardPriority,
         hasCardPriorityTag,
         cardPrioritySlots,
+        hiddenSlotRecord,
         cacheDrift,
         dismissed,
         isCardDisabledLocally,
@@ -537,6 +598,21 @@ function Debug() {
   const [isCleaningInflation, setIsCleaningInflation] = useState(false);
   const [isGlobalCleaning, setIsGlobalCleaning] = useState(false);
   const [globalScanProgress, setGlobalScanProgress] = useState<string>('');
+  const [cardOwnerIdInput, setCardOwnerIdInput] = useState<string>('');
+  const [isProbingCardOwner, setIsProbingCardOwner] = useState(false);
+  const [orphanRemIdInput, setOrphanRemIdInput] = useState<string>('');
+  const [orphanAnalysis, setOrphanAnalysis] = useState<OrphanCardAnalysis | null>(null);
+  const [orphanBusy, setOrphanBusy] = useState<string | null>(null);
+  const [orphanBackedUp, setOrphanBackedUp] = useState(false);
+  // Forward/backward records are a separate judgement from the cloze rule, so
+  // they are opted into explicitly rather than folded into the same count.
+  const [orphanIncludeDirectionless, setOrphanIncludeDirectionless] = useState(false);
+  const [markupScan, setMarkupScan] = useState<MarkupGoneScan | null>(null);
+  const [markupBusy, setMarkupBusy] = useState<string | null>(null);
+  const [markupBackedUp, setMarkupBackedUp] = useState(false);
+  // History entries with no grade among them (skips, resets, views) are a
+  // judgement call, so they are opted into rather than swept up by default.
+  const [markupIncludeTouched, setMarkupIncludeTouched] = useState(false);
   const [globalInflationPreview, setGlobalInflationPreview] = useState<null | {
     cutoffMs: number;
     scannedRems: number;
@@ -598,6 +674,8 @@ function Debug() {
   }>(null);
 
   const [isProbingSearch, setIsProbingSearch] = useState(false);
+  const [isProbingAlias, setIsProbingAlias] = useState(false);
+  const [aliasProbe, setAliasProbe] = useState<null | AliasProbeReport>(null);
   const [searchProbe, setSearchProbe] = useState<null | {
     plainString: string;
     typeLabel: string;
@@ -751,9 +829,23 @@ function Debug() {
   const [backupList, setBackupList] = useState<null | Array<{ key: string; backedUpAt: number | null; kbId: string | null; dateEntries: number }>>(null);
   const [restoreResult, setRestoreResult] = useState<null | { perKey: Array<{ key: string; added: number; skipped: number }>; source: string }>(null);
 
+  // ── Onboarding tips ──────────────────────────────────────────────────────
+  // Answers one question: why did a tip the user retired come back? The three
+  // ways that can happen are each visible in the report — the id is in one store
+  // and not the other, it sits under a knowledge-base partition that is not the
+  // current one, or it was never written at all.
+  //
+  // Declared here with the rest of the state, NOT next to its handlers further
+  // down: the `if (!debugData)` guard below is an early return, so a hook after
+  // it runs only on the renders that get past it and React counts a different
+  // number of hooks each time ("Rendered more hooks than during the previous
+  // render"). Every hook in this component belongs above that line.
+  const [tipsDiag, setTipsDiag] = useState<TipsDiagnostics | null>(null);
+  const [isReadingTips, setIsReadingTips] = useState(false);
+
   if (!debugData) return null;
 
-  const { incrementalRem, rawSlotProbe, cardPriority, hasCardPriorityTag, cardPrioritySlots, cacheDrift, dismissed, isCardDisabledLocally, isCardDisabledInAncestors, hasSpuriousTags, guaranteedRogue, suspicious, historySlotError, historyBackupExists, rem } = debugData;
+  const { incrementalRem, rawSlotProbe, cardPriority, hasCardPriorityTag, cardPrioritySlots, hiddenSlotRecord, cacheDrift, dismissed, isCardDisabledLocally, isCardDisabledInAncestors, hasSpuriousTags, guaranteedRogue, suspicious, historySlotError, historyBackupExists, rem } = debugData;
 
   const handleCardCompare = async () => {
     if (!remId) return;
@@ -889,17 +981,36 @@ function Debug() {
     }
 
     // getPowerupSlotByCode — the suspected-deprecated method.
-    const slotCases: Array<[string, string]> = [
-      [powerupCode, nextRepDateSlotCode],       // plugin powerup (Incremental)
-      ['cardPriority', 'priority'],             // plugin powerup (CardPriority)
-      [BuiltInPowerupCodes.PDFHighlight, 'Data'], // built-in powerup
+    const slotCases: Array<[string, string, string]> = [
+      [powerupCode, nextRepDateSlotCode, 'plugin powerup, visible slot'],
+      ['cardPriority', 'priorityValue', 'plugin powerup, HIDDEN slot — throwing is the correct answer'],
+      ['cardPriority', 'priority', 'plugin powerup, the retired visible slot'],
+      [BuiltInPowerupCodes.PDFHighlight, 'Data', 'built-in powerup'],
     ];
-    for (const [pu, slot] of slotCases) {
+    for (const [pu, slot, note] of slotCases) {
       try {
         const slotRem = await plugin.powerup.getPowerupSlotByCode(pu, slot);
-        console.log(`getPowerupSlotByCode('${pu}', '${slot}') → OK, _id=${slotRem?._id ?? '(undefined)'}`);
+        console.log(`getPowerupSlotByCode('${pu}', '${slot}') → OK, _id=${slotRem?._id ?? '(undefined)'} — ${note}`);
       } catch (e) {
-        console.log(`getPowerupSlotByCode('${pu}', '${slot}') → THREW: ${String(e)}`);
+        console.log(`getPowerupSlotByCode('${pu}', '${slot}') → THREW: ${String(e)} — ${note}`);
+      }
+    }
+
+    // What the slot actually HOLDS on the focused rem. getPowerupSlotByCode
+    // cannot answer for a hidden slot by design, so a probe built only from it
+    // says nothing about where the value is — which is the question this panel
+    // gets asked. getPowerupProperty answers it for both slots.
+    const valueRem = await plugin.rem.findOne(remId);
+    if (valueRem) {
+      for (const slot of ['priorityValue', 'priority']) {
+        try {
+          const v = await valueRem.getPowerupProperty('cardPriority', slot);
+          console.log(
+            `getPowerupProperty('cardPriority', '${slot}') on ${remId} → ${v === '' || v == null ? '(empty)' : JSON.stringify(v)}`
+          );
+        } catch (e) {
+          console.log(`getPowerupProperty('cardPriority', '${slot}') on ${remId} → THREW: ${String(e)}`);
+        }
       }
     }
 
@@ -936,7 +1047,9 @@ function Debug() {
 
       const cases: Array<{ group: Row['group']; id: string; note: string }> = [
         // Notes read the live default out of the table — a hardcoded literal here
-        // goes stale the moment a default is edited.
+        // goes stale the moment a default is edited. The "control" ids are only
+        // registered while a knowledge base is migrating; once it has, they throw
+        // like any other unregistered id, and that is the expected result.
         { group: 'control', id: defaultPriorityId, note: `registered number, default ${JSON.stringify(IE_SETTINGS_DEFAULTS[defaultPriorityId])}` },
         { group: 'control', id: displayPriorityShieldId, note: `registered boolean, default ${JSON.stringify(IE_SETTINGS_DEFAULTS[displayPriorityShieldId])}` },
         { group: 'control', id: remnoteEnvironmentId, note: `registered dropdown, default ${JSON.stringify(IE_SETTINGS_DEFAULTS[remnoteEnvironmentId])}` },
@@ -1017,9 +1130,13 @@ function Debug() {
     }
   };
 
-  // Re-reads every setting and overwrites the stored blob. For recovering a
-  // migration that ran while some settings were unreadable — not part of the
-  // normal path, which is merge-only.
+  // Re-reads every setting from RemNote's panel and overwrites the stored blob.
+  // For recovering a migration that ran while some settings were unreadable —
+  // not part of the normal path, which is merge-only and re-reads only the ids
+  // adopted since this KB's last completed seed. Note it can only do anything
+  // while the registrations still exist, i.e. during the single session in which
+  // a knowledge base migrates; afterwards every read throws, every setting is
+  // recorded as 'failed', and the stored values are left untouched.
   const handleForceRemigrate = async () => {
     setIsMigrating(true);
     try {
@@ -2147,6 +2264,481 @@ function Debug() {
     }
   };
 
+  // Spoiler-protection probe. The queue gate in lib/queue_prefetch decides that
+  // an IncRem is a "spoiler" when one of its OWN cards — or a card on one of its
+  // DIRECT children tagged `cloze-extract`, the clozes Alt+Z files underneath it
+  // — satisfies `(nextRepetitionTime ?? Infinity) <= now`. That predicate rests
+  // on a claim about the SDK — that an unscheduled card reports a null
+  // nextRepetitionTime — and getting it wrong in the other direction would hold
+  // an IncRem back in every session with no card ever appearing to release it.
+  // This prints the raw per-card state for both sources so the claim can be
+  // checked against real rems instead of assumed: disable one direction of a
+  // two-way card, or make a fresh never-practiced one, and read off what
+  // actually comes back.
+  // --- Priority Queue cooling probes (lib/priority_review_document/cooling*) ---
+  const coolingIso = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
+  const coolingDaysAgo = (ms: number) => ((Date.now() - ms) / 86_400_000).toFixed(1);
+  const describeVerdictReasons = (v: CoolingVerdict) =>
+    v.reasons.map((r) => `${r.relation} ← "${(r.sourceLabel ?? r.sourceRemId).slice(0, 40)}" ${coolingDaysAgo(r.seenAt)}d ago`).join(' | ') ||
+    (v.extendedUntil ? 'extended by user' : '');
+
+  /** Dry run over the focused rem: every seen event the rule looked at, then the verdict. */
+  const handleProbeCooling = async () => {
+    if (!rem) { await plugin.app.toast('No rem found!'); return; }
+    const result = await scanCooling(plugin, [rem._id], { includeCandidates: true, dryRun: true });
+    const candidate = result.candidates?.[0];
+    if (!candidate) {
+      console.log(`[Cooling probe] ${rem._id} owes no due card right now, so it cannot be cooling.`);
+      await plugin.app.toast('This rem has no due card — nothing to cool. See console.');
+      return;
+    }
+    console.group(`[Cooling probe] "${candidate.label ?? rem._id}"`);
+    console.log('Due cards (what would be spoiled):', candidate.dueCards.map((c) => `${c.cardId} interval ${c.intervalDays.toFixed(1)}d`));
+    console.table(
+      candidate.seen.map((e) => ({
+        relation: e.relation,
+        source: (e.sourceLabel ?? '').slice(0, 60),
+        sourceRemId: e.sourceRemId,
+        cardId: e.cardId ?? '(IncRem read)',
+        seenAt: coolingIso(e.seenAt),
+        daysAgo: coolingDaysAgo(e.seenAt),
+        stillDue: e.stillDue,
+      }))
+    );
+    const v = result.verdicts[0];
+    if (v) {
+      console.log(`COOLING until ${coolingIso(v.until)} — window ${v.windowDays}d from a ${v.intervalDays.toFixed(0)}d interval. Reasons: ${describeVerdictReasons(v)}`);
+    } else {
+      console.log('NOT cooling: no seen event inside the window (or it is still due / released / never-cool).');
+    }
+    console.groupEnd();
+    await plugin.app.toast(v ? `Cooling until ${coolingIso(v.until)} — see console` : 'Not cooling — see console');
+  };
+
+  /** Real scan over the 200 highest-priority rems with due cards; publishes the cache the shields read. */
+  /**
+   * What Card.createdAt actually records, before a "recently created" cooling
+   * rule relies on it. For each card of the focused Rem: direction, createdAt,
+   * how far it sits from the Rem's own createdAt, the due date, and how many
+   * real repetitions it has. Two cases need checking on a fresh test Rem:
+   *   1. a cloze added later to a Rem that already has cards — does the new
+   *      cloze card get its own createdAt, or the Rem's / an older card's?
+   *   2. a direction switched off and back on — does the returning card keep
+   *      its original createdAt?
+   * Reads the Rem's own cards only (no card.getAll).
+   */
+  const handleProbeCardCreatedAt = async () => {
+    if (!rem) { await plugin.app.toast('No rem found!'); return; }
+    const cards = (await rem.getCards()) || [];
+    const remCreated = rem.createdAt;
+    const iso = (ms?: number | null) => (typeof ms === 'number' && ms > 0 ? new Date(ms).toISOString().replace('T', ' ').slice(0, 19) : '(none)');
+    const days = (ms: number) => (ms / 86_400_000).toFixed(3);
+    const VIEWED = new Set([0, 0.01, 0.5, 1, 1.5, 2]);
+    const rows = cards.map((c: any) => {
+      const history: any[] = c.repetitionHistory || [];
+      const realReps = history.filter((h) => h && VIEWED.has(h.score)).length;
+      const firstRep = history.filter((h) => h && typeof h.date === 'number').sort((a, b) => a.date - b.date)[0];
+      return {
+        cardId: c._id,
+        type: typeof c.type === 'string' ? c.type : `cloze:${c.type?.clozeId ?? '?'}`,
+        createdAt: iso(c.createdAt),
+        daysAfterRemCreated: typeof c.createdAt === 'number' ? days(c.createdAt - remCreated) : '(none)',
+        sameAsRemCreatedAt: c.createdAt === remCreated,
+        nextRepetitionTime: iso(c.nextRepetitionTime),
+        nextRepEqualsCreatedAt: c.nextRepetitionTime === c.createdAt,
+        realReps,
+        historyEntries: history.length,
+        firstHistoryEntry: firstRep ? `${iso(firstRep.date)} (score ${firstRep.score})` : '(none)',
+        ageDays: typeof c.createdAt === 'number' ? days(Date.now() - c.createdAt) : '(none)',
+      };
+    });
+    const distinctCreated = new Set(cards.map((c: any) => c.createdAt)).size;
+    console.group(`[CreatedAt probe] "${(rem.text || []).filter((t: any) => typeof t === 'string').join('').slice(0, 60)}" ${rem._id}`);
+    console.log(`Rem createdAt: ${iso(remCreated)} · ${cards.length} card(s) · ${distinctCreated} distinct card createdAt value(s)`);
+    console.table(rows);
+    console.log(
+      'Read it as: a card added later should show a createdAt AFTER the Rem\'s (daysAfterRemCreated > 0) and ' +
+        'distinct from its siblings. sameAsRemCreatedAt=true on a card you know is newer means createdAt is ' +
+        'not usable for "recently created". nextRepEqualsCreatedAt=true with realReps=0 is the expected new-card state.'
+    );
+    console.groupEnd();
+    await plugin.app.toast(`CreatedAt probe: ${cards.length} card(s), ${distinctCreated} distinct createdAt value(s) — see console`);
+  };
+
+  const handleCoolingScanTopDue = async () => {
+    const infos = (await plugin.storage.getSession<CardPriorityInfo[]>(allCardPriorityInfoKey)) || [];
+    const top = infos
+      .filter((i) => (i.dueCards ?? 0) > 0 && !i.paused)
+      .sort((a, b) => a.priority - b.priority)
+      .slice(0, 200);
+    if (top.length === 0) { await plugin.app.toast('Card priority cache is empty or nothing is due.'); return; }
+    const result = await scanCooling(plugin, top.map((t) => t.remId), {
+      priorityByRemId: new Map(top.map((t) => [t.remId, t.priority])),
+      scopeRemId: null,
+    });
+    console.group(`[Cooling scan] ${result.verdicts.length} cooling of ${result.withDueCards} top-due rems (${result.checked} checked, ${result.clustersSkipped} clusters skipped) in ${result.elapsedMs}ms`);
+    console.table(
+      result.verdicts.map((v) => ({
+        priority: v.priority,
+        rem: (v.label ?? '').slice(0, 60),
+        remId: v.remId,
+        until: coolingIso(v.until),
+        windowDays: v.windowDays,
+        intervalDays: Math.round(v.intervalDays),
+        reasons: describeVerdictReasons(v),
+      }))
+    );
+    console.groupEnd();
+    await plugin.app.toast(`Cooling: ${result.verdicts.length} of ${result.withDueCards} top-due rems, ${result.elapsedMs}ms — see console`);
+  };
+
+  const handleProbeSpoilerState = async () => {
+    if (!rem) return;
+    const now = Date.now();
+    const [ownCards, enablePractice, direction, children, clozeExtractTag] = await Promise.all([
+      rem.getCards(),
+      rem.getEnablePractice(),
+      rem.getPracticeDirection(),
+      rem.getChildrenRem(),
+      plugin.rem.findByName(['cloze-extract'], null),
+    ]);
+
+    const describe = (c: any, source: string, ownerId: string) => ({
+      source,
+      ownerRemId: ownerId,
+      cardId: c._id,
+      type: typeof c.type === 'string' ? c.type : `cloze:${c.type.clozeId}`,
+      nextRepetitionTime: c.nextRepetitionTime ?? null,
+      nextRepHuman: c.nextRepetitionTime ? new Date(c.nextRepetitionTime).toISOString() : '(null)',
+      lastRepHuman: c.lastRepetitionTime ? new Date(c.lastRepetitionTime).toISOString() : '(null)',
+      reps: c.repetitionHistory?.length ?? 0,
+      // Exactly the predicate the queue gate applies.
+      countsAsDue: (c.nextRepetitionTime ?? Infinity) <= now,
+    });
+
+    const rows = ownCards.map((c) => describe(c, 'own', rem._id));
+
+    // Same walk the gate does: direct children only, cloze-extract tag only.
+    let clozeChildCount = 0;
+    if (clozeExtractTag) {
+      for (const child of children || []) {
+        const tags = await child.getTagRems();
+        if (!tags?.some((t) => t._id === clozeExtractTag._id)) continue;
+        clozeChildCount++;
+        const childCards = await child.getCards();
+        childCards.forEach((c) => rows.push(describe(c, 'cloze-extract child', child._id)));
+      }
+    }
+
+    // Cross-check the membership source. The gate reads the tag PER CHILD
+    // (getTagRems) rather than from the tag's taggedRem() member list, because
+    // that list is known to under-report — it enumerated three Rems on a KB
+    // holding thousands (see lib/empty_ecd_scan.ts). That finding was about
+    // BUILT-IN powerups, and cloze-extract is a plain plugin-made Rem, so it
+    // should not apply here; this prints the evidence either way rather than
+    // leaving it assumed. Two numbers matter: whether the KB-wide total is a
+    // plausible count of the user's Alt+Z extracts, and — the decisive one —
+    // whether every child getTagRems() found is actually PRESENT in that list.
+    // A child found per-rem but missing from the list is direct proof the list
+    // under-reports this tag too.
+    let membershipLine = 'no cloze-extract tag in this KB, membership cross-check skipped';
+    if (clozeExtractTag) {
+      try {
+        const members = await clozeExtractTag.taggedRem();
+        const memberIds = new Set(members.map((m) => m._id));
+        const foundChildIds = Array.from(new Set(rows.filter((r) => r.source === 'cloze-extract child').map((r) => r.ownerRemId)));
+        const missing = foundChildIds.filter((id) => !memberIds.has(id));
+        membershipLine =
+          `taggedRem() reports ${members.length} cloze-extract Rem(s) KB-wide; ` +
+          `of the ${foundChildIds.length} child/children getTagRems() found here, ` +
+          (missing.length === 0
+            ? 'all appear in that list (sources agree)'
+            : `${missing.length} MISSING from it [${missing.join(', ')}] — taggedRem() under-reports this tag`);
+      } catch (e) {
+        console.error('taggedRem() cross-check failed:', e);
+        membershipLine = 'taggedRem() cross-check threw — see console';
+      }
+    }
+
+    const dueCount = rows.filter((r) => r.countsAsDue).length;
+    console.log(`🔎 cloze-extract membership: ${membershipLine}.`);
+    console.log(
+      `🎭 Spoiler probe for ${rem._id}: enablePractice=${enablePractice}, direction=${direction}, ` +
+        `${ownCards.length} own card(s), ${clozeChildCount} cloze-extract child(ren) with ` +
+        `${rows.length - ownCards.length} card(s), ${dueCount} counted as due` +
+        (clozeExtractTag ? '' : ' — no cloze-extract tag in this KB, child check skipped') +
+        `.`
+    );
+    console.table(rows);
+    await plugin.app.toast(
+      `${ownCards.length} own + ${rows.length - ownCards.length} cloze-child card(s), ` +
+        `${dueCount} due (practice: ${enablePractice ? direction : 'off'}).\n${membershipLine}.\nSee console.`
+    );
+  };
+
+  /**
+   * Card enablement probe. `rem.getCards()` hides DISABLED cards, so a Rem that
+   * still owns card records can report zero cards — which makes a deliberately
+   * switched-off card indistinguishable from one the Rem no longer produces.
+   * This prints every signal that CAN tell them apart, for this rem: the
+   * per-Rem Enable Cards flag, the practice direction, the own / inherited
+   * "Disable Descendant Cards" tag along the whole ancestor chain, and each
+   * card record with whether getCards() surfaces it.
+   */
+  const handleProbeCardEnablement = async () => {
+    if (!remId) return;
+    await plugin.app.toast('Probing card enablement (reads the card table)…');
+    const report = await probeRemCardEnablement(plugin, remId);
+    if (!report) {
+      await plugin.app.toast('Rem not found.');
+      return;
+    }
+    const disablingAncestor = report.ancestors.find((a) => a.disableCards);
+    const pausedAncestor = report.ancestors.find((a) => a.deckStatus === 'Paused');
+    console.log(
+      `🃏 Card enablement probe for ${report.remId} — ${report.text}\n` +
+        `   enablePractice=${report.enablePractice}, practiceDirection=${report.practiceDirection}\n` +
+        `   cards: ${report.cardsViaGetAll} in the card table, ${report.cardsViaGetCards} surfaced by rem.getCards()\n` +
+        `   DisableCards on this rem: ${report.disableCardsOwn}\n` +
+        `   cloze ids in the rem text: ${report.clozeIds.length ? report.clozeIds.join(', ') : '(none)'}, hasBackText=${report.hasBackText}\n` +
+        `   disabled cloze ids (derived): ${report.disabledClozeIds.length ? report.disabledClozeIds.join(', ') : '(none)'}` +
+        (report.clozeReadingMaskedByRemWideCause
+          ? ' — NOT CONCLUSIVE: a Rem-wide cause below is hiding every card, so this list is a lower bound'
+          : report.allClozesDisabled
+            ? ' — ALL of them, i.e. the state /Disable All Cloze Cards leaves behind'
+            : '') +
+        `\n` +
+        `   isTable=${report.isTableOwn}, inTable=${report.inTable}\n` +
+        `   raw card fields: ${report.rawCardKeys.join(', ')}\n` +
+        `   disabling ancestor: ${disablingAncestor ? `${disablingAncestor.remId} — ${disablingAncestor.text}` : 'none'}\n` +
+        `   paused deck ancestor: ${pausedAncestor ? `${pausedAncestor.remId} — ${pausedAncestor.text}` : 'none'}`
+    );
+    if (report.disabledClozeIds.length > 0 && !report.clozeReadingMaskedByRemWideCause) {
+      // Said in full every time it fires: this is the one state in the probe
+      // that no button in this plugin can undo, and the natural next move —
+      // switching cards back on for the Rem — writes `forget: false` and leaves
+      // the disabled-cloze list exactly as it was.
+      console.log(
+        `   ⚠️ RemNote stores these in the Rem's \`dci\` field, which plugins can neither read ` +
+          `nor write (the SDK's Rem serializer drops it; the rem bridge has no cloze accessor). ` +
+          `The list above is DERIVED: a card record exists for the cloze, the markup is still in ` +
+          `the text, and rem.getCards() omits it. Switching cards ON for this Rem will NOT clear ` +
+          `it — run /Enable All Cloze Cards inside RemNote, or click the greyed cloze and choose ` +
+          `"Enable this card".`
+      );
+    }
+    console.table(report.cards);
+    console.table(report.ancestors);
+    await plugin.app.toast(
+      `${report.cardsViaGetAll} card record(s), ${report.cardsViaGetCards} surfaced. ` +
+        `enablePractice=${report.enablePractice}, direction=${report.practiceDirection}` +
+        (disablingAncestor ? ', disabled by ancestor' : '') +
+        (report.disabledClozeIds.length && !report.clozeReadingMaskedByRemWideCause
+          ? `. ${report.allClozesDisabled ? 'ALL' : report.disabledClozeIds.length} cloze(s) switched off — only /Enable All Cloze Cards undoes that`
+          : '') +
+        '. See console.'
+    );
+  };
+
+  /**
+   * Ownership probe. Every per-Rem verdict in the analytics groups cards by
+   * `card.remId`. This checks that field against the SDK's own `card.getRem()`
+   * for a single card: if they disagree, the grouping — and every cause derived
+   * from it — is attributing cards to the wrong Rem.
+   */
+  const handleProbeCardOwnership = async () => {
+    const cardId = cardOwnerIdInput.trim();
+    if (!cardId) return;
+    setIsProbingCardOwner(true);
+    try {
+      const report = await probeCardOwnership(plugin, cardId);
+      if (!report) {
+        await plugin.app.toast('Card not found.');
+        return;
+      }
+      console.log(
+        `🔗 Card ownership probe for ${report.cardId}\n` +
+          `   card.remId      = ${report.remIdField}  — ${report.remIdFieldText}\n` +
+          `   card.getRem()   = ${report.getRemId ?? '(null)'}${report.getRemText ? `  — ${report.getRemText}` : ''}\n` +
+          `   AGREE: ${report.agrees}\n` +
+          `   type=${report.cardType} cloze=${report.clozeId ?? '—'} reps=${report.reps} next=${report.nextRepetitionTime}\n` +
+          `   cloze ids on card.remId's rem: ${report.remIdFieldClozeIds.length ? report.remIdFieldClozeIds.join(', ') : '(none)'}\n` +
+          `   markup present on card.remId's rem: ${report.markupPresentOnRemIdField}` +
+          (report.agrees
+            ? ''
+            : `\n   markup present on getRem()'s rem: ${report.markupPresentOnGetRem}`)
+      );
+      console.table(report.ancestors);
+      await plugin.app.toast(
+        report.agrees
+          ? `remId and getRem() agree (${report.remIdField}). See console.`
+          : `MISMATCH: remId=${report.remIdField} but getRem()=${report.getRemId}. See console.`
+      );
+    } catch (e: any) {
+      console.error('[card ownership probe] failed', e);
+      await plugin.app.toast(`Probe failed: ${e?.message || String(e)}`);
+    } finally {
+      setIsProbingCardOwner(false);
+    }
+  };
+
+  /**
+   * Step 1 of the orphaned-cloze cleanup: analyze and back up. Deleting cards is
+   * not undoable, so the delete button stays locked until the backup file has
+   * actually been written.
+   */
+  const handleAnalyzeOrphanCards = async () => {
+    const remId = orphanRemIdInput.trim();
+    if (!remId) return;
+    setOrphanBusy('Analyzing…');
+    setOrphanAnalysis(null);
+    setOrphanBackedUp(false);
+    try {
+      const analysis = await analyzeOrphanCards(plugin, remId);
+      if (!analysis) {
+        await plugin.app.toast('Rem not found.');
+        return;
+      }
+      setOrphanAnalysis(analysis);
+      setOrphanIncludeDirectionless(false);
+      console.log(
+        `🧹 Orphan card analysis for ${analysis.remId} — ${analysis.remText}\n` +
+          `   ${analysis.totalCards} card record(s), ${analysis.surfacedCards} surfaced by rem.getCards()\n` +
+          `   cloze ids in the rem text: ${analysis.remClozeIds.length}, hasBackText=${analysis.hasBackText}\n` +
+          `   DELETABLE (cloze markup gone AND unscheduled): ${analysis.deletable.length}\n` +
+          `   OPT-IN (forward/backward, no back side, unscheduled): ${analysis.deletableDirectionless.length}\n` +
+          `   kept: ${JSON.stringify(analysis.keptByReason)}`
+      );
+      console.table(analysis.kept.slice(0, 50));
+    } catch (e: any) {
+      console.error('[orphan cleanup] analyze failed', e);
+      await plugin.app.toast(`Analyze failed: ${e?.message || String(e)}`);
+    } finally {
+      setOrphanBusy(null);
+    }
+  };
+
+  const handleBackupOrphanCards = () => {
+    if (!orphanAnalysis) return;
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const payload = {
+      remId: orphanAnalysis.remId,
+      remText: orphanAnalysis.remText,
+      exportedAt: new Date().toISOString(),
+      cards: orphanAnalysis.backup,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `orphan-cards-backup-${orphanAnalysis.remId}-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    setOrphanBackedUp(true);
+  };
+
+  /** Step 2: delete exactly the analyzed list. Never recomputed here — what the
+   *  user was shown is what gets deleted. */
+  const handleDeleteOrphanCards = async () => {
+    if (!orphanAnalysis || !orphanBackedUp) return;
+    const ids = orphanIncludeDirectionless
+      ? [...orphanAnalysis.deletable, ...orphanAnalysis.deletableDirectionless]
+      : orphanAnalysis.deletable;
+    const n = ids.length;
+    if (n === 0) return;
+    setOrphanBusy(`Deleting 0 / ${n}…`);
+    try {
+      const res = await deleteCards(plugin, ids, (done, total) =>
+        setOrphanBusy(`Deleting ${done} / ${total}…`)
+      );
+      await plugin.app.toast(
+        `Deleted ${res.deleted} card(s)` + (res.failed ? `, ${res.failed} failed` : '') +
+          ` in ${(res.elapsedMs / 1000).toFixed(1)}s.`
+      );
+      // Re-analyze so the panel reflects reality rather than the pre-delete list.
+      const after = await analyzeOrphanCards(plugin, orphanAnalysis.remId);
+      setOrphanAnalysis(after);
+      setOrphanBackedUp(false);
+      setOrphanIncludeDirectionless(false);
+    } catch (e: any) {
+      console.error('[orphan cleanup] delete failed', e);
+      await plugin.app.toast(`Delete failed: ${e?.message || String(e)}`);
+    } finally {
+      setOrphanBusy(null);
+    }
+  };
+
+  const handleScanMarkupGone = async () => {
+    setMarkupBusy('Scanning…');
+    setMarkupScan(null);
+    setMarkupBackedUp(false);
+    setMarkupIncludeTouched(false);
+    try {
+      const scan = await scanMarkupGoneCards(plugin, (done, total, phase) =>
+        setMarkupBusy(total ? `${phase} ${done.toLocaleString()} / ${total.toLocaleString()}` : phase)
+      );
+      setMarkupScan(scan);
+      await plugin.app.toast(
+        `${scan.untouched.length} card(s) with no history, ${scan.touched.length} never-graded, ` +
+          `${scan.gradedCount} kept (real practice). See console.`
+      );
+    } catch (e: any) {
+      console.error('[markup-gone scan] failed', e);
+      await plugin.app.toast(`Scan failed: ${e?.message || String(e)}`);
+    } finally {
+      setMarkupBusy(null);
+    }
+  };
+
+  const handleBackupMarkupGone = () => {
+    if (!markupScan) return;
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      untouched: markupScan.untouched,
+      touched: markupScan.touched,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `markup-gone-cards-backup-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    setMarkupBackedUp(true);
+  };
+
+  const handleDeleteMarkupGone = async () => {
+    if (!markupScan || !markupBackedUp) return;
+    const ids = [
+      ...markupScan.untouched.map((c) => c.cardId),
+      ...(markupIncludeTouched ? markupScan.touched.map((c) => c.cardId) : []),
+    ];
+    if (ids.length === 0) return;
+    setMarkupBusy(`Deleting 0 / ${ids.length}…`);
+    try {
+      const res = await deleteCards(plugin, ids, (done, total) =>
+        setMarkupBusy(`Deleting ${done} / ${total}…`)
+      );
+      await plugin.app.toast(
+        `Deleted ${res.deleted} card(s)` + (res.failed ? `, ${res.failed} failed` : '') +
+          ` in ${(res.elapsedMs / 1000).toFixed(1)}s.`
+      );
+      setMarkupScan(null);
+      setMarkupBackedUp(false);
+      setMarkupIncludeTouched(false);
+    } catch (e: any) {
+      console.error('[markup-gone delete] failed', e);
+      await plugin.app.toast(`Delete failed: ${e?.message || String(e)}`);
+    } finally {
+      setMarkupBusy(null);
+    }
+  };
+
   const handleDumpStructure = async () => {
     if (!rem) return;
     await plugin.app.toast('Dumping slot/card structure to console...');
@@ -2272,21 +2864,7 @@ function Debug() {
       // for the in-app verify/restore, but it is the same storage layer the
       // experiment is poking at, and it has limits we have not measured at 45k
       // rows — so the snapshot is not considered taken until a file exists.
-      let downloaded = false;
-      try {
-        const blob = new Blob([JSON.stringify({ meta: result.meta, rows: result.rows })], {
-          type: 'application/json',
-        });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `card-priority-snapshot-${dayjs().format('YYYY-MM-DD-HHmmss')}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-        downloaded = true;
-      } catch (err) {
-        console.error('[slot migration] download failed', err);
-      }
+      const downloaded = downloadCardPrioritySnapshotFile(result);
 
       setSlotMigNote(
         `Captured ${result.meta.count} priorities (~${(result.approxBytes / 1024 / 1024).toFixed(1)}MB). ` +
@@ -2659,7 +3237,7 @@ function Debug() {
   };
 
   // KB-wide audit that answers: does `getPowerupByCode('cardPriority').taggedRem()`
-  // match reality? "Remove All CardPriority Tags" and the cache both enumerate via
+  // match reality? "Remove CardPriority Tags…" and the cache both enumerate via
   // taggedRem(), yet it can return far fewer rems than are actually tagged. This
   // cross-checks taggedRem() against a DIRECT hasPowerup('cardPriority') probe over
   // every card-bearing rem, and also flags rems that carry a priority slot value
@@ -2717,8 +3295,12 @@ function Debug() {
             if (!r) return;
             const has = await r.hasPowerup('cardPriority');
             const inTagged = taggedIds.has(rid);
+            // The EFFECTIVE value: hidden slot first, deprecated visible one
+            // second. Reading only the visible slot made "slot without tag"
+            // uncountable after the hidden-slot migration — every value the
+            // plugin writes now lands in the hidden slot.
             let slotVal: any = null;
-            try { slotVal = await r.getPowerupProperty('cardPriority', 'priority'); } catch { /* ignore */ }
+            try { slotVal = await getRawCardPriorityString(r); } catch { /* ignore */ }
             const hasSlotValue = slotVal != null && String(slotVal).trim() !== '';
 
             if (has) hasPowerupCount++;
@@ -3251,6 +3833,31 @@ function Debug() {
     await plugin.app.toast(ok ? 'Copied to clipboard.' : 'Copy failed — long-press the box and Select All → Copy.');
   };
 
+  // Alias structure probe. The reference picker builds an alias reference as
+  // { i:'q', _id: <owner>, aliasId: <alias> } and gets that second id from
+  // rem.getAliases(); the objects it returns now carry readable text but an
+  // empty _id, so the picker inserts a plain reference and the alias text is
+  // lost. This asks every other route for the id — ids already written into
+  // existing references, the Aliases powerup property, child rems — and says
+  // which one the picker should use.
+  const handleAliasProbe = async () => {
+    if (!remId) {
+      await plugin.app.toast('Focus a rem first (one that has an alias).');
+      return;
+    }
+    setIsProbingAlias(true);
+    try {
+      const report = await probeAliasStructure(plugin, remId);
+      setAliasProbe(report);
+      console.log('[alias-probe]', report);
+    } catch (e) {
+      console.error('[alias-probe] failed:', e);
+      await plugin.app.toast(`Alias probe failed: ${(e as any)?.message ?? e}`);
+    } finally {
+      setIsProbingAlias(false);
+    }
+  };
+
   const handleSearchProbe = async () => {
     if (!remId) return;
     setIsProbingSearch(true);
@@ -3620,6 +4227,26 @@ function Debug() {
     }
   };
 
+  const handleReadTipsState = async () => {
+    setIsReadingTips(true);
+    try {
+      const report = await readTipsDiagnostics(plugin);
+      setTipsDiag(report);
+      console.log('[onboarding-tips] diagnostics:', report);
+    } catch (e) {
+      console.error('[onboarding-tips] probe failed:', e);
+      await plugin.app.toast('Tips probe failed — check console.');
+    } finally {
+      setIsReadingTips(false);
+    }
+  };
+
+  const handleResetTips = async () => {
+    await resetAcknowledgedTips(plugin);
+    setTipsDiag(await readTipsDiagnostics(plugin));
+    await plugin.app.toast('Every tip is unacknowledged again in this knowledge base.');
+  };
+
   const preStyle = { backgroundColor: 'var(--rn-clr-background-secondary)', padding: '8px', borderRadius: '4px', marginTop: '4px', fontSize: '11px', overflowX: 'auto' as 'auto' };
   const smallBtnStyle: CSSProperties = { fontSize: '11px', padding: '2px 8px', backgroundColor: 'var(--rn-clr-background-secondary)', color: 'var(--rn-clr-content-primary)', border: '1px solid var(--rn-clr-border)', borderRadius: '4px', cursor: 'pointer' };
 
@@ -3866,6 +4493,11 @@ function Debug() {
             label="Created reference"
             data={<pre style={preStyle}>{JSON.stringify(rawSlotProbe.originalIncDate, null, 2)}</pre>}
           />
+          <Info
+            className="probe-scheduler"
+            label="Scheduler slot"
+            data={<pre style={preStyle}>{JSON.stringify(rawSlotProbe.scheduler, null, 2)}</pre>}
+          />
         </div>
       )}
 
@@ -3918,6 +4550,81 @@ function Debug() {
                  title="Delete all CardPriority slots and let the plugin recreate them to fix duplicates"
                >
                  Scrub Duplicate Slots
+               </button>
+               <button
+                 onClick={handleProbeSpoilerState}
+                 style={{
+                   fontSize: '11px',
+                   padding: '2px 8px',
+                   backgroundColor: 'var(--rn-clr-background-secondary)',
+                   color: 'var(--rn-clr-content-primary)',
+                   border: '1px solid var(--rn-clr-border)',
+                   borderRadius: '4px',
+                   cursor: 'pointer'
+                 }}
+                 title="Print every card on this rem and on its cloze-extract children, with raw nextRepetitionTime and whether the queue's spoiler gate counts it as due"
+               >
+                 Probe Spoiler State
+               </button>
+               <button
+                 onClick={handleProbeCooling}
+                 style={{
+                   fontSize: '11px',
+                   padding: '2px 8px',
+                   backgroundColor: 'var(--rn-clr-background-secondary)',
+                   color: 'var(--rn-clr-content-primary)',
+                   border: '1px solid var(--rn-clr-border)',
+                   borderRadius: '4px',
+                   cursor: 'pointer'
+                 }}
+                 title="Dry-run the Priority Queue cooling rule on this rem: lists every recently seen sibling/parent/descendant card it looked at and whether the rem is cooling, and for how long"
+               >
+                 Probe Cooling
+               </button>
+               <button
+                 onClick={handleCoolingScanTopDue}
+                 style={{
+                   fontSize: '11px',
+                   padding: '2px 8px',
+                   backgroundColor: 'var(--rn-clr-background-secondary)',
+                   color: 'var(--rn-clr-content-primary)',
+                   border: '1px solid var(--rn-clr-border)',
+                   borderRadius: '4px',
+                   cursor: 'pointer'
+                 }}
+                 title="Run the cooling scan over the 200 highest-priority rems with due cards and publish the result to the session cache (what the shields will read). Prints verdicts + timing to the console"
+               >
+                 Cooling Scan (top 200 due)
+               </button>
+               <button
+                 onClick={handleProbeCardCreatedAt}
+                 style={{
+                   fontSize: '11px',
+                   padding: '2px 8px',
+                   backgroundColor: 'var(--rn-clr-background-secondary)',
+                   color: 'var(--rn-clr-content-primary)',
+                   border: '1px solid var(--rn-clr-border)',
+                   borderRadius: '4px',
+                   cursor: 'pointer'
+                 }}
+                 title="Print each card of this rem with its createdAt, its offset from the rem's own createdAt, due date and real repetitions — to check whether a cloze added later, or a direction switched back on, gets its own creation time"
+               >
+                 Probe Card createdAt
+               </button>
+               <button
+                 onClick={handleProbeCardEnablement}
+                 style={{
+                   fontSize: '11px',
+                   padding: '2px 8px',
+                   backgroundColor: 'var(--rn-clr-background-secondary)',
+                   color: 'var(--rn-clr-content-primary)',
+                   border: '1px solid var(--rn-clr-border)',
+                   borderRadius: '4px',
+                   cursor: 'pointer'
+                 }}
+                 title="Print every signal that decides whether this rem's cards are enabled: enablePractice, practice direction, own and inherited Disable Descendant Cards, and each card record with whether rem.getCards() surfaces it"
+               >
+                 Probe Card Enablement
                </button>
                <button
                  onClick={handleDumpStructure}
@@ -4003,7 +4710,7 @@ function Debug() {
                          in its priority slot — so the numbers below are resolved on read from the
                          nearest ancestor, exactly as they would be for an untagged rem.{' '}
                          {cardPriority.cardCount > 0
-                           ? '"Sanitize Rogue Tags" will NOT touch this: it only strips tags from rems that own no cards, and this one does. setCardPriority always writes priority, source and lastUpdated together, so a surviving source/lastUpdated with no priority means the value was lost after it was written, not that the write was partial. To drop tags wholesale while flashcard prioritisation is off, use the "Remove All CardPriority Tags" command.'
+                           ? '"Sanitize Rogue Tags" will NOT touch this: it only strips tags from rems that own no cards, and this one does. setCardPriority always writes priority, source and lastUpdated together, so a surviving source/lastUpdated with no priority means the value was lost after it was written, not that the write was partial. To drop tags wholesale while flashcard prioritisation is off, use the "Remove CardPriority Tags…" command.'
                            : 'This rem owns no cards, so "Sanitize Rogue Tags" is the tool that removes it.'}
                        </>
                      ) : (
@@ -4015,10 +4722,35 @@ function Debug() {
                      )}
                    </span>
                    <span style={{ fontFamily: 'monospace', color: 'var(--rn-clr-content-tertiary)' }}>
-                     hasPowerup={String(hasCardPriorityTag)} · slots: priority=
-                     {JSON.stringify(cardPrioritySlots.priority ?? null)} source=
+                     hasPowerup={String(hasCardPriorityTag)} · slots: priorityValue=
+                     {JSON.stringify(cardPrioritySlots.priorityHidden ?? null)} source=
                      {JSON.stringify(cardPrioritySlots.source ?? null)} lastUpdated=
                      {JSON.stringify(cardPrioritySlots.lastUpdated ?? null)}
+                   </span>
+                   {/* The deprecated visible slot, shown only when it still
+                       answers. Its value is NOT what the plugin uses once the
+                       hidden slot holds one: the migration deleted the property
+                       children but left the slot values behind, so a rem that
+                       predates it keeps the number it had back then. Silence here
+                       is the healthy state. */}
+                   {cardPrioritySlots.priorityLegacy != null && (
+                     <span style={{ fontFamily: 'monospace', color: 'var(--rn-clr-content-tertiary)' }}>
+                       legacy visible slot: priority=
+                       {JSON.stringify(cardPrioritySlots.priorityLegacy)}
+                       {cardPrioritySlots.priorityHidden
+                         ? cardPrioritySlots.priorityHidden === cardPrioritySlots.priorityLegacy
+                           ? ' — agrees with the hidden slot'
+                           : ' — STALE leftover, ignored (the hidden slot wins)'
+                         : ' — this is the value in use: nothing in the hidden slot yet'}
+                     </span>
+                   )}
+                   <span style={{ fontFamily: 'monospace', color: 'var(--rn-clr-content-tertiary)' }}>
+                     hidden-slot migration:{' '}
+                     {hiddenSlotRecord?.completedAt
+                       ? 'done, visible slot retired'
+                       : hiddenSlotRecord?.migratedAt
+                       ? 'run, visible slot still registered'
+                       : 'not run on this KB'}
                    </span>
                    {/* Cache vs DB. Which one a widget shows depends on the widget
                        — priority_editor reads the value live, card_info_bar reads
@@ -4765,6 +5497,53 @@ function Debug() {
 
       <div style={{ marginTop: '16px' }}>
         <h2 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '12px', paddingBottom: '4px', borderBottom: '1px solid var(--rn-clr-background-tertiary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          Alias Structure
+          <button
+            onClick={handleAliasProbe}
+            disabled={isProbingAlias}
+            style={{ fontSize: '11px', padding: '2px 8px', backgroundColor: 'var(--rn-clr-background-secondary)', color: 'var(--rn-clr-content-primary)', border: '1px solid var(--rn-clr-border)', borderRadius: '4px', cursor: isProbingAlias ? 'wait' : 'pointer' }}
+          >
+            {isProbingAlias ? 'Probing…' : 'Probe Aliases'}
+          </button>
+        </h2>
+        <div style={{ fontSize: '12px', color: 'var(--rn-clr-content-tertiary)', marginBottom: '8px' }}>
+          Run on a rem that HAS an alias. Answers where an alias's id can still be read now that built-in powerups
+          are no longer stored as rems: what <code>getAliases()</code> hands back, which <code>aliasId</code>s existing
+          references already use and whether they still resolve, what the Aliases powerup property holds, and whether
+          any child rem is the alias. The reference picker needs exactly one of these to work.
+        </div>
+        {aliasProbe && (
+          <div style={{ fontSize: '11px' }}>
+            <div style={{ marginBottom: '8px', padding: '8px', backgroundColor: 'var(--rn-clr-background-secondary)', borderRadius: '4px', border: '1px solid var(--rn-clr-border)' }}>
+              <strong>Verdict for "{aliasProbe.remText.slice(0, 60)}"</strong>
+              <ul style={{ margin: '6px 0 0 0', paddingLeft: '18px' }}>
+                {aliasProbe.verdict.map((v, i) => (
+                  <li key={i} style={{ marginBottom: '4px' }}>{v}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="flex gap-4 mb-2" style={{ flexWrap: 'wrap' }}>
+              <Info className="" label="hasPowerup(Aliases)" data={String(aliasProbe.hasAliasesPowerup)} />
+              <Info className="" label="Aliases powerup id" data={aliasProbe.aliasesPowerupId ?? '—'} />
+              <Info className="" label="Slot code" data={aliasProbe.aliasSlotCode ?? '—'} />
+              <Info className="" label="getAliases() count" data={aliasProbe.getAliasesCount} />
+              <Info className="" label="Rems referencing this" data={aliasProbe.referencingRemCount} />
+            </div>
+            <Info
+              className=""
+              label="Best id per alias (what the picker would use)"
+              data={<pre style={preStyle}>{JSON.stringify(aliasProbe.resolvedAliases, null, 2)}</pre>}
+            />
+            <Info className="" label="A — getAliases() objects" data={<pre style={preStyle}>{JSON.stringify(aliasProbe.aliasObjects, null, 2)}</pre>} />
+            <Info className="" label="B — aliasIds found in existing references" data={<pre style={preStyle}>{JSON.stringify(aliasProbe.referenceAliases, null, 2)}</pre>} />
+            <Info className="" label="C — Aliases powerup property" data={<pre style={preStyle}>{JSON.stringify(aliasProbe.properties, null, 2)}</pre>} />
+            <Info className="" label="D — child rems" data={<pre style={preStyle}>{JSON.stringify(aliasProbe.children, null, 2)}</pre>} />
+          </div>
+        )}
+      </div>
+
+      <div style={{ marginTop: '16px' }}>
+        <h2 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '12px', paddingBottom: '4px', borderBottom: '1px solid var(--rn-clr-background-tertiary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           Search / Linkage Diagnostics
           <button
             onClick={handleSearchProbe}
@@ -4906,15 +5685,16 @@ function Debug() {
               {isMigrating ? 'Working…' : 'Load status'}
             </button>
             <button onClick={handleCopyMigrationReport} style={{ ...smallBtnStyle, whiteSpace: 'nowrap' }}>Copy</button>
-            <button onClick={handleForceRemigrate} disabled={isMigrating} style={{ ...smallBtnStyle, cursor: isMigrating ? 'wait' : 'pointer', whiteSpace: 'nowrap' }} title="Re-read every setting and overwrite the stored values. Use only to recover a migration that ran while settings were unreadable.">
+            <button onClick={handleForceRemigrate} disabled={isMigrating} style={{ ...smallBtnStyle, cursor: isMigrating ? 'wait' : 'pointer', whiteSpace: 'nowrap' }} title="Re-read every setting from RemNote's panel and overwrite the stored values. Only does anything while those registrations still exist — i.e. during the one session in which this knowledge base migrates. Use only to recover a migration that ran while settings were unreadable.">
               Force re-run
             </button>
           </span>
         </h2>
         <div style={{ fontSize: '11px', color: 'var(--rn-clr-content-tertiary)', marginBottom: '6px' }}>
-          The migration copies each setting out of RemNote's settings panel into the plugin's own synced storage. It
-          runs once on load and records the outcome per setting, so this stays readable afterwards. Full detail also
-          goes to the DevTools console.
+          The migration copies each setting out of RemNote's settings panel into the plugin's own synced storage,
+          which is where every setting now lives. It runs on load until it completes, reads only the settings adopted
+          since this knowledge base's last completed seed, and records the outcome per setting so this stays readable
+          afterwards. Full detail also goes to the DevTools console.
         </div>
         {migrationReport === null ? (
           <div style={{ fontSize: '11px', color: 'var(--rn-clr-content-tertiary)' }}>
@@ -5138,6 +5918,216 @@ function Debug() {
             ))}
           </div>
         )}
+
+        {/* Which Rem does a card really belong to? */}
+        <div style={{ marginTop: '12px', paddingTop: '8px', borderTop: '1px solid var(--rn-clr-background-tertiary)' }}>
+          <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Card ownership probe</div>
+          <div style={{ fontSize: '11px', color: 'var(--rn-clr-content-tertiary)', marginBottom: '6px' }}>
+            Paste a card id. Compares the <code>card.remId</code> field this plugin groups by against the SDK's own{' '}
+            <code>card.getRem()</code>, and reports whether the card's cloze markup lives on either Rem. A mismatch
+            means per-Rem attribution — and every cause derived from it — is pointing at the wrong Rem.
+          </div>
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+            <input
+              value={cardOwnerIdInput}
+              onChange={(e) => setCardOwnerIdInput(e.target.value)}
+              placeholder="cardId"
+              style={{ flex: 1, fontSize: '11px', padding: '3px 6px', border: '1px solid var(--rn-clr-border)', borderRadius: '4px', backgroundColor: 'var(--rn-clr-background-primary)', color: 'var(--rn-clr-content-primary)', fontFamily: 'monospace' }}
+            />
+            <button onClick={handleProbeCardOwnership} disabled={isProbingCardOwner} style={{ ...smallBtnStyle, cursor: isProbingCardOwner ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}>
+              {isProbingCardOwner ? 'Probing…' : 'Probe Card'}
+            </button>
+          </div>
+        </div>
+
+        {/* Delete cloze card records whose markup is gone from their Rem. */}
+        <div style={{ marginTop: '12px', paddingTop: '8px', borderTop: '1px solid var(--rn-clr-background-tertiary)' }}>
+          <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Purge orphaned cloze cards on a Rem</div>
+          <div style={{ fontSize: '11px', color: 'var(--rn-clr-content-tertiary)', marginBottom: '6px' }}>
+            Deletes ONLY cloze card records whose cloze id is absent from the Rem's current text AND which have no{' '}
+            <code>nextRepetitionTime</code>. Forward/backward records and anything still scheduled or still clozed are
+            kept and listed with a reason. <strong>Card deletion cannot be undone</strong> — the backup file must be
+            saved before the delete button unlocks.
+          </div>
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+            <input
+              value={orphanRemIdInput}
+              onChange={(e) => setOrphanRemIdInput(e.target.value)}
+              placeholder="remId"
+              style={{ flex: 1, fontSize: '11px', padding: '3px 6px', border: '1px solid var(--rn-clr-border)', borderRadius: '4px', backgroundColor: 'var(--rn-clr-background-primary)', color: 'var(--rn-clr-content-primary)', fontFamily: 'monospace' }}
+            />
+            <button onClick={handleAnalyzeOrphanCards} disabled={!!orphanBusy} style={{ ...smallBtnStyle, cursor: orphanBusy ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}>
+              {orphanBusy === 'Analyzing…' ? 'Analyzing…' : 'Analyze'}
+            </button>
+          </div>
+          {orphanBusy && orphanBusy !== 'Analyzing…' && (
+            <div style={{ marginTop: '6px', fontSize: '11px', fontWeight: 600 }}>{orphanBusy}</div>
+          )}
+          {orphanAnalysis && (
+            <div style={{ marginTop: '8px', padding: '8px', borderRadius: '4px', border: '1px solid var(--rn-clr-border)', backgroundColor: 'var(--rn-clr-background-secondary)', fontSize: '11px', lineHeight: 1.6 }}>
+              <div><strong>{orphanAnalysis.remText}</strong></div>
+              <div>
+                {orphanAnalysis.totalCards.toLocaleString()} card record(s) ·{' '}
+                {orphanAnalysis.surfacedCards} surfaced ·{' '}
+                {orphanAnalysis.remClozeIds.length} cloze id(s) in the text
+              </div>
+              <div style={{ marginTop: '4px' }}>
+                Deletable:{' '}
+                <strong style={{ color: orphanAnalysis.deletable.length > 0 ? '#ef4444' : 'inherit' }}>
+                  {orphanAnalysis.deletable.length.toLocaleString()}
+                </strong>
+              </div>
+              {(Object.keys(orphanAnalysis.keptByReason) as KeepReason[])
+                .filter((r) => orphanAnalysis.keptByReason[r] > 0)
+                .map((r) => (
+                  <div key={r} style={{ color: 'var(--rn-clr-content-tertiary)' }}>
+                    kept {orphanAnalysis.keptByReason[r]} — {KEEP_REASON_LABELS[r]}
+                  </div>
+                ))}
+              {orphanAnalysis.deletableDirectionless.length > 0 && (
+                <label
+                  style={{ display: 'flex', alignItems: 'flex-start', gap: '5px', marginTop: '6px', cursor: 'pointer' }}
+                  title="The Rem has no back side, so RemNote cannot generate a forward or backward card for it whatever the practice direction says. These records correspond to nothing — but they may carry a lot of history, so they are opt-in."
+                >
+                  <input
+                    type="checkbox"
+                    checked={orphanIncludeDirectionless}
+                    onChange={(e) => setOrphanIncludeDirectionless(e.target.checked)}
+                    style={{ marginTop: '2px', cursor: 'pointer' }}
+                  />
+                  <span>
+                    Also delete <strong>{orphanAnalysis.deletableDirectionless.length}</strong>{' '}
+                    forward/backward record(s) — this Rem has <strong>no back side</strong>, so neither
+                    direction can be generated.
+                  </span>
+                </label>
+              )}
+              {(orphanAnalysis.deletable.length > 0 || orphanAnalysis.deletableDirectionless.length > 0) && (
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '8px' }}>
+                  <button onClick={handleBackupOrphanCards} disabled={!!orphanBusy} style={{ ...smallBtnStyle, cursor: orphanBusy ? 'wait' : 'pointer' }}>
+                    {orphanBackedUp ? '✓ Backup saved' : '1. Save backup JSON'}
+                  </button>
+                  <button
+                    onClick={handleDeleteOrphanCards}
+                    disabled={
+                      !!orphanBusy ||
+                      !orphanBackedUp ||
+                      orphanAnalysis.deletable.length +
+                        (orphanIncludeDirectionless
+                          ? orphanAnalysis.deletableDirectionless.length
+                          : 0) ===
+                        0
+                    }
+                    title={orphanBackedUp ? '' : 'Save the backup first'}
+                    style={{
+                      ...smallBtnStyle,
+                      cursor: orphanBusy || !orphanBackedUp ? 'not-allowed' : 'pointer',
+                      opacity: orphanBackedUp ? 1 : 0.5,
+                      backgroundColor: 'var(--rn-clr-background-warning)',
+                      color: 'var(--rn-clr-content-warning)',
+                      border: '1px solid var(--rn-clr-border-warning)',
+                    }}
+                  >
+                    2. Delete{' '}
+                    {(
+                      orphanAnalysis.deletable.length +
+                      (orphanIncludeDirectionless ? orphanAnalysis.deletableDirectionless.length : 0)
+                    ).toLocaleString()}{' '}
+                    card(s)
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* KB-wide sweep for cloze cards whose markup is gone. */}
+        <div style={{ marginTop: '12px', paddingTop: '8px', borderTop: '1px solid var(--rn-clr-background-tertiary)' }}>
+          <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>Sweep the KB for markup-gone cloze cards</div>
+          <div style={{ fontSize: '11px', color: 'var(--rn-clr-content-tertiary)', marginBottom: '6px' }}>
+            Finds every unscheduled cloze card whose cloze id is no longer in its Rem's text, and splits them by what
+            history would be lost. Cards with <strong>real graded practice</strong> are reported but never offered for
+            deletion — a reworded Rem, or one cloze split into several, loses its markup while keeping history worth
+            preserving.
+          </div>
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+            <button onClick={handleScanMarkupGone} disabled={!!markupBusy} style={{ ...smallBtnStyle, cursor: markupBusy ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}>
+              {markupBusy ? 'Working…' : 'Scan KB'}
+            </button>
+            {markupBusy && <span style={{ fontSize: '11px', fontWeight: 600 }}>{markupBusy}</span>}
+          </div>
+          {markupScan && (
+            <div style={{ marginTop: '8px', padding: '8px', borderRadius: '4px', border: '1px solid var(--rn-clr-border)', backgroundColor: 'var(--rn-clr-background-secondary)', fontSize: '11px', lineHeight: 1.6 }}>
+              <div style={{ color: 'var(--rn-clr-content-tertiary)' }}>
+                {markupScan.candidates.toLocaleString()} unscheduled cloze card(s) examined ·{' '}
+                {markupScan.remsRead.toLocaleString()} Rem(s) read ·{' '}
+                {markupScan.markupPresent.toLocaleString()} still have their markup
+                {markupScan.remUnreadable > 0 && ` · ${markupScan.remUnreadable} unreadable Rem(s)`}
+              </div>
+              <div style={{ marginTop: '4px' }}>
+                No history at all:{' '}
+                <strong style={{ color: markupScan.untouched.length > 0 ? '#ef4444' : 'inherit' }}>
+                  {markupScan.untouched.length.toLocaleString()}
+                </strong>
+              </div>
+              <div>
+                Entries but never graded:{' '}
+                <strong>{markupScan.touched.length.toLocaleString()}</strong>
+              </div>
+              <div style={{ color: '#16a34a' }}>
+                Kept — real graded practice: <strong>{markupScan.gradedCount.toLocaleString()}</strong>{' '}
+                card(s) holding {markupScan.gradedReps.toLocaleString()} rep(s)
+              </div>
+              {markupScan.touched.length > 0 && (
+                <label
+                  style={{ display: 'flex', alignItems: 'flex-start', gap: '5px', marginTop: '6px', cursor: 'pointer' }}
+                  title='These carry history entries — skips, resets, views — but no grade. RemNote shows them as "Times practiced N / Last practiced Never".'
+                >
+                  <input
+                    type="checkbox"
+                    checked={markupIncludeTouched}
+                    onChange={(e) => setMarkupIncludeTouched(e.target.checked)}
+                    style={{ marginTop: '2px', cursor: 'pointer' }}
+                  />
+                  <span>
+                    Also delete the <strong>{markupScan.touched.length.toLocaleString()}</strong> never-graded card(s)
+                    — they hold entries (skips / resets / views) but no grade.
+                  </span>
+                </label>
+              )}
+              {(markupScan.untouched.length > 0 || markupScan.touched.length > 0) && (
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '8px' }}>
+                  <button onClick={handleBackupMarkupGone} disabled={!!markupBusy} style={{ ...smallBtnStyle, cursor: markupBusy ? 'wait' : 'pointer' }}>
+                    {markupBackedUp ? '✓ Backup saved' : '1. Save backup JSON'}
+                  </button>
+                  <button
+                    onClick={handleDeleteMarkupGone}
+                    disabled={
+                      !!markupBusy ||
+                      !markupBackedUp ||
+                      markupScan.untouched.length + (markupIncludeTouched ? markupScan.touched.length : 0) === 0
+                    }
+                    title={markupBackedUp ? '' : 'Save the backup first'}
+                    style={{
+                      ...smallBtnStyle,
+                      cursor: markupBusy || !markupBackedUp ? 'not-allowed' : 'pointer',
+                      opacity: markupBackedUp ? 1 : 0.5,
+                      backgroundColor: 'var(--rn-clr-background-warning)',
+                      color: 'var(--rn-clr-content-warning)',
+                      border: '1px solid var(--rn-clr-border-warning)',
+                    }}
+                  >
+                    2. Delete{' '}
+                    {(
+                      markupScan.untouched.length + (markupIncludeTouched ? markupScan.touched.length : 0)
+                    ).toLocaleString()}{' '}
+                    card(s)
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Locate the rem named in a "Diff for <remId> is too large to sync" error. */}
         <div style={{ marginTop: '12px', paddingTop: '8px', borderTop: '1px solid var(--rn-clr-background-tertiary)' }}>
@@ -5903,6 +6893,155 @@ function Debug() {
               }}
             />
           </>
+        )}
+      </div>
+
+      {/* Onboarding tips: what is actually stored as "seen".
+          Reads the synced record, the device-local mirror and the
+          unidentified-KB fallback bucket without writing to any of them. */}
+      <div style={{ marginTop: '16px' }}>
+        <h2 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '8px', paddingBottom: '4px', borderBottom: '1px solid var(--rn-clr-background-tertiary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          Onboarding Tips State
+          <span style={{ display: 'flex', gap: '4px' }}>
+            <button
+              onClick={handleReadTipsState}
+              disabled={isReadingTips}
+              style={{ ...smallBtnStyle, cursor: isReadingTips ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}
+              title="Read the synced record, the local mirror and the fallback bucket for the acknowledged tips (read-only)"
+            >
+              {isReadingTips ? 'Reading…' : 'Read state'}
+            </button>
+            {tipsDiag && (
+              <button onClick={() => copyTextFallback(JSON.stringify(tipsDiag, null, 2))} style={smallBtnStyle}>
+                Copy
+              </button>
+            )}
+          </span>
+        </h2>
+        <div style={{ fontSize: '11px', color: 'var(--rn-clr-content-tertiary)', marginBottom: '6px' }}>
+          Why did a tip you pressed <em>I Got It</em> on come back? Either its id is missing from a store,
+          or it landed under a knowledge-base partition that is not the current one.
+        </div>
+
+        {tipsDiag && (
+          <div style={{ padding: '8px', borderRadius: '4px', border: '1px solid var(--rn-clr-border)', backgroundColor: 'var(--rn-clr-background-secondary)', fontSize: '11px' }}>
+            <div style={{ lineHeight: 1.6 }}>
+              Current KB:{' '}
+              <code style={{ color: tipsDiag.kbResolved ? undefined : '#ef4444' }}>{tipsDiag.kbId}</code>{' '}
+              {!tipsDiag.kbResolved && (
+                <strong style={{ color: '#ef4444' }}>
+                  — getCurrentKnowledgeBaseData() came back empty, so writes land in the fallback bucket
+                </strong>
+              )}
+            </div>
+            <div style={{ lineHeight: 1.6 }}>
+              Acknowledged: <strong>{tipsDiag.rows.length}</strong> · remaining in the pile:{' '}
+              <strong>{tipsDiag.remaining}</strong> of {ONBOARDING_TIPS.length}
+            </div>
+            <div style={{ lineHeight: 1.6 }}>
+              Panel snoozed:{' '}
+              {tipsDiag.snoozedUntil > Date.now()
+                ? <strong>{`until ${new Date(tipsDiag.snoozedUntil).toLocaleString()}`}</strong>
+                : 'no'}
+            </div>
+
+            {/* Partition counts side by side: an acknowledgement that went to the
+                wrong knowledge base shows up as a non-current row holding ids. */}
+            <div style={{ marginTop: '8px', fontWeight: 600 }}>Partitions</div>
+            {(['synced', 'local'] as const).map((scope) => {
+              const parts = scope === 'synced' ? tipsDiag.syncedPartitions : tipsDiag.localPartitions;
+              return (
+                <div key={scope} style={{ paddingLeft: '6px', lineHeight: 1.6 }}>
+                  <code>{scope}</code>:{' '}
+                  {parts.length === 0 ? (
+                    <span style={{ color: '#d97706' }}>(empty — nothing stored)</span>
+                  ) : (
+                    parts.map((pt) => (
+                      <span key={pt.kbId} style={{ marginRight: '8px' }}>
+                        <code style={{ color: pt.isCurrent ? '#16a34a' : '#d97706' }}>
+                          {pt.kbId === 'default' ? 'default (fallback)' : pt.kbId.slice(0, 8)}
+                        </code>
+                        {' '}×{pt.count}{pt.isCurrent ? ' ←current' : ''}
+                      </span>
+                    ))
+                  )}
+                </div>
+              );
+            })}
+
+            {/* What the next session will be offered, and why. The pool is the
+                rotation's own view: oldest first, so the top row is next. */}
+            <div style={{ marginTop: '8px', fontWeight: 600 }}>
+              Rotation{' '}
+              <span style={{ fontWeight: 400, color: 'var(--rn-clr-content-tertiary)' }}>
+                (next up first)
+              </span>
+            </div>
+            <div style={{ paddingLeft: '6px', lineHeight: 1.6 }}>
+              This session: {tipsDiag.answeredThisSession
+                ? <strong>answered — no further tip until restart</strong>
+                : tipsDiag.drawnThisSession
+                  ? <>showing <code>{tipsDiag.drawnThisSession}</code></>
+                  : 'nothing drawn yet'}
+            </div>
+            {tipsDiag.rotation.length === 0 ? (
+              <div style={{ paddingLeft: '6px', color: 'var(--rn-clr-content-tertiary)' }}>
+                (pile drained — no tip left to offer)
+              </div>
+            ) : (
+              <div style={{ maxHeight: '160px', overflowY: 'auto', paddingLeft: '6px' }}>
+                {tipsDiag.rotation.map((r, i) => (
+                  <div key={r.id} style={{ lineHeight: 1.6 }}>
+                    <span style={{ color: i === 0 ? '#16a34a' : 'var(--rn-clr-content-tertiary)' }}>
+                      {i === 0 ? '→' : '·'}
+                    </span>{' '}
+                    <code>{r.id}</code>{' '}
+                    <span style={{ color: 'var(--rn-clr-content-tertiary)' }}>
+                      {r.lastShown === null
+                        ? '(never shown)'
+                        : `last shown ${new Date(r.lastShown).toLocaleString()}`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ marginTop: '8px', fontWeight: 600 }}>Acknowledged tips</div>
+            {tipsDiag.rows.length === 0 ? (
+              <div style={{ paddingLeft: '6px', color: 'var(--rn-clr-content-tertiary)' }}>
+                (none — every tip is still in the pile)
+              </div>
+            ) : (
+              <div style={{ maxHeight: '240px', overflowY: 'auto', paddingLeft: '6px' }}>
+                {tipsDiag.rows.map((r) => (
+                  <div key={r.id} style={{ lineHeight: 1.6 }}>
+                    <code style={{ color: r.known ? undefined : '#d97706' }}>{r.id}</code>
+                    {!r.known && <span style={{ color: '#d97706' }}> (stale id — no such tip)</span>}
+                    {' → '}
+                    <strong>{r.at === null ? 'no date recorded' : new Date(r.at).toLocaleString()}</strong>
+                    <span style={{ color: 'var(--rn-clr-content-tertiary)' }}>
+                      {' '}[
+                      <span style={{ color: r.inSynced ? '#16a34a' : '#ef4444' }}>synced {r.inSynced ? '✓' : '✗'}</span>
+                      {' · '}
+                      <span style={{ color: r.inLocal ? '#16a34a' : '#ef4444' }}>local {r.inLocal ? '✓' : '✗'}</span>
+                      {r.fromFallbackOnly && <span style={{ color: '#d97706' }}> · fallback bucket only</span>}
+                      ]
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ marginTop: '8px', display: 'flex', gap: '4px' }}>
+              <button
+                onClick={handleResetTips}
+                style={{ ...smallBtnStyle, borderColor: '#ef4444', color: '#ef4444' }}
+                title="Clear every acknowledgement for this knowledge base, in both stores, and end the snooze"
+              >
+                Reset acknowledgements
+              </button>
+            </div>
+          </div>
         )}
       </div>
     </div>

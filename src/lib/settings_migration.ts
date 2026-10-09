@@ -19,24 +19,35 @@
  * default — see the note in the loop for why.
  */
 import { RNPlugin } from '@remnote/plugin-sdk';
-import { IE_POPUP_TIER_IDS, IE_SETTINGS_DEFAULTS, IESettingId, IESettings } from './settings';
+import { IE_MANAGED_SETTING_IDS, IE_SETTINGS_DEFAULTS, IESettingId, IESettings } from './settings';
 import {
   ieSettingsValuesKey,
   ieSettingsMigratedKey,
   ieSettingsMigrationReportKey,
   enableMasteryDrillId,
   legacySkipMasteryDrillId,
+  enableFlashcardPrioritisationId,
+  performanceModeId,
+  alwaysUseLightModeOnMobileId,
+  alwaysUseLightModeOnWebId,
+  enableHideInQueueIntegrationId,
 } from './consts';
+import { DENIED_NATIVE_SETTINGS } from './fork_gates'; // FORK (Deviation 13); fork_gates imports nothing local
 
 export { ieSettingsValuesKey, ieSettingsMigratedKey, ieSettingsMigrationReportKey };
 
 /**
- * Bump when the stored blob must be refreshed from the registrations.
+ * Bump when a settings id must be read across from RemNote's panel that was not
+ * read before — and list what it adopts in ADOPTED_AT_VERSION.
  *
  * A version rather than a boolean because a seed can ship before the release
  * that reads from the blob: in between, users keep changing settings in
- * RemNote's panel, and a merge-only re-run would not pick those up. Bumping
- * forces one fresh re-read so nobody is left with stale values.
+ * RemNote's panel, and a run that skipped them would leave stale values behind.
+ *
+ * A bump no longer re-reads everything. Up to v5 it did (`force`), which was
+ * safe only while the blob was younger than the panel; now that the popup is
+ * where people edit, a blanket re-read would overwrite their edits with values
+ * RemNote has been holding since before the migration. See ADOPTED_AT_VERSION.
  *
  * v1: initial seed, while RemNote's settings panel was still the live backend.
  * v2: store only values that differ from the default, so that editing a default
@@ -50,18 +61,58 @@ export { ieSettingsValuesKey, ieSettingsMigratedKey, ieSettingsMigrationReportKe
  * v5: skip_mastery_drill renamed and inverted to enable-mastery-drill, so the
  *     opt-in reads positively like the flashcard-prioritisation gate. Handled by
  *     LEGACY_CONVERSIONS below — a rename alone would silently reset the value.
- * v6: FORK — enable-hide-in-queue-integration moved native -> popup (2026-08-12),
- *     so the plugin's own settings window is the single place every setting is
- *     edited. Same case as v4, and it needs the bump for the same reason: without
- *     it a KB already seeded at v5 never re-registers the id, so readRawSetting
- *     takes the popup branch, finds no blob key (the seed's cleanup strips
- *     non-popup keys), and resolves to the default `false`. Hide-in-Queue would
- *     then silently switch off — its five powerups and commands stop registering
- *     and rems tagged with them lose their queue filtering — and because the id
- *     is no longer registered, plugin.settings.getSetting THROWS for it, making
- *     the stored native value permanently unreadable rather than merely reset.
+ * v6: the last five settings left in RemNote's panel moved into the blob, so the
+ *     plugin has exactly one settings surface. Listed in ADOPTED_AT_VERSION.
+ *     FORK: our own v6 (2026-08-14, the Hide-in-Queue tier move) is subsumed by this
+ *     one — upstream's list includes enable-hide-in-queue-integration — so the number
+ *     is deliberately NOT bumped to 7 (a fork-only 7 would make upstream's next
+ *     adoption skip). The four ids the fork gates refuse to register are filtered out
+ *     of idsToSeed below, or the seed could never complete.
  */
 export const SEED_VERSION = 6;
+
+/**
+ * Settings that moved OUT of RemNote's settings panel and INTO the blob at a
+ * given seed version — the only ids a re-seed may read from `getSetting`.
+ *
+ * This list is what makes a re-seed safe. The blob is authoritative for anything
+ * already migrated, and a value equal to the default is stored as an ABSENT key
+ * (see the loop below), so "no key" cannot be distinguished from "never seeded".
+ * Re-reading an already-migrated id would therefore resurrect the value RemNote
+ * still holds from before its migration and silently undo a later edit made in
+ * the popup — a setting the user had returned to its default would spring back
+ * to its old value. Only ids adopted since the version this KB completed are
+ * read across.
+ */
+const ADOPTED_AT_VERSION: Array<{ version: number; ids: IESettingId[] }> = [
+  {
+    version: 6,
+    ids: [
+      enableFlashcardPrioritisationId,
+      performanceModeId,
+      alwaysUseLightModeOnMobileId,
+      alwaysUseLightModeOnWebId,
+      enableHideInQueueIntegrationId,
+    ],
+  },
+];
+
+// FORK (Deviation 13): the gates never register the four pinned native ids, so
+// plugin.settings.getSetting throws for them. Seeding them would record four
+// 'failed' reads, keep the marker from advancing, and re-register the panel rows
+// on every boot. Their values are the fork's pinned defaults in IE_SETTINGS_DEFAULTS.
+const isSeedableHere = (id: IESettingId): boolean => !DENIED_NATIVE_SETTINGS.has(id);
+
+/** Ids this KB still has to read across, given the version it last completed. */
+function idsToSeed(doneVersion: number): IESettingId[] {
+  // Never seeded: everything is still in RemNote's panel, so read it all.
+  if (doneVersion <= 0) return IE_MANAGED_SETTING_IDS.filter(isSeedableHere);
+  const ids = new Set<IESettingId>();
+  for (const entry of ADOPTED_AT_VERSION) {
+    if (entry.version > doneVersion) entry.ids.forEach((id) => ids.add(id));
+  }
+  return [...ids].filter(isSeedableHere);
+}
 
 /**
  * Settings that changed id or polarity, and how to carry the old value across.
@@ -152,16 +203,29 @@ export async function getSeededVersion(plugin: RNPlugin): Promise<number> {
 }
 
 /**
- * Whether the legacy popup-tier settings still need to be registered with
- * RemNote on this activation. `getSetting` throws for an unregistered id, so a
- * knowledge base that has not reached the current seed version can only be read
- * while those registrations are live.
+ * Whether this knowledge base still has a seed to run.
  *
  * Deliberately not gated on the retry budget: registering is cheap, and a KB
  * whose seed keeps failing must not also lose the ability to read its values.
  */
 export async function isIESettingsSeedNeeded(plugin: RNPlugin): Promise<boolean> {
   return (await getSeededVersion(plugin)) < SEED_VERSION;
+}
+
+/**
+ * Exactly which settings must be registered with RemNote on this activation —
+ * empty for a knowledge base that is already up to date, which is the steady
+ * state and leaves the plugin's section of RemNote's settings panel empty.
+ *
+ * `getSetting` throws for an unregistered id, so a value can only be read across
+ * while its registration is live. Registering ONLY the ids that still have to be
+ * read keeps the transition session honest: a KB moving from v5 to v6 sees the
+ * five newly adopted settings in RemNote's panel for one session, not all
+ * thirty-four of them a second time.
+ */
+export async function settingIdsNeedingRegistration(plugin: RNPlugin): Promise<IESettingId[]> {
+  const doneVersion = await getSeededVersion(plugin);
+  return doneVersion >= SEED_VERSION ? [] : idsToSeed(doneVersion);
 }
 
 /** Reads the last migration report, or null if the seed has never run. */
@@ -215,13 +279,16 @@ export async function logIESettingsMigrationStatus(plugin: RNPlugin): Promise<vo
  * outcome per setting.
  *
  * @param plugin Plugin instance.
- * @param opts.force Re-read every setting even if the blob already holds it.
- *   Overwrites blob values — only for the debug widget's explicit re-run.
+ * @param opts.force Re-read every id in `opts.ids` even if the blob already
+ *   holds it, overwriting what is stored. Only for the debug widget's explicit
+ *   re-run; the automatic path never forces — see ADOPTED_AT_VERSION.
+ * @param opts.ids Which settings to read across. Defaults to all of them, which
+ *   is right for a first seed and for the debug re-run.
  * @returns The report that was persisted.
  */
 export async function migrateIESettings(
   plugin: RNPlugin,
-  opts: { force?: boolean } = {}
+  opts: { force?: boolean; ids?: IESettingId[] } = {}
 ): Promise<SettingsMigrationReport> {
   const startedAt = Date.now();
   const previous = await getIESettingsMigrationReport(plugin);
@@ -230,24 +297,17 @@ export async function migrateIESettings(
 
   const values = await getIESettingsValues(plugin);
   const records: SettingMigrationRecord[] = [];
-  // Popup-tier only: native-tier settings keep living in RemNote's panel and are
-  // read from there, so a copy in the blob could only ever go stale.
-  const ids = IE_POPUP_TIER_IDS;
+  // Which ids to READ from RemNote. Everything else in the blob is left exactly
+  // as it is — see ADOPTED_AT_VERSION for why re-reading would be destructive.
+  const ids = opts.ids ?? IE_MANAGED_SETTING_IDS;
 
-  // A blob carried over from an earlier seed version may hold native-tier keys.
-  // Drop them so the stored state matches what is actually read.
-  for (const key of Object.keys(values) as IESettingId[]) {
-    if (!ids.includes(key)) {
-      delete values[key];
-      console.log(`${LOG}   - ${key}: dropped (now managed in RemNote's settings panel)`);
-    }
-  }
+  console.log(`${LOG} starting (attempt ${attempt}, ${ids.length} setting(s) to read, force=${!!opts.force})`);
 
-  console.log(`${LOG} starting (attempt ${attempt}, ${ids.length} settings, force=${!!opts.force})`);
-
-  // Renames and polarity flips run first, and win over the main loop below: the
-  // new id reads as its own default from the registration, which would overwrite
-  // the value we just carried across.
+  // Renames and polarity flips run FIRST — before the main loop below, whose new
+  // id would otherwise read as its own default from the registration and
+  // overwrite the value just carried across, and before the drop pass below,
+  // which would delete the legacy key as "no longer a setting" while it is
+  // precisely what the conversion has to read.
   const converted = new Set<IESettingId>();
   // Limitation: the old value is read from the blob only. A knowledge base that
   // never reached the seed version where the old id lived in the blob has it in
@@ -272,6 +332,30 @@ export async function migrateIESettings(
     console.log(
       `${LOG}   ~ ${conv.note}: ${JSON.stringify(legacyValue)} -> ${JSON.stringify(value)}`
     );
+  }
+
+  // A blob carried over from an earlier seed version may hold keys that are no
+  // longer settings at all — legacy ids the conversions above have just drained,
+  // and ids dropped outright by a past release. Drop them so the stored state
+  // matches what is actually read. Checked against the FULL managed list, never
+  // against `ids`: a partial re-seed must not delete the settings it simply is
+  // not re-reading.
+  for (const key of Object.keys(values) as IESettingId[]) {
+    if (!IE_MANAGED_SETTING_IDS.includes(key)) {
+      delete values[key];
+      console.log(`${LOG}   - ${key}: dropped (no longer a setting)`);
+    }
+  }
+
+  // Values that equal the current default are pruned on every run, not just on
+  // the run that stored them. A blob seeded at v1 (before the store-divergences-
+  // only rule) can still hold them, and each one freezes that setting against
+  // any future change of its default.
+  for (const key of Object.keys(values) as IESettingId[]) {
+    if (JSON.stringify(values[key]) === JSON.stringify(IE_SETTINGS_DEFAULTS[key])) {
+      delete values[key];
+      console.log(`${LOG}   - ${key}: pruned (equals the current default)`);
+    }
   }
 
   for (const id of ids) {
@@ -377,31 +461,16 @@ export async function migrateIESettingsIfNeeded(plugin: RNPlugin): Promise<void>
     return;
   }
 
-  // FORK (2026-08-14, pre-merge review §1.2): do NOT force a full re-read.
-  //
-  // `force` made every seed-version bump re-read all IE_POPUP_TIER_IDS from
-  // RemNote's registration records and write the result over the plugin's blob.
-  // That is data loss, not migration: `setIESetting` — the ONLY writer the IE
-  // Settings popup has — writes solely to plugin.storage.setSynced and never back
-  // to RemNote, so RemNote cannot know about any popup edit. Every such edit made
-  // since the last completed seed was therefore reverted on the next activation,
-  // silently and synced. The guaranteed casualties were the settings that never
-  // had a native panel row to be re-derived from — `queue-info-bar-mode` and
-  // `queue-toolbar-priority-mode`, both fork-added 2026-08-12.
-  //
-  // Nothing needed it: v6 exists for the enable-hide-in-queue-integration
-  // native→popup tier move, and that id migrates correctly WITHOUT force, because
-  // the v5 cleanup stripped it as a non-popup key, so its `hasOwnProperty` check
-  // is false either way and the normal path re-reads it.
-  //
-  // If a future version genuinely needs specific ids re-read from the panel, add
-  // them to a per-version allow-list here rather than flipping this back on.
-  const force = false;
+  // Only the ids adopted since this KB's last completed seed are read from
+  // RemNote. Never forced: `force` overwrites stored values, which for an
+  // already-migrated setting means overwriting the user's own edits with a stale
+  // panel value.
+  const ids = idsToSeed(doneVersion);
   if (doneVersion > 0) {
     console.log(
-      `${LOG} re-seeding: stored version ${doneVersion} < ${SEED_VERSION} ` +
-        `(force disabled — popup-set values are preserved)`
+      `${LOG} re-seeding: stored version ${doneVersion} < ${SEED_VERSION}; ` +
+        `reading ${ids.length} newly adopted setting(s): ${ids.join(', ') || '(none)'}`
     );
   }
-  await migrateIESettings(plugin, { force });
+  await migrateIESettings(plugin, { ids });
 }

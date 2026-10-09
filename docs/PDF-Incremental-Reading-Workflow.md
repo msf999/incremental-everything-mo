@@ -1,12 +1,12 @@
 # PDF Incremental Reading Workflow
 
-This page documents how to use the **Incremental Everything** plugin to incrementally read long PDFs by breaking them into chapters or sections, each managed as a separate Incremental Rem.
+This page documents how to use the **Incremental RemNote** plugin to incrementally read long PDFs by breaking them into chapters or sections, each managed as a separate Incremental Rem.
 
 ---
 
 ## Overview: The Full Incremental Workflow
 
-The **Incremental Everything** approach to PDFs is designed to support deep reading without feeling overwhelmed. The workflow typically looks like this:
+The **Incremental RemNote** approach to PDFs is designed to support deep reading without feeling overwhelmed. The workflow typically looks like this:
 
 1. **Split & Prioritize**: Instead of one massive PDF to read, you create multiple Incremental Rems for the PDF (e.g., one per chapter or section) and assign each a priority.
 2. **Read in the Queue**: When a chapter is due, it appears in your Queue. The PDF Reader automatically opens at your last saved reading position.
@@ -74,6 +74,7 @@ When you have many chapters, manually adding the PDF source to each one would be
 The **PDF Control Panel** (`Command Palette → PDF Control Panel`) is the central hub for managing all rems that share the same PDF.
 
 **Features:**
+
 - Set and adjust the page range for each chapter
 - Edit priorities inline with visual feedback
 - View reading histories and time spent
@@ -125,11 +126,12 @@ A rem that has **neither** been made Incremental nor dismissed — the book's ow
 
 ## 4. PDF Highlight Toolbar Utilities
 
-When you select text in the PDF Reader and create a highlight, the native RemNote popup toolbar appears. The plugin injects four widgets into this toolbar to help you process and organize information on the fly:
+When you select text in the PDF Reader and create a highlight, the native RemNote popup toolbar appears. The plugin injects five widgets into this toolbar to help you process and organize information on the fly:
 
 | Icon | Tool | Description |
 |------|------|-------------|
 | 🔖 | **Set Bookmark Position** | Manually records your current reading position at this highlight's exact page. *(Note: Using the extraction tools below will also do this automatically).* |
+| ✨ | **AI Transcribe** | Replaces the highlight's raw text (missing spaces, broken formulas) with a clean AI transcription of the highlighted region, formulas as LaTeX. Uses your own Claude account through a small local helper. See [AI Transcription of PDF Highlights](AI-Transcription-of-PDF-Highlights.md). |
 | ![](https://cdn-icons-png.flaticon.com/512/8365/8365483.png){ width="16" } | **Create Incremental Rem** | Extracts the highlight into a standalone Incremental Rem and lets you choose precisely where it should live in your Knowledge Base hierarchy. See the [Create-Incremental-Rem-from-PDF-Highlights](Create-Incremental-Rem-from-PDF-Highlights.md) for full details. |
 | ![](https://cdn-icons-png.flaticon.com/512/1504/1504044.png){ width="16" } | **Toggle Incremental Rem** | Quick-tags the highlight itself as an Incremental Rem without moving it. The button background turns blue to indicate the highlight is now actively tracked in your queue. |
 | 👁️ / 🙈 | **Toggle Marker Borders (Peek)** | Shows/hides the extract & incremental **marker borders** (see below) over all PDF highlights, so you can read a busy page cleanly. Turns amber while markers are hidden. Also available as the **Toggle PDF Highlight Marker Borders** command (quick code `tb`), and remembered per device (default: on). |
@@ -229,6 +231,7 @@ An Incremental Rem can now have **as many PDF sources as you like**, and you can
 The selector only appears when the Inc Rem has **two or more** PDF sources. Single-PDF Inc Rems look exactly as before.
 
 **Why two flavours of pin behaviour?**
+
 - In **active-reading surfaces** (Reader, Timer, Execute Repetition popup), switching the dropdown is the same gesture as "I'm reading this PDF now" — so it pins immediately and the rest of the UI re-targets the new PDF.
 - In **management surfaces** (PDF Control Panel, Editor Toolbar), you often want to *inspect* a different PDF's data (range, history, stats) without changing the queue default. The dropdown changes the view only; the **📌 Set as active** button is the explicit commit.
 
@@ -298,6 +301,7 @@ When you open the PDF Control Panel, `getAllIncrementsForPDF` discovers rems thr
 | **3. Persistent index** (`known_pdf_rems_*`) | A synced-storage list of rem IDs explicitly registered as users of this PDF — covers rems discovered in previous sessions or registered via the Copy/Paste commands | Fast |
 
 The persistent index is updated in the following situations:
+
 - When a rem is **found** by strategies 1 or 2 (it gets added to the index automatically)
 - When you run **Copy Rem Sources** (the template rem is registered immediately for all its PDF sources)
 - When you run **Paste Rem Sources** (each target rem is registered for each PDF source that was added)

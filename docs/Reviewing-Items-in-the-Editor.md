@@ -37,7 +37,7 @@ The **Execute Repetition** command (`Ctrl+Shift+J`) lets you register a review o
 - **PDF Reading History Sync**: If the Incremental Rem is a PDF or has a PDF source, the modal will automatically render the tracking **PDF Page Controls**. You can manipulate your current reading page directly from the popup and any time tracked by the Timer mode will perfectly log into your PDF Reading Analytics!
 - **Multi-PDF support**: If the Inc Rem has **more than one PDF source**, a PDF dropdown appears just above the Page Controls. Selecting a different PDF pins it as active for this Inc Rem (★ marks the `#preferthispdf` one) — Start Timer will then open and scroll to that PDF, and any subsequent reading-time writes target it. See the [PDF-Incremental-Reading-Workflow#multiple-pdf-sources--active-pdf-switcher-and-preferthispdf](PDF-Incremental-Reading-Workflow.md#multiple-pdf-sources-active-pdf-switcher-and-preferthispdf) section for the resolution chain.
 - **Records review time**: The time you enter is saved in the repetition history.
-- **Schedules next review**: Uses the same exponential algorithm as the queue's "Next" button.
+- **Schedules next review**: Uses the same [scheduler](IncRem-Scheduler.md) as the queue's "Next" button.
 - **Indicator in history**: Shows with a ⌨️ indicator in the Repetition History widget.
 - **Ahead-of-Schedule Warning Banner**: If you review an Incremental Rem before its scheduled due date, an amber warning banner will appear at the top of the popup informing you how many days early you are:
 
@@ -48,10 +48,35 @@ The **Execute Repetition** command (`Ctrl+Shift+J`) lets you register a review o
   ![Scheduling Conflict dialog](assets/review-in-editor-scheduling-resolution.png){ width="500" }
 
   You can resolve the conflict using the following options (which also support keyboard shortcuts):
+
   - **Keep Current Date** (`Enter` or `1`): Log the review and time in history but preserve the existing future due date. (Note: once you start typing a custom interval, `Enter` confirms the typed interval instead).
   - **Use New Date** (`2`): Proceed with the calculated shorter interval.
   - **Custom Interval** (`3`): Reveals an inline input to set a custom review interval in days.
   - **Go Back** (`←` or `Esc`): Return to the main popup.
+
+### Opened from the queue previewer
+
+`Ctrl+Shift+J` in the queue acts on the Rem you have **selected** — typically one opened in the previewer (`P`) — rather than on the item being reviewed. The previewer is an editor surface, so it gets this same popup, and nothing is written until you confirm.
+
+When a queue **Incremental Rem turn is running behind it**, the popup accounts for the time in that turn:
+
+- **Confirm Review** — the minutes you record here are **deducted** from the running turn's clock, since you spent them on this Rem, not on the item the queue is showing. You stay in the queue; whatever ends that turn later (Next, Dismiss, Reschedule) records the remainder. The toast reports the deduction.
+- **⏱️ Start Timer** — this navigates away, abandoning the turn. A confirmation appears first, naming the item you are leaving and how long it has been on screen:
+
+    - **Leave it due today** (`Enter`) — records the repetition with that time and keeps the item due today, exactly like dragging the **Next** button down ("Repeat today"). It comes back in the queue.
+    - **Reschedule** — records the repetition and applies the normal computed interval, like the **Next** button.
+    - **Carry to this Rem** (minutes) — time you actually spent reading the previewed Rem before pressing the shortcut. It is taken off the abandoned item's recorded duration and **back-dates the timer** that starts next, so those minutes land on the Rem they belong to.
+
+    The repetition is recorded either way — the reading you did is real; the only choice is what happens to the schedule.
+
+### While the Editor Review Timer is running
+
+The same applies one surface over. If the **Editor Review Timer** is counting for one Rem and you press `Ctrl+Shift+J` on **another** Rem, that timer is still running while you record time here — so the popup treats it exactly like a live queue turn:
+
+- **Confirm Review** deducts the minutes you record from the **running timer**, which keeps counting for its own Rem. You stay where you are. A paused timer stays paused, just with less on the clock.
+- **⏱️ Start Timer** takes the timer away from that Rem, so the same confirmation appears first: **Leave it due today** (`Enter`) or **Reschedule**, plus the **Carry to this Rem** field. The abandoned review is recorded the way **End Review** would have recorded it — including the case where it came from the queue's *Review in Editor* handoff, whose repetition already exists and only needs its duration filled in.
+
+Starting a timer this way now also **resets the clock** for the Rem taking it over. Previously the new Rem inherited whatever the abandoned review had accumulated. This does not affect the queue's *Review in Editor* handoff, which carries your queue reading time forward by back-dating the timer's start — that carry is untouched.
 
 ### Execute Repetition vs. Reschedule in Editor
 
@@ -91,7 +116,7 @@ The timer provides a range of powerful controls to manage your session without t
 2.  **Pause if needed**: If you need to step away mid-review, click the **⏸ Pause** button to freeze the timer. Click **▶ Resume** to continue. Only active (non-paused) time is recorded when the repetition is saved.
     * **📝 Review note**: the button next to Pause toggles an inline note field — an observation saved onto this repetition's history entry when you hit **Next / End Review / Dismiss** (on Dismiss it becomes the *dismissal reason*). It prefills with any note typed earlier for this rem (in the queue's 📝 field or the `Ctrl+Shift+J` popup), so you can extend rather than retype.
 3.  **✓ Dismiss Button**: If you've completely finished with an item (e.g. you've finished reading the full chapter and extracted all your flashcards), click the **✓ Dismiss** button (red, placed just before the cancel ✕). It is available in **every** flow that starts the timer — Sequential Review *and* `Ctrl+Shift+J` (Review in Editor) + **Start Timer**.
-    * *What happens under the hood*: Just like the "Dismiss" button in the queue, this records your final review time, transfers your history to the **Dismissed** powerup, and **removes the Incremental status** from the Rem, effectively clearing it from your active learning universe. The dismissal also appears in the [Incremental Rem History](Plugin-Widgets-Reference.md#221-incremental-rem-history) sidebar with a 🔴 **Dismissed** badge.
+    * *What happens under the hood*: Just like the "Dismiss" button in the queue, this records your final review time, transfers your history to the **Dismissed** powerup, and **removes the Incremental status** from the Rem, effectively clearing it from your active learning universe. It also stamps the Rem's priority onto its `cardPriority` tag, so the value outlives the Incremental powerup and anchors every flashcard created under that Rem afterwards — see [Priority Sources](Priorities-for-Flashcards.md#priority-sources). The dismissal also appears in the [Incremental Rem History](Plugin-Widgets-Reference.md#221-incremental-rem-history) sidebar with a 🔴 **Dismissed** badge.
     * *When there are no further items queued* (e.g. single-item flows via `Ctrl+Shift+J`), Dismiss finalizes the item and ends the timer in place. When a queueList is present (Sequential Review), it dismisses the current item and advances to the next one.
 4.  **Move to the next item**: When you are finished with the current review but want the item to remain incremental for future sessions, click the **Next (N) →** button on the timer widget.
     * *What happens under the hood*: The plugin instantly records your repetition (logging the time spent and pushing the Next Rep Date forward), saves this reading history to the Incremental Tracker, and instantly teleports you to the editor of the *next* item in your sorted list.
@@ -177,6 +202,8 @@ A read point associates one **descendant rem** of the IncRem's outline as its cu
 
 - **Editor Review Timer — 🔖 Go to Read Point.** When you review a Rem-type IncRem that has a read point set, a **🔖 Go to Read Point** button appears in the [Editor Review Timer](#2-sequential-review-via-increm-lists) bar (it parallels the PDF/HTML **🔖 Scroll** button). Clicking it navigates the current pane to the bookmarked descendant.
 - **View Read Points (History)** (`Ctrl+Shift+F7`, quick code `vrp`) opens the **[Read Points popup](Plugin-Widgets-Reference.md#68-read-points-popup)** — the read-point history for the current IncRem (resolved from the focused rem or the active session). Each entry shows the descendant's text and date; click one to jump there, and the IncRem's name is shown under the title.
+- **Priority Editor — a 🔖 Read Point panel.** The widget on the right of every Incremental Rem marks a Rem that has a read point with a small **green bookmark** while collapsed — existence only, nothing about where it points. Expand it and a **Read Point** section appears (below the PDF Range / Web Source panels, so a hybrid IncRem shows both): the date it was set, the clickable path down to the bookmarked descendant, a **Go to Read Point** button, and a **Read Point History ↗** button opening the [Read Points popup](Plugin-Widgets-Reference.md#68-read-points-popup).
+- **Repetition History popup — read-point footer.** `Ctrl+Shift+H` on the IncRem shows a footer with the full path from the IncRem down to its read point (`Chapter › Section › Read point`) and the date it was set — the outline counterpart of the popup's [PDF reading-progress footer](Plugin-Widgets-Reference.md#212-increm-repetition-history-aggregated-view). Any segment of the path can be clicked to open that Rem, and the footer is shown for **dismissed** Rems too. If the bookmarked rem has since been moved out of the outline, the footer says so and shows its nearest ancestors instead of the path.
 
 #### Hybrid IncRems (a PDF/HTML source *and* their own descendant content)
 
@@ -222,5 +249,6 @@ For a full explanation of what this command does, how it differs from native Rem
 ### Built-in Remove From Queue Support
 
 The plugin natively handles the styling for the `#remove-from-queue` tag used by extracts.
+
 - When an extract is created, the parent/context Rem is tagged with `#remove-from-queue` so that its queue item acts seamlessly.
 - This ensures that you only see the specific snippet you extracted or interact with it properly, focusing your review on the most atomic piece of information.

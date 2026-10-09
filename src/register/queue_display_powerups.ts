@@ -1,8 +1,19 @@
 import { ReactRNPlugin } from '@remnote/plugin-sdk';
 
 /* Powerup codes — applied to a Rem via rem.addPowerup(<code>).
-   RemNote slugifies the camelCase code to kebab-case in the rendered
-   data attribute (e.g. `hideInQueue` → `data-queue-rem-container-tags~="hide-in-queue"`). */
+
+   IMPORTANT: the slug that lands in `data-queue-rem-container-tags` /
+   `data-rem-tags` is derived from the powerup's NAME, not its code —
+   lowercased, with spaces turned into hyphens. Every powerup below happens to
+   have a name and a code that slugify to the same string ("No Hierarchy" /
+   `noHierarchy` → `no-hierarchy`), which hides the distinction; a powerup whose
+   name and code differ in wording does NOT — 'Hide Front Extras' was briefly
+   named 'Hide Front Extra Details' while keeping the code `hideFrontExtras`,
+   and rendered as `hide-front-extra-details`, matching nothing.
+   Confirmed 2026-08-29 against live DOM, which also shows RemNote's own tags
+   following the same rule ("Anki Card - Standard Mono" → `anki-card--standard-mono`,
+   "CardPriority" → `cardpriority`).
+   So: always write CSS selectors against the slugified NAME. */
 
 /* CORE — always registered. The Cloze and Extract creators apply Remove Parent
    to newly-created rems, so the powerup must always exist. Remove Grandparent
@@ -10,6 +21,13 @@ import { ReactRNPlugin } from '@remnote/plugin-sdk';
    Queue plugin, so they cannot collide with it. */
 export const REMOVE_PARENT_POWERUP_CODE = 'removeParent';
 export const REMOVE_GRANDPARENT_POWERUP_CODE = 'removeGrandparent';
+
+/* CORE — net-new to this plugin (no equivalent in the standalone Hide in Queue
+   plugin, so it cannot collide with it). Hides the front-side Extra Card
+   Details of the tagged flashcard. Name 'Hide Front Extras' ⇒ the CSS below
+   matches `hide-front-extras` (see the name-vs-code note above). Kept short
+   because the tag renders as a pill in the editor. */
+export const HIDE_FRONT_EXTRAS_POWERUP_CODE = 'hideFrontExtras';
 
 /* LEGACY — registered only when the user enables the Hide-in-Queue integration
    setting. Codes match the standalone Hide in Queue plugin exactly, so users
@@ -20,6 +38,19 @@ export const REMOVE_FROM_QUEUE_POWERUP_CODE = 'removeFromQueue';
 export const NO_HIERARCHY_POWERUP_CODE = 'noHierarchy';
 export const HIDE_PARENT_POWERUP_CODE = 'hideParent';
 export const HIDE_GRANDPARENT_POWERUP_CODE = 'hideGrandparent';
+
+/* A descriptor card's concept is the card's subject ("Receptor MSK ↔ ?"), so
+   Hide in Queue / Remove from Queue on the concept — meant for the OTHER cards
+   below it — never apply while one of its own descriptors is being asked.
+   Without this, Beautiful kept the concept's name (it sits in
+   .queue-beautiful-concept-descriptor-line, which Hide in Queue does not
+   target) but drew the "Hidden in queue" label over it.
+   Beautiful lifts the question out of the concept into the next sibling wrapper
+   (see Remove Parent / Remove Grandparent below); Compact keeps it as a direct
+   child. Appended to every Hide in Queue / Remove from Queue subject. */
+const NOT_DESCRIPTOR_CONCEPT =
+  ':not(:has(+ div:not(.indented-rem) > .rn-question-rem > .descriptor_rem_type))' +
+  ':not(:has(> .rn-question-rem > .descriptor_rem_type))';
 
 /* CORE CSS — covers Remove Parent, Remove Grandparent, and Remove from Queue.
 
@@ -39,13 +70,13 @@ export const HIDE_GRANDPARENT_POWERUP_CODE = 'hideGrandparent';
    between powerup-applied tags and legacy tag-rem-applied tags. */
 const CORE_CSS = `
 /* ===== Remove from Queue ===== */
-.rn-queue__content [data-queue-rem-container-tags~="remove-from-queue"]:not(.rn-question-rem) > .rn-queue-rem,
-.rn-queue__content [data-queue-rem-container-tags~="removefromqueue"]:not(.rn-question-rem) > .rn-queue-rem {
+.rn-queue__content [data-queue-rem-container-tags~="remove-from-queue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT} > .rn-queue-rem,
+.rn-queue__content [data-queue-rem-container-tags~="removefromqueue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT} > .rn-queue-rem {
   display: none;
 }
 
-.rn-queue__content [data-queue-rem-container-tags~="remove-from-queue"]:not(.rn-question-rem),
-.rn-queue__content [data-queue-rem-container-tags~="removefromqueue"]:not(.rn-question-rem),
+.rn-queue__content [data-queue-rem-container-tags~="remove-from-queue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT},
+.rn-queue__content [data-queue-rem-container-tags~="removefromqueue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT},
 .rn-breadcrumb-item[data-rem-tags~="remove-from-queue"],
 .rn-breadcrumb-item[data-rem-tags~="removefromqueue"] {
   margin-left: 0px !important;
@@ -88,6 +119,57 @@ const CORE_CSS = `
   margin-left: 0px !important;
 }
 
+/* ===== Remove Parent / Remove Grandparent — Beautiful hoisted cards =====
+   Beautiful lifts some questions OUT of their parent — descriptor cards
+   (2026-09-28) and concept cards (2026-09-30) at least: the question sits in a
+   wrapper div that follows the parent, inside the grandparent:
+     .indented-rem                      ← grandparent
+       .indented-rem                    ← parent (concept), no question inside
+       div.mt-3
+         .indented-rem.rn-question-rem
+   The "> .rn-question-rem" chains above never match that, so the parent is
+   reached with "+ div > …" and the grandparent with "> div > …". Confirmed
+   2026-09-28 against live DOM. */
+.rn-queue__content .indented-rem:has(+ div:not(.indented-rem) > .rn-question-rem[data-queue-rem-container-tags~="remove-parent"]),
+.rn-queue__content .indented-rem:has(+ div:not(.indented-rem) > .rn-question-rem[data-queue-rem-container-tags~="removeparent"]),
+.rn-queue__content .indented-rem:has(> div:not(.indented-rem) > .rn-question-rem[data-queue-rem-container-tags~="remove-grandparent"]) > .rn-queue-rem,
+.rn-queue__content .indented-rem:has(> div:not(.indented-rem) > .rn-question-rem[data-queue-rem-container-tags~="removegrandparent"]) > .rn-queue-rem {
+  display: none !important;
+}
+
+.rn-queue__content .indented-rem:has(> div:not(.indented-rem) > .rn-question-rem[data-queue-rem-container-tags~="remove-grandparent"]),
+.rn-queue__content .indented-rem:has(> div:not(.indented-rem) > .rn-question-rem[data-queue-rem-container-tags~="removegrandparent"]) {
+  margin-left: 0px !important;
+}
+
+/* ===== Hide Front Extras =====
+   Slots a table/template is configured to show on the FRONT of its cards render
+   as ".extra-card-detail" INSIDE the ancestor ".indented-rem", as a sibling of
+   the question rem — so "no-hierarchy" never touches them (it only hides the
+   ancestor's own "> .rn-queue-rem"), and a slot like "Book — <chapter title>"
+   can give the answer away.
+
+   The back-side extras are a separate ".extra-card-detail" block that sits
+   outside the hierarchy tree and only enters the DOM once the answer is
+   revealed. Gating on "--answer-hidden" therefore hides the front block on the
+   prompt while leaving BOTH blocks visible on the answer. */
+.rn-queue__content--answer-hidden:has(.rn-question-rem[data-queue-rem-container-tags~="hide-front-extras"]) .extra-card-detail,
+.rn-queue__content--answer-hidden:has(.rn-question-rem[data-queue-rem-container-tags~="hidefrontextras"]) .extra-card-detail {
+  display: none !important;
+}
+
+/* ===== "Hidden in queue" placeholder — Beautiful queue variant =====
+   Beautiful turns the bullet container into a zero-size inline box and centres
+   the dot absolutely inside it. Once Hide in Queue / Hide Parent / Hide
+   Grandparent remove the row's text, nothing in flow is left, the row collapses
+   to zero height, and the absolute "Hidden in queue" label lands on the next row.
+   Putting the label back in flow gives the row its line again. Kept in CORE so it
+   also fixes the standalone Hide in Queue plugin's placeholder; RemNote draws no
+   ::after of its own on these bullets, so rows without the label are untouched. */
+.rn-queue__content--answer-hidden .queue-beautiful-hierarchy-rem > .rn-bullet-container.queue-beautiful-line-centered-bullet::after {
+  position: static !important;
+}
+
 /* ===== Preserved History (tombstones) =====
    The 'Preserve history & remove' command scrubs a rem's content and tags it
    with the Preserved History powerup. Always hidden — both in the editor
@@ -107,29 +189,33 @@ const CORE_CSS = `
 /* LEGACY CSS — Hide in Queue, No Hierarchy, Hide Parent, Hide Grandparent.
    Remove from Queue's CSS lives in CORE_CSS (always-on) — see comment there. */
 const LEGACY_CSS = `
-/* ===== Hide in Queue ===== */
-.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hide-in-queue"]:not(.rn-question-rem) > .RichTextViewer,
-.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hideinqueue"]:not(.rn-question-rem) > .RichTextViewer,
-.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hide-in-queue"]:not(.rn-question-rem) > .rn-flashcard-delimiter,
-.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hideinqueue"]:not(.rn-question-rem) > .rn-flashcard-delimiter,
-.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hide-in-queue"]:not(.rn-question-rem) > .rn-queue-rem > .RichTextViewer,
-.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hideinqueue"]:not(.rn-question-rem) > .rn-queue-rem > .RichTextViewer,
-.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hide-in-queue"]:not(.rn-question-rem) > .rem-bullet__document,
-.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hideinqueue"]:not(.rn-question-rem) > .rem-bullet__document {
+/* ===== Hide in Queue =====
+   Beautiful writes a concept's name in .queue-beautiful-concept-descriptor-line
+   instead of a bare .RichTextViewer, hence the extra target. */
+.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hide-in-queue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT} > .RichTextViewer,
+.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hideinqueue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT} > .RichTextViewer,
+.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hide-in-queue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT} > .rn-flashcard-delimiter,
+.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hideinqueue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT} > .rn-flashcard-delimiter,
+.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hide-in-queue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT} > .rn-queue-rem > .RichTextViewer,
+.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hideinqueue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT} > .rn-queue-rem > .RichTextViewer,
+.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hide-in-queue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT} > .rem-bullet__document,
+.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hideinqueue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT} > .rem-bullet__document,
+.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hide-in-queue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT} > .rn-queue-rem > .queue-beautiful-concept-descriptor-line,
+.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hideinqueue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT} > .rn-queue-rem > .queue-beautiful-concept-descriptor-line {
   display: none;
 }
 
-.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hide-in-queue"]:not(.rn-question-rem) > .rn-queue-rem > .rn-bullet-container,
-.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hideinqueue"]:not(.rn-question-rem) > .rn-queue-rem > .rn-bullet-container,
-.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hide-in-queue"]:not(.rn-question-rem) > .rn-queue-rem > .rem-bullet__document,
-.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hideinqueue"]:not(.rn-question-rem) > .rn-queue-rem > .rem-bullet__document {
+.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hide-in-queue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT} > .rn-queue-rem > .rn-bullet-container,
+.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hideinqueue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT} > .rn-queue-rem > .rn-bullet-container,
+.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hide-in-queue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT} > .rn-queue-rem > .rem-bullet__document,
+.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hideinqueue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT} > .rn-queue-rem > .rem-bullet__document {
   position: relative;
 }
 
-.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hide-in-queue"]:not(.rn-question-rem) > .rn-queue-rem > .rn-bullet-container:after,
-.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hideinqueue"]:not(.rn-question-rem) > .rn-queue-rem > .rn-bullet-container:after,
-.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hide-in-queue"]:not(.rn-question-rem) > .rn-queue-rem > .rem-bullet__document:after,
-.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hideinqueue"]:not(.rn-question-rem) > .rn-queue-rem > .rem-bullet__document:after {
+.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hide-in-queue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT} > .rn-queue-rem > .rn-bullet-container:after,
+.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hideinqueue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT} > .rn-queue-rem > .rn-bullet-container:after,
+.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hide-in-queue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT} > .rn-queue-rem > .rem-bullet__document:after,
+.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hideinqueue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT} > .rn-queue-rem > .rem-bullet__document:after {
   content: "Hidden in queue";
   opacity: .3;
   white-space: nowrap;
@@ -214,6 +300,59 @@ const LEGACY_CSS = `
   left: 25px;
   top: 0;
 }
+
+/* ===== Hide Parent / Hide Grandparent — Beautiful hoisted cards =====
+   Same hoisted layout as Remove Parent / Remove Grandparent in CORE_CSS: the
+   question is the parent's next sibling ("+ div > …") and a grandchild-by-wrapper
+   of the grandparent ("> div > …"). A concept ancestor puts its text in
+   .queue-beautiful-concept-descriptor-line, not a bare .RichTextViewer, so the
+   whole row except the bullet goes and the bullet carries the placeholder. */
+.rn-queue__content--answer-hidden .indented-rem:has(+ div:not(.indented-rem) > .rn-question-rem[data-queue-rem-container-tags~="hide-parent"]) > .rn-queue-rem > :not(.rn-bullet-container),
+.rn-queue__content--answer-hidden .indented-rem:has(+ div:not(.indented-rem) > .rn-question-rem[data-queue-rem-container-tags~="hideparent"]) > .rn-queue-rem > :not(.rn-bullet-container),
+.rn-queue__content--answer-hidden .indented-rem:has(> div:not(.indented-rem) > .rn-question-rem[data-queue-rem-container-tags~="hide-grandparent"]) > .rn-queue-rem > :not(.rn-bullet-container),
+.rn-queue__content--answer-hidden .indented-rem:has(> div:not(.indented-rem) > .rn-question-rem[data-queue-rem-container-tags~="hidegrandparent"]) > .rn-queue-rem > :not(.rn-bullet-container) {
+  display: none !important;
+}
+
+.rn-queue__content--answer-hidden .indented-rem:has(+ div:not(.indented-rem) > .rn-question-rem[data-queue-rem-container-tags~="hide-parent"]) > .rn-queue-rem > .rn-bullet-container,
+.rn-queue__content--answer-hidden .indented-rem:has(+ div:not(.indented-rem) > .rn-question-rem[data-queue-rem-container-tags~="hideparent"]) > .rn-queue-rem > .rn-bullet-container,
+.rn-queue__content--answer-hidden .indented-rem:has(> div:not(.indented-rem) > .rn-question-rem[data-queue-rem-container-tags~="hide-grandparent"]) > .rn-queue-rem > .rn-bullet-container,
+.rn-queue__content--answer-hidden .indented-rem:has(> div:not(.indented-rem) > .rn-question-rem[data-queue-rem-container-tags~="hidegrandparent"]) > .rn-queue-rem > .rn-bullet-container {
+  position: relative;
+}
+
+.rn-queue__content--answer-hidden .indented-rem:has(+ div:not(.indented-rem) > .rn-question-rem[data-queue-rem-container-tags~="hide-parent"]) > .rn-queue-rem > .rn-bullet-container:after,
+.rn-queue__content--answer-hidden .indented-rem:has(+ div:not(.indented-rem) > .rn-question-rem[data-queue-rem-container-tags~="hideparent"]) > .rn-queue-rem > .rn-bullet-container:after,
+.rn-queue__content--answer-hidden .indented-rem:has(> div:not(.indented-rem) > .rn-question-rem[data-queue-rem-container-tags~="hide-grandparent"]) > .rn-queue-rem > .rn-bullet-container:after,
+.rn-queue__content--answer-hidden .indented-rem:has(> div:not(.indented-rem) > .rn-question-rem[data-queue-rem-container-tags~="hidegrandparent"]) > .rn-queue-rem > .rn-bullet-container:after {
+  content: "Hidden in queue";
+  opacity: .3;
+  white-space: nowrap;
+  position: absolute;
+  left: 25px;
+  top: 0;
+}
+
+/* ===== "Hidden in queue" on a bullet-less row — Beautiful =====
+   Beautiful draws no bullet on the top row of the hierarchy (the first Rem under
+   the breadcrumbs), and every placeholder above hangs off the bullet — so a
+   hidden top row vanished with no label. Such a row carries the label itself, in
+   flow. Confirmed 2026-09-30 against live DOM (a concept card whose Hide Parent
+   parent was the top row). */
+.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hide-in-queue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT} > .queue-beautiful-hierarchy-rem:not(:has(> .rn-bullet-container))::after,
+.rn-queue__content--answer-hidden [data-queue-rem-container-tags~="hideinqueue"]:not(.rn-question-rem)${NOT_DESCRIPTOR_CONCEPT} > .queue-beautiful-hierarchy-rem:not(:has(> .rn-bullet-container))::after,
+.rn-queue__content--answer-hidden .indented-rem:has(> .rn-question-rem[data-queue-rem-container-tags~="hide-parent"]) > .queue-beautiful-hierarchy-rem:not(:has(> .rn-bullet-container))::after,
+.rn-queue__content--answer-hidden .indented-rem:has(> .rn-question-rem[data-queue-rem-container-tags~="hideparent"]) > .queue-beautiful-hierarchy-rem:not(:has(> .rn-bullet-container))::after,
+.rn-queue__content--answer-hidden .indented-rem:has(+ div:not(.indented-rem) > .rn-question-rem[data-queue-rem-container-tags~="hide-parent"]) > .queue-beautiful-hierarchy-rem:not(:has(> .rn-bullet-container))::after,
+.rn-queue__content--answer-hidden .indented-rem:has(+ div:not(.indented-rem) > .rn-question-rem[data-queue-rem-container-tags~="hideparent"]) > .queue-beautiful-hierarchy-rem:not(:has(> .rn-bullet-container))::after,
+.rn-queue__content--answer-hidden .indented-rem:has(> .indented-rem > .rn-question-rem[data-queue-rem-container-tags~="hide-grandparent"]) > .queue-beautiful-hierarchy-rem:not(:has(> .rn-bullet-container))::after,
+.rn-queue__content--answer-hidden .indented-rem:has(> .indented-rem > .rn-question-rem[data-queue-rem-container-tags~="hidegrandparent"]) > .queue-beautiful-hierarchy-rem:not(:has(> .rn-bullet-container))::after,
+.rn-queue__content--answer-hidden .indented-rem:has(> div:not(.indented-rem) > .rn-question-rem[data-queue-rem-container-tags~="hide-grandparent"]) > .queue-beautiful-hierarchy-rem:not(:has(> .rn-bullet-container))::after,
+.rn-queue__content--answer-hidden .indented-rem:has(> div:not(.indented-rem) > .rn-question-rem[data-queue-rem-container-tags~="hidegrandparent"]) > .queue-beautiful-hierarchy-rem:not(:has(> .rn-bullet-container))::after {
+  content: "Hidden in queue";
+  opacity: .3;
+  white-space: nowrap;
+}
 `;
 
 /* Always-on: Remove Parent + Remove Grandparent powerups + their CSS.
@@ -237,11 +376,21 @@ export async function registerCoreQueueDisplayPowerups(plugin: ReactRNPlugin) {
     options: { slots: [] },
   });
 
+  await plugin.app.registerPowerup({
+    name: 'Hide Front Extras',
+    code: HIDE_FRONT_EXTRAS_POWERUP_CODE,
+    description:
+      'Hides the table properties shown on the FRONT of the tagged flashcard — the ones a card-generating ' +
+      'table column is configured to print on the question side. They still appear on the back. Use it when ' +
+      'that context gives the answer away on one particular row — "No Hierarchy" does not hide these.',
+    options: { slots: [] },
+  });
+
   await plugin.app.registerCSS('queue-display-core-css', CORE_CSS);
 }
 
 /* Gated: ports the standalone Hide in Queue plugin's powerups + CSS into
-   Incremental Everything. Only call when the user's integration setting is on
+   Incremental RemNote. Only call when the user's integration setting is on
    AND they have uninstalled the standalone plugin (otherwise RemNote throws
    "Duplicated powerup" and the entire plugin fails to load). */
 export async function registerHideInQueueLegacyPowerups(plugin: ReactRNPlugin) {

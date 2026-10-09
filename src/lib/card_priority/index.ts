@@ -1,3 +1,4 @@
+import { cardLastSeenAt, cardTypeTag } from '../priority_review_document/cooling';
 import { Card, PluginRem, RNPlugin, RemId } from '@remnote/plugin-sdk';
 import { getIncrementalRemFromRem } from '../incremental_rem';
 import { buildComprehensiveScope } from '../scope_helpers';
@@ -13,12 +14,23 @@ import {
   CardPriorityInfo,
   PrioritySource,
   CARD_PRIORITY_CODE,
-  PRIORITY_SLOT,
   SOURCE_SLOT,
   LAST_UPDATED_SLOT,
 } from './types';
+import {
+  getRawCardPriorityString,
+  isHiddenSlotMigrated,
+  rawCardPriorityReads,
+  resolveRawCardPriority,
+  writeRawCardPriority,
+} from './slot_access';
 import * as _ from 'remeda';
 import { getIESetting } from '../settings';
+import {
+  PriorityChangeEvent,
+  defaultEventForSource,
+  recordCardPriorityChange,
+} from '../priority_history';
 
 /**
  * Whether a CardPriority tag may be written, given the source being recorded.
@@ -86,14 +98,33 @@ export async function getCardPriority(
   rem: PluginRem,
   options?: { preloadedCards?: Card[] }
 ): Promise<CardPriorityInfo | null> {
-  const [cards, priorityValue, source, lastUpdated] = await Promise.all([
+  // Settle whether the deprecated visible slot is retired BEFORE reading it.
+  //
+  // rawCardPriorityReads skips that slot only when this realm already knows the
+  // answer, and the flag starts unknown in every realm — so a realm that only
+  // ever reads (a widget) used to consult the visible slot for its whole life.
+  // That is not harmless: the migration deletes the visible property row without
+  // clearing the value behind it, and a retired slot can still be read, so a rem
+  // whose hidden value has since been cleared would resolve to a frozen
+  // pre-migration number instead of its inherited one. Those leftovers cannot be
+  // removed — a retired slot rejects writes, and registering it again binds the
+  // code to a fresh slot definition that masks them rather than exposing them —
+  // so not reading them is the only defence there is.
+  //
+  // Memoised in slot_access after the first call, so this costs one synced-storage
+  // read per realm, not one per rem.
+  await isHiddenSlotMigrated(plugin);
+  const [hiddenRead, visibleRead] = rawCardPriorityReads(rem);
+  const [cards, hiddenValue, visibleValue, source, lastUpdated] = await Promise.all([
     options?.preloadedCards !== undefined
       ? Promise.resolve(options.preloadedCards)
       : rem.getCards(),
-    rem.getPowerupProperty(CARD_PRIORITY_CODE, PRIORITY_SLOT),
+    hiddenRead,
+    visibleRead,
     rem.getPowerupProperty(CARD_PRIORITY_CODE, SOURCE_SLOT),
     rem.getPowerupProperty(CARD_PRIORITY_CODE, LAST_UPDATED_SLOT),
   ]);
+  const priorityValue = resolveRawCardPriority(hiddenValue, visibleValue);
 
   const now = Date.now();
   const startOfToday = dayjs().startOf('day').valueOf();
@@ -101,11 +132,23 @@ export async function getCardPriority(
   // Infinity and therefore never satisfies the <= now check. This implicitly excludes
   // disabled cards from due counts and, consequently, from Priority Review Documents
   // and the due-card-priority cache — without any explicit disabled-card filter.
+  //
+  // It does NOT cover paused decks: pausing keeps a card's nextRepetitionTime
+  // intact (measured — see findings/CARD_STATE_REFERENCE.md), so the arithmetic alone
+  // would count those cards as due. What saves this path is its source: `cards`
+  // comes from `rem.getCards()`, which returns [] for a rem under a paused deck.
+  // Paths fed by `card.getAll()` get no such protection and must consult
+  // lib/paused_decks.ts — see buildInfoFromStore in ./cache.ts.
   const dueCards = cards.filter((card) => (card.nextRepetitionTime ?? Infinity) <= now).length;
   const dueCardsOverdue = cards.filter((card) => (card.nextRepetitionTime ?? Infinity) <= startOfToday).length;
   // Per-card nextRep, captured here so the Weighted Shield of Cards can be
   // bucketed per-card later without re-fetching every card.
   const cardsNextRep: (number | null)[] = cards.map((c) => c.nextRepetitionTime ?? null);
+  // When each card was last shown, from the same cards — no extra read. Feeds
+  // the Priority Queue's cooling (see CardPriorityInfo.cardsLastSeen).
+  const cardsLastSeen: (number | null)[] = cards.map((c) => cardLastSeenAt(c as any));
+  const cardsType = cards.map((c) => cardTypeTag((c as any).type));
+  const cardsCreatedAt = cards.map((c) => (typeof (c as any).createdAt === 'number' ? (c as any).createdAt : null));
 
   if (priorityValue) {
     const parsedPriority = parseInt(priorityValue);
@@ -120,6 +163,9 @@ export async function getCardPriority(
       dueCards,
       dueCardsOverdue,
       cardsNextRep,
+      cardsLastSeen,
+      cardsType,
+      cardsCreatedAt,
     };
   } else {
     const ancestorPriority = await findClosestAncestorWithPriority(plugin, rem);
@@ -134,6 +180,9 @@ export async function getCardPriority(
         dueCards,
         dueCardsOverdue,
         cardsNextRep,
+        cardsLastSeen,
+        cardsType,
+        cardsCreatedAt,
       };
     }
 
@@ -147,6 +196,9 @@ export async function getCardPriority(
       dueCards,
       dueCardsOverdue,
       cardsNextRep,
+      cardsLastSeen,
+      cardsType,
+      cardsCreatedAt,
     };
   }
 }
@@ -159,8 +211,8 @@ export async function getCardPriorityValue(
   plugin: RNPlugin,
   rem: PluginRem
 ): Promise<number> {
-  // Check direct slot first
-  const priorityValue = await rem.getPowerupProperty(CARD_PRIORITY_CODE, PRIORITY_SLOT);
+  // Check direct slot first (hidden, then the pre-migration visible one)
+  const priorityValue = await getRawCardPriorityString(rem);
 
   if (priorityValue) {
     const parsed = parseInt(priorityValue);
@@ -177,15 +229,39 @@ export async function getCardPriorityValue(
   return await getIESetting(plugin, defaultCardPriorityId);
 }
 
+export interface SetCardPriorityOptions {
+  /**
+   * What caused this change, for the rem's priority history. Defaults to the
+   * source-derived event ('incremental' / 'inherited' / 'default'), which is
+   * exactly right for the automatic writers; every deliberate gesture — the
+   * popup, Quick Priority, the batch tools — passes its own.
+   */
+  event?: PriorityChangeEvent;
+  /**
+   * Skip the history append entirely.
+   *
+   * For writers that are restating a value rather than changing it and would
+   * otherwise pay a read per rem for a row that {@link foldPriorityHistory}
+   * would discard anyway. Not a way to hide a real change.
+   */
+  skipHistory?: boolean;
+}
+
 /**
- * Set card priority
+ * Set card priority.
+ *
+ * Also the single place a CardPriority change is RECORDED. Every writer already
+ * had to come through here (that is what makes the band sync below reliable),
+ * so the history slot gets the same guarantee for free: no call site can change
+ * a priority without leaving a trace of what changed it.
  */
 export async function setCardPriority(
   plugin: RNPlugin,
   rem: PluginRem,
   priority: number,
   source: PrioritySource,
-  knownHasPowerup: boolean = false
+  knownHasPowerup: boolean = false,
+  options?: SetCardPriorityOptions
 ): Promise<void> {
   // Single enforcement point for the source rule — see mayWriteCardPrioritySource.
   // Refusing here rather than at each call site means a new writer cannot forget,
@@ -203,12 +279,38 @@ export async function setCardPriority(
     await rem.addPowerup(CARD_PRIORITY_CODE);
   }
 
-  // Parallelize the property updates for maximum speed (Fire and Forget style)
+  // Parallelize the property updates for maximum speed (Fire and Forget style).
+  // The value goes through writeRawCardPriority, which writes the hidden slot and
+  // — only while this KB is un-migrated — the visible one as well, so hand edits
+  // of the Priority row keep working until the rows are actually removed.
   await Promise.all([
-    rem.setPowerupProperty(CARD_PRIORITY_CODE, PRIORITY_SLOT, [priority.toString()]),
+    writeRawCardPriority(plugin, rem, priority.toString()),
     rem.setPowerupProperty(CARD_PRIORITY_CODE, SOURCE_SLOT, [source]),
     rem.setPowerupProperty(CARD_PRIORITY_CODE, LAST_UPDATED_SLOT, [Date.now().toString()])
   ]);
+
+  // Record what just happened. Deliberately AFTER the value write and not folded
+  // into the Promise.all above: it reads the existing history first, and a
+  // failure here must not be able to take the priority write down with it
+  // (recordCardPriorityChange swallows its own errors for the same reason).
+  //
+  // `hadPowerup: hasPowerup` is what keeps the KB-wide inherited/default index
+  // cheap — a rem being tagged for the first time cannot have a history, so the
+  // append skips its read and writes a single-entry array.
+  if (!options?.skipHistory) {
+    await recordCardPriorityChange(rem, {
+      priority,
+      source,
+      // An unnamed write onto a rem that was not tagged a moment ago IS the
+      // initial tagging; an unnamed write onto an already-tagged rem is
+      // described by its source. A caller that named its gesture keeps it
+      // either way — the popup labels the oldest row as the origin regardless,
+      // so nothing is lost by recording that the origin was, say, the Alt+P
+      // popup rather than a bare tag.
+      event: options?.event ?? (hasPowerup ? defaultEventForSource(source) : 'tagged'),
+      hadPowerup: hasPowerup,
+    });
+  }
 
   // Keep the table-cell badge in step. Static import: a dynamic import() here
   // emits a chunk the RemNote index sandbox cannot evaluate ("Cannot use
@@ -327,7 +429,13 @@ export async function getDueCardsWithPriorities(
   plugin: RNPlugin,
   scopeRem: PluginRem | null,
   includeNonPrioritized: boolean = true,
-  precomputedScopeIds?: Set<RemId>
+  precomputedScopeIds?: Set<RemId>,
+  /**
+   * Cards already read with `card.getAll()` by the caller. Only the cache-less
+   * path uses them, so a Light Mode refresh that needs every card for its drain
+   * and cooling as well pays for one full read instead of two.
+   */
+  preloadedCards?: any[]
 ): Promise<
   Array<{
     rem: PluginRem;
@@ -350,7 +458,7 @@ export async function getDueCardsWithPriorities(
 
   if (!allCardInfos || allCardInfos.length === 0) {
     console.warn(`[getDueCardsWithPriorities] Cache is empty! Consider running cache build first.`);
-    return getDueCardsWithPrioritiesSlow(plugin, scopeRem, includeNonPrioritized, precomputedScopeIds);
+    return getDueCardsWithPrioritiesSlow(plugin, scopeRem, includeNonPrioritized, precomputedScopeIds, preloadedCards);
   }
 
   console.log(`[getDueCardsWithPriorities] Cache loaded: ${allCardInfos.length} card priority entries`);
@@ -449,7 +557,8 @@ async function getDueCardsWithPrioritiesSlow(
   plugin: RNPlugin,
   scopeRem: PluginRem | null,
   includeNonPrioritized: boolean = true,
-  precomputedScopeIds?: Set<RemId>
+  precomputedScopeIds?: Set<RemId>,
+  preloadedCards?: any[]
 ): Promise<
   Array<{
     rem: PluginRem;
@@ -475,8 +584,9 @@ async function getDueCardsWithPrioritiesSlow(
     source: PrioritySource;
   }> = [];
 
-  // Get all cards once using the reliable plugin.card.getAll()
-  const allCards = await plugin.card.getAll();
+  // Get all cards once using the reliable plugin.card.getAll() — unless the
+  // caller already paid for that read.
+  const allCards = preloadedCards ?? (await plugin.card.getAll());
   const now = Date.now();
 
   // Build a map of remId -> due card count.
@@ -604,10 +714,12 @@ export async function recalculateTreeInheritanceBatch(
   // finishes; the loop below then falls back to per-rem rem.getCards(). That
   // under-reports rems whose cards are all disabled or in a paused deck, and the
   // error direction is the safe one: fewer rems are tagged, never more, so it
-  // cannot recreate the rogue-tag bug the guard below exists to prevent. Such
-  // rems are excluded from due counts anyway (getCardPriority maps a null
-  // nextRepetitionTime to Infinity), so they reach neither the shield nor a
-  // Priority Review Document — a stale tag on them changes nothing visible.
+  // cannot recreate the rogue-tag bug the guard below exists to prevent.
+  // Disabled cards are excluded from due counts anyway (getCardPriority maps a
+  // null nextRepetitionTime to Infinity). Paused-deck cards are NOT — they keep
+  // a real nextRepetitionTime — so they are excluded only where the paused-deck
+  // scan has been applied (./cache.ts). A stale tag on either changes nothing
+  // visible.
   const cacheLoaded = await plugin.storage.getSession<boolean>('card_priority_cache_fully_loaded');
   const cachedInfos = cacheLoaded
     ? (await plugin.storage.getSession<CardPriorityInfo[]>(allCardPriorityInfoKey)) || []
@@ -664,7 +776,9 @@ export async function recalculateTreeInheritanceBatch(
         const targetSource = closerAncestor ? 'inherited' : 'default';
 
         if (!cardInfo || cardInfo.priority !== targetPriority || cardInfo.source !== targetSource) {
-          await setCardPriority(plugin, descendant, targetPriority, targetSource);
+          await setCardPriority(plugin, descendant, targetPriority, targetSource, false, {
+            event: 'cascade',
+          });
           // We let the caller flush the cache updates
           await updateCardPriorityCache(plugin, descendant._id);
           updatedCount++;
@@ -678,5 +792,6 @@ export async function recalculateTreeInheritanceBatch(
 }
 
 export * from './types';
+export * from './slot_access';
 export * from './cache';
 export * from './batch';

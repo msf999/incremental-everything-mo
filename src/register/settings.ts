@@ -7,6 +7,7 @@ import {
   showDismissedIndicatorSettingId,
   hideDismissedTagSettingId,
   pluginIframeSelector,
+  showLinkedAudioIndicatorSettingId,
 } from '../lib/consts';
 import { PRIORITY_BAND_TAG_HIDE_CSS } from '../lib/priority_bands';
 import {
@@ -14,6 +15,7 @@ import {
   IE_SETTINGS_SCHEMA,
   IE_DOCS_BASE_URL,
   IESettingId,
+  MORE_SETTINGS_POINTER,
   SettingSpec,
   getIESetting,
 } from '../lib/settings';
@@ -26,9 +28,38 @@ const HIDE_CARD_PRIORITY_CSS = `
 
 const showLeftBorderForIncRemsId = 'show-left-border-for-increms';
 const SHOW_LEFT_BORDER_CSS = `
+  /* Row-level marker. This is the only one that reaches the queue, portals,
+     hover popups and PDF highlights — none of them build the editor container
+     div the block rule below depends on. */
   .rem[data-rem-tags~="incremental"] {
     border-left: 3px solid green;
     padding-left: 5px;
+  }
+  /* Block-level marker in the editor: the container div's box spans the rem AND
+     its descendants, so bordering it carries the indicator down the whole
+     block. Nothing subtler works here — the editor DOM is flat and absolutely
+     positioned, and a rem's descendants (and even its own indentation-guide
+     div) are root-level siblings of this element, not children, so no
+     descendant or child combinator can reach them. Tailwind's border utilities
+     on the container are !important, so ours has to be too.
+
+     The :has() guard excludes exactly one thing: the open document's own
+     container, whose box spans the entire document (measured 2901px vs 106px
+     for an ordinary rem) and would otherwise draw a bar down the full page.
+     RemNote renders the document title once, through .rn-doc-title, so the root
+     node renders no .rem row while every other container does — that is the
+     only difference between them, their class lists being identical. Anything
+     scoped on .rn-document / data-document-tags would be wrong here: those sit
+     above the editor and are ancestors of every container equally. */
+  [data-rem-container-tags~="incremental"]:has(.rem[data-rem-tags~="incremental"]) {
+    border-left: 3px solid green !important;
+  }
+  /* Where the block rule applies, drop the row bar: the two sit a few pixels
+     apart and read as one smeared marker. Descendant rems are unaffected —
+     their container divs are siblings, not descendants, of this one. */
+  [data-rem-container-tags~="incremental"] .rem[data-rem-tags~="incremental"] {
+    border-left: none;
+    padding-left: 0;
   }
   /* Same indicator on the document title. There is no .rem wrapper here; the
      document's tags live in data-document-tags on the .rn-document element. */
@@ -44,6 +75,16 @@ const SHOW_DISMISSED_INDICATOR_CSS = `
     border-left: 3px solid #f59e0b;
     padding-left: 5px;
   }
+  /* Block-level marker; see the incremental rules above for why the container
+     div is the only element that spans the block. */
+  [data-rem-container-tags~="dismissed"]:not([data-rem-container-tags~="incremental"]):has(.rem[data-rem-tags~="dismissed"]) {
+    border-left: 3px solid #f59e0b !important;
+  }
+  [data-rem-container-tags~="dismissed"]:not([data-rem-container-tags~="incremental"])
+    .rem[data-rem-tags~="dismissed"]:not([data-rem-tags~="incremental"]) {
+    border-left: none;
+    padding-left: 0;
+  }
   /* Same indicator on the document title; suppressed when also incremental so
      the green border wins, matching the outline behaviour above. */
   .rn-document[data-document-tags~="dismissed"]:not([data-document-tags~="incremental"]) .rn-doc-title {
@@ -56,6 +97,33 @@ const hideDismissedTagId = 'hide-dismissed-tag';
 const HIDE_DISMISSED_TAG_CSS = `
   [data-rem-tags~="dismissed"] .hierarchy-editor__tag-bar__tag {
     display: none;
+  }
+`;
+
+const showLinkedAudioIndicatorId = 'show-linked-audio-indicator';
+// An inline audio player is a bordered box holding a real <audio src> element
+// (findings/MEDIA_AND_FILE_STORAGE.md). A stored file plays from RemNote's S3
+// bucket or from a local/blob URL; a file that is only linked plays from the
+// outside address itself, which is the one case an http(s) src is left with.
+// The localhost exclusions cover a file still waiting in the upload cache.
+const LINKED_AUDIO_SRC = [
+  'audio[src^="http"]',
+  ':not([src*="remnote-user-data"])',
+  ':not([src^="http://localhost"])',
+  ':not([src^="http://127.0.0.1"])',
+  ':not([src^="https://127.0.0.1"])',
+].join('');
+// Editor marker only: in the queue it would be noise on every audio card.
+const LINKED_AUDIO_BOX = `.AudioVideoNode:not(.rn-queue *) div:has(> ${LINKED_AUDIO_SRC})`;
+const SHOW_LINKED_AUDIO_INDICATOR_CSS = `
+  ${LINKED_AUDIO_BOX} {
+    border: 1px dashed #f97316 !important;
+  }
+  ${LINKED_AUDIO_BOX}::after {
+    content: "🔗";
+    font-size: 10px;
+    line-height: 1;
+    flex: none;
   }
 `;
 
@@ -90,23 +158,25 @@ const COLLAPSE_TOP_BAR_CSS = `
  * Renders a schema entry's prose for RemNote's settings panel, which takes a
  * single plain-text string: warning first, then the description, then the docs
  * link and the reload note.
+ *
+ * @param isLast Append MORE_SETTINGS_POINTER. Passed for whichever setting is
+ *   registered last, so the pointer reads as the closing line of the plugin's
+ *   section — RemNote gives us no heading or footer of our own.
  */
-function panelDescription(spec: SettingSpec): string {
+function panelDescription(spec: SettingSpec, isLast: boolean): string {
   const parts: string[] = [];
   if (spec.warning) parts.push(`⚠️ ${spec.warning}`);
   parts.push(spec.description);
   if (spec.helpPath) parts.push(`Documentation: ${IE_DOCS_BASE_URL}${spec.helpPath}`);
   if (spec.reloadRequired) parts.push('Takes effect after reloading RemNote.');
-  // Last, deliberately: on the final setting of the panel this is the pointer to
-  // the settings popup, and it should read as the closing line of the section.
-  if (spec.panelFooter) parts.push(spec.panelFooter);
+  if (isLast) parts.push(MORE_SETTINGS_POINTER);
   return parts.join('\n\n');
 }
 
 /** Registers one schema entry with RemNote, picking the register* call by kind. */
-async function registerFromSchema(plugin: ReactRNPlugin, id: IESettingId) {
+async function registerFromSchema(plugin: ReactRNPlugin, id: IESettingId, isLast: boolean) {
   const spec = IE_SETTINGS_SCHEMA[id];
-  const common = { id, title: spec.title, description: panelDescription(spec) };
+  const common = { id, title: spec.title, description: panelDescription(spec, isLast) };
 
   switch (spec.kind) {
     case 'boolean':
@@ -153,27 +223,25 @@ async function registerFromSchema(plugin: ReactRNPlugin, id: IESettingId) {
  * the IE Settings popup can never describe the same setting differently.
  *
  * @param plugin RemNote plugin entry point.
- * @param opts.includePopupTier Also register the settings that have moved into
- *   the IE Settings popup. True only while this knowledge base still needs
- *   seeding: `getSetting` throws for an unregistered id, so the migration can
- *   only read a value while its registration is live. Once seeded, these
- *   disappear from RemNote's panel and the popup owns them.
+ * @param opts.ids The settings to put into RemNote's own panel — only those the
+ *   migration still has to read across (`settingIdsNeedingRegistration`), which
+ *   is EMPTY for an up-to-date knowledge base. `getSetting` throws for an
+ *   unregistered id, so a value can only be read while its registration is live;
+ *   once read, the IE Settings popup owns it and the panel entry would only
+ *   confuse. The CSS below is registered regardless.
  */
 export async function registerPluginSettings(
   plugin: ReactRNPlugin,
-  opts: { includePopupTier: boolean }
+  opts: { ids: IESettingId[] }
 ) {
-  const ids = (Object.keys(IE_SETTINGS_SCHEMA) as IESettingId[]).filter(
-    (id) => IE_SETTINGS_SCHEMA[id].tier === 'native' || opts.includePopupTier
-  );
-  for (const id of ids) {
-    await registerFromSchema(plugin, id);
+  for (let i = 0; i < opts.ids.length; i++) {
+    await registerFromSchema(plugin, opts.ids[i], i === opts.ids.length - 1);
   }
 
   // --- Startup CSS driven by the toggles above ---
-  // registerCSS is index-only (it silently no-ops from other iframes), and these
-  // read their setting through getIESetting, so they work whether the value
-  // comes from RemNote's panel or the plugin's own store.
+  // registerCSS is index-only (it silently no-ops from other iframes). These
+  // read their setting through getIESetting, i.e. from the plugin's own store,
+  // so they are unaffected by whether anything was registered above.
 
   if (await getIESetting(plugin, collapseQueueTopBar)) {
     await plugin.app.registerCSS(collapseTopBarCssId, COLLAPSE_TOP_BAR_CSS);
@@ -189,6 +257,9 @@ export async function registerPluginSettings(
   }
   if (await getIESetting(plugin, hideDismissedTagSettingId)) {
     await plugin.app.registerCSS(hideDismissedTagId, HIDE_DISMISSED_TAG_CSS);
+  }
+  if (await getIESetting(plugin, showLinkedAudioIndicatorSettingId)) {
+    await plugin.app.registerCSS(showLinkedAudioIndicatorId, SHOW_LINKED_AUDIO_INDICATOR_CSS);
   }
 
   // Unconditional: the band tags are an implementation detail, so their tag-bar

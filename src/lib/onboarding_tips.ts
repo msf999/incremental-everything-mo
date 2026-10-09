@@ -1,0 +1,935 @@
+import { RNPlugin } from '@remnote/plugin-sdk';
+import {
+  onboardingTipsStateKey,
+  onboardingTipsLocalMirrorKey,
+  onboardingTipsSnoozeKey,
+  onboardingTipsAnsweredSessionKey,
+  onboardingTipsDrawnSessionKey,
+  onboardingTipsLastShownKey,
+} from './consts';
+
+/**
+ * The tip pile behind the Incremental RemNote sidebar hub.
+ *
+ * A tip is one small thing the plugin can do, phrased so it can be acted on
+ * immediately. **One tip per session**: the panel draws a tip when it mounts,
+ * and once it is answered the tip area is done until the next start — see
+ * {@link tipAnsweredThisSession}, which is what actually holds that line across
+ * the remounts of the sidebar slot. The user has three answers to each:
+ *
+ *  - **I Got It** — acknowledged, and never shown again. Persisted per knowledge
+ *    base in synced storage *and* mirrored locally, so it survives reloads,
+ *    follows the user across devices, and outlives a synced value that comes
+ *    back empty. See {@link acknowledgeTip}.
+ *  - **✕** — not now. The tip stays in the pile and can resurface later.
+ *
+ * Both of those *answer* the tip, and both then pause the panel identically —
+ * see {@link pauseTipsAfterAnswer}. They differ in what happens to the tip, not
+ * in how long the panel stays quiet.
+ *  - **Learn More** — opens the docs section for the feature, when the tip names
+ *    one. Not every tip has a page (some are habits, not features), hence the
+ *    optional `docsPath`.
+ *
+ * A fourth button, **All Tips**, escapes the one-per-session pacing: it opens
+ * the whole pile in a popup (widgets/onboarding_tips.tsx), answered ones first
+ * with the date they were answered.
+ */
+/**
+ * Which pile a tip belongs to, in LISTING order — how the All Tips popup groups
+ * and sorts them. What gets *drawn* first is a separate question, answered by
+ * {@link TIP_DRAW_STAGES}.
+ */
+export const TIP_CATEGORY_ORDER = ['basics', 'statistics', 'utilities', 'advanced'] as const;
+export type TipCategory = (typeof TIP_CATEGORY_ORDER)[number];
+
+/**
+ * The order the piles are OFFERED in — see {@link pickTip}. Each stage is drawn
+ * from as one pool, and a stage is exhausted before the next is offered.
+ *
+ * It is not decoration. A tip is drawn at random within its stage, so without
+ * staging, adding a dozen utility tips would make it more likely than not that a
+ * brand-new user's first tip is about cycling text case rather than about Alt+X.
+ *
+ * Only `basics` earns a stage of its own at the front: it is the daily loop, and
+ * nothing else is worth learning before it. Beyond that the distinction stops
+ * mattering to the user — someone who knows the loop has no reason to be shown
+ * every statistics tip before any utility one — so those two share a stage and
+ * rotate together. They stay separate CATEGORIES because the All Tips popup
+ * labels by them, which is a listing concern, not a pacing one.
+ *
+ * `advanced` is the far end: offered only once EVERYTHING else has been
+ * acknowledged. It is currently empty, which costs nothing — a stage with no
+ * unanswered tips is skipped, so until something is put in it the rotation ends
+ * where it did before.
+ */
+export const TIP_DRAW_STAGES: readonly (readonly TipCategory[])[] = [
+  ['basics'],
+  ['statistics', 'utilities'],
+  ['advanced'],
+];
+
+export interface OnboardingTip {
+  /**
+   * Stable identity. NEVER reuse or renumber an id: acknowledgements are stored
+   * by id, so a recycled id would silently arrive pre-dismissed for every
+   * existing user. Retiring a tip means deleting the entry and burying the id.
+   */
+  id: string;
+  /**
+   * Which pile this belongs to. `basics` is exhausted before anything else is
+   * offered, so it teaches the daily loop first; `statistics` and `utilities`
+   * then rotate together; `advanced` waits until every other tip has been
+   * acknowledged — see {@link TIP_DRAW_STAGES}. New feature tips go at the END
+   * of their category.
+   */
+  category: TipCategory;
+  /**
+   * Three or four words. The sidebar column is ~130px at its narrowest.
+   *
+   * NAME THE FEATURE here. A title built around the keystroke alone leaves the
+   * user unable to say what they were just told about, or to search for it.
+   */
+  title: string;
+  /**
+   * ONE line of prose — roughly 90 characters, hard ceiling 110. This renders in
+   * a sidebar the user can drag down to about 130px wide, where 90 characters
+   * already wrap to four lines. A tip is a hook, not an explanation: the
+   * explanation is what `docsPath` is for.
+   *
+   * Two rules for what those characters are spent on:
+   *
+   * 1. **Repeat the feature's name**, capitalised, alongside the shortcut. The
+   *    shortcut is how to reach it; the name is what lets the user recognise it
+   *    again, in the docs or in conversation.
+   * 2. **Where RemNote has its own version of the feature, say what this ADDS.**
+   *    RemNote already has a Practice History, so "opens the history" reads as a
+   *    duplicate of something the user already has. Naming the difference —
+   *    FSRS stats, lapses, retention, per-card sections — is what makes the tip
+   *    worth acting on.
+   */
+  body: string;
+  /**
+   * Docs target for "Learn More", relative to `IE_DOCS_BASE_URL` (e.g.
+   * `'Getting-Started/#making-a-rem-incremental'`). Omit when the tip has no
+   * single page behind it; the button is then not rendered.
+   */
+  docsPath?: string;
+}
+
+/** How long the tip panel stays quiet after a tip is closed with ✕. */
+export const TIP_SNOOZE_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * The starter pile: the handful of things a new user has to know before the
+ * plugin stops looking like a queue with extra buttons. Ordered roughly by when
+ * they become useful, though tips are drawn at random — order is documentation
+ * for whoever edits this list, not a sequence the user experiences.
+ */
+export const ONBOARDING_TIPS: OnboardingTip[] = [
+  {
+    id: 'create-first-incremental-rem',
+    category: 'basics',
+    title: 'Your first Incremental Rem',
+    body: 'Alt+X on any Rem, nothing selected, and it joins your queue. No flashcard needed.',
+    docsPath: 'Getting-Started/#making-a-rem-incremental',
+  },
+  {
+    id: 'extract-while-reading',
+    category: 'basics',
+    title: 'Extract, don’t re-read',
+    body: 'Alt+X with text selected pulls that passage out on its own. The source shrinks each pass.',
+    docsPath: 'IR-Flow--Reading-Extracting-and-Clozing/#create-extract-altx--altshiftx',
+  },
+  {
+    id: 'cloze-an-extract',
+    category: 'basics',
+    title: 'Extract → flashcard',
+    body: 'Alt+Z clozes the words that matter. Reading becomes remembering, in place.',
+    docsPath: 'IR-Flow--Reading-Extracting-and-Clozing/#create-cloze-altz--altshiftz',
+  },
+  {
+    id: 'set-a-priority',
+    category: 'basics',
+    title: 'Priority runs the queue',
+    body: 'Alt+P sets it. It is the one knob that changes what your day looks like.',
+    docsPath: 'Prioritization-&-Sorting/#setting-priorities',
+  },
+  {
+    id: 'priority-number',
+    category: 'basics',
+    title: 'First Things First',
+    body: 'Think of priorities as a queue of importance. Lower numbers mean higher priority.',
+    docsPath: 'Prioritization-&-Sorting/#priority-value-absolute-priority',
+  },
+  {
+    id: 'priority-inheritance',
+    category: 'basics',
+    title: 'Set priority once',
+    body: 'Priority is inherited — prioritise a document, override only the exceptions.',
+    docsPath: 'Prioritization-&-Sorting/#priority-inheritance-system',
+  },
+  {
+    id: 'sorting-criteria',
+    category: 'basics',
+    title: 'Tune your queue mix',
+    body: 'Cards vs. reading vs. randomness, saved as presets. Click Sorting above.',
+    docsPath: 'Prioritization-&-Sorting/#sorting-criteria',
+  },
+  {
+    id: 'answer-buttons',
+    category: 'basics',
+    title: 'More than “next”',
+    body: 'Reschedule, dismiss, reprioritise or open in the editor — without leaving the queue.',
+    docsPath: 'Reviewing-Items-in-the-Queue/#the-answer-buttons',
+  },
+  {
+    id: 'review-in-editor',
+    category: 'basics',
+    title: 'Review outside the queue',
+    body: 'Long reading needs room. Ctrl+Shift+J opens the item in the editor and times it.',
+    docsPath: 'Reviewing-Items-in-the-Editor/',
+  },
+  {
+    id: 'priority-review-document',
+    category: 'basics',
+    title: 'Too many cards due?',
+    body: 'The Priority Queue keeps one document topped up with your most important due items, and drains it as you review — Alt+Shift+L.',
+    docsPath: 'Priority-Review-Document/',
+  },
+  {
+    id: 'pdf-workflow',
+    category: 'basics',
+    title: 'Read PDFs incrementally',
+    body: 'The plugin keeps your page, and turns highlights into prioritised extracts.',
+    docsPath: 'PDF-Incremental-Reading-Workflow/',
+  },
+  {
+    id: 'incremental-adoption',
+    category: 'basics',
+    title: 'Adopt it incrementally',
+    body: 'Start with Incremental Rems and priority. Add the rest when the habit gets boring.',
+    docsPath: 'What-is-Incrementalism%3F/',
+  },
+  {
+    id: 'increm-list',
+    category: 'basics',
+    title: 'See the whole queue',
+    body: 'The IncRem List shows priorities, due dates and history — and edits them inline.',
+    docsPath: 'IncRem-List-and-Main-View/',
+  },
+  {
+    id: 'keyboard-shortcuts',
+    category: 'basics',
+    title: 'One keystroke away',
+    body: 'Alt+X, Alt+Shift+X and Alt+P cover the daily loop. Click to see the rest.',
+    docsPath: 'Keyboard-Shortcuts/',
+  },
+  {
+    id: 'settings-live-here',
+    category: 'basics',
+    title: 'Settings, all in one place',
+    body: 'The ⚙ above opens them: grouped, and each one linked to the page explaining it.',
+    docsPath: 'Plugin-Settings-Reference/',
+  },
+  {
+    id: 'review-queue-in-sidebar',
+    category: 'basics',
+    title: 'Your queue, on your phone',
+    body: 'Priority Review Queue is pinned to your sidebar — where the plugin panel does not reach.',
+    docsPath: 'Priority-Review-Document/#the-priority-review-queue-in-your-sidebar',
+  },
+
+  // Drawn only once every `basics` tip has been acknowledged.
+  // --- Statistics -------------------------------------------------------
+  {
+    id: 'study-dashboard',
+    category: 'statistics',
+    title: 'Where did the time go?',
+    body: 'The Study Dashboard breaks your reviews down by document and period.',
+    docsPath: 'Study-Dashboard/',
+  },
+  {
+    id: 'flashcard-history-per-card',
+    category: 'statistics',
+    title: 'Flashcard Repetition History',
+    body: 'Ctrl+Shift+H: History per card, plus FSRS stats, retention, priority history and more.',
+    docsPath: 'Plugin-Widgets-Reference/#211-flashcard-repetition-history',
+  },
+  {
+    id: 'repetition-history-either-kind',
+    category: 'statistics',
+    title: 'Repetition History, either kind',
+    body: 'Ctrl+Shift+H opens the Repetition History of whatever you are on — IncRem or flashcard.',
+    docsPath: 'Plugin-Widgets-Reference/#how-ctrlshifth-routes',
+  },
+  // --- Utilities -------------------------------------------------------
+  {
+    id: 'filter-images',
+    category: 'utilities',
+    title: 'Find every figure',
+    body: 'Search cannot see images. Tag them once, then filter a document down to its figures.',
+    docsPath: 'Utilities-Finding-and-Navigating/#filter-a-document-by-images',
+  },
+  {
+    id: 'pin-ring-indicators',
+    category: 'utilities',
+    title: 'Pins tell you more',
+    body: 'Switch on pin rings: each pin then says where it goes — your figure, or the source.',
+    docsPath: 'Colour-Coding-Reference/#reference-pin-rings',
+  },
+  {
+    id: 'open-source-floating',
+    category: 'utilities',
+    title: 'Peek at the source',
+    body: 'Hover a pin, press Opt+Shift+O: the PDF opens beside your card, queue still running.',
+    docsPath: 'Utilities-Finding-and-Navigating/#floating-window-interaction-closing',
+  },
+  {
+    id: 'find-rem-picker',
+    category: 'utilities',
+    title: 'When [[ fails you',
+    body: 'Opt+Shift+F finds Rems that RemNote’s own reference search buries, and links them.',
+    docsPath: 'Utilities-Finding-and-Navigating/#find-rem-reference-or-open',
+  },
+  {
+    id: 'text-case-converter',
+    category: 'utilities',
+    title: 'Fix SHOUTING headings',
+    body: 'Shift+F3 cycles the selection: Title Case, UPPERCASE, lowercase. Formatting survives.',
+    docsPath: 'Utilities-Text-and-Lists/#text-case-converter',
+  },
+  {
+    id: 'set-next-heading-level',
+    category: 'utilities',
+    title: 'Headings without picking',
+    body: 'Run “hn” and the Rem takes the level below its parent. Structure stays consistent.',
+    docsPath: 'Utilities-Outline-and-Headings/#set-next-heading-level',
+  },
+  {
+    id: 'inlinize-break-lists',
+    category: 'utilities',
+    title: 'Rescue a flattened list',
+    body: 'A highlight that ate its line breaks: “inl” rebuilds the items, “brl” splits them out.',
+    docsPath: 'Utilities-Text-and-Lists/#inlinize-break-lists-from-pdf-highlights',
+  },
+    {
+    id: 'queue-display-utilities',
+    category: 'utilities',
+    title: 'Queue Display Utilities',
+    body: 'When hierarchy shown on cards become an issue, these utilities help manage the display.',
+    docsPath: 'Utilities-Queue-Display/',
+  },
+  {
+    id: 'hide-in-queue',
+    category: 'utilities',
+    title: 'Hide in Queue',
+    body: 'Hide a spoiler parent and its text is masked on the front of its descendant cards.',
+    docsPath: 'Utilities-Queue-Display/#hide-in-queue',
+  },
+  {
+    id: 'remove-from-queue',
+    category: 'utilities',
+    title: 'Remove from Queue',
+    body: '“rfq” drops a parent from card display entirely, pulling its children up a level.',
+    docsPath: 'Utilities-Queue-Display/#remove-from-queue-rfq',
+  },
+  {
+    id: 'hide-vs-remove-queue',
+    category: 'utilities',
+    title: 'Hide x Remove from Queue',
+    body: '“Hide in Queue” avoids spoilers, "Remove from Queue" removes the parent entirely.',
+    docsPath: 'Utilities-Queue-Display/',
+  },
+  {
+    id: 'no-hierarchy',
+    category: 'utilities',
+    title: 'No Hierarchy',
+    body: 'Use to hide every ancestor on a card display, front and back, when context gives it away.',
+    docsPath: 'Utilities-Queue-Display/#no-hierarchy-nh',
+  },
+    {
+    id: 'hide-and-remove-targets',
+    category: 'utilities',
+    title: 'Hide & Remove what matters',
+    body: '“Hide in Queue”/"Remove from Queue" can target the rem, its parent or grandparent.',
+    docsPath: 'Utilities-Queue-Display/',
+  },
+  {
+    id: 'hide-parent',
+    category: 'utilities',
+    title: 'Hide just the parent',
+    body: '“hp” masks the immediate parent on the front, then reveals it on the back.',
+    docsPath: 'Utilities-Queue-Display/#hide-parent-hp',
+  },
+  {
+    id: 'remove-parent',
+    category: 'utilities',
+    title: 'Drop the parent entirely',
+    body: '“rp” removes the parent from both sides of the card. Alt+Z gets it automatically.',
+    docsPath: 'Utilities-Queue-Display/#remove-parent-rp-new',
+  },
+  {
+    id: 'pin-source-at-end',
+    category: 'utilities',
+    title: 'Link cards to sources',
+    body: 'Select text, Alt+Shift+F, then Ctrl/Cmd+Shift+Enter: a pin to the source, text intact.',
+    docsPath: 'Utilities-Finding-and-Navigating/#pin-a-source-at-the-end-of-a-rem',
+  },
+
+  // --- Advanced ---------------------------------------------------------
+  // Drawn only once EVERY other tip has been acknowledged — the last stage in
+  // TIP_DRAW_STAGES.
+  {
+    id: 'add-repetition-outside-queue',
+    category: 'advanced',
+    title: 'Add a Repetition',
+    body: 'Ctrl+Shift+H → ➕ Repetition logs a card you tested outside the queue, FSRS interval per grade.',
+    docsPath: 'Plugin-Widgets-Reference/#211-flashcard-repetition-history',
+  },
+  {
+    id: 'transfer-increm-to-parent',
+    category: 'advanced',
+    title: 'Transfer to Parent Rem',
+    body: '“ttp” — Transfer Incremental Data to Parent hands priority, history and schedule to the parent.',
+    docsPath: 'Create-Incremental-Rem-from-PDF-Highlights/#transfer-to-parent',
+  },
+];
+
+/**
+ * Acknowledgement state for one knowledge base.
+ *
+ * Two shapes, because the first one had no clock in it. `acknowledgedAt` is what
+ * is written now; `acknowledged` is the original id-only array, still read so
+ * that nobody's answered tips come back, and never written again. A tip
+ * recovered from the legacy array has no date — the list shows it as such rather
+ * than inventing one.
+ */
+interface TipsState {
+  /** LEGACY, read-only: ids with no acknowledgement date. */
+  acknowledged?: string[];
+  /** Tip id → epoch ms at which "I Got It" was pressed. */
+  acknowledgedAt?: Record<string, number>;
+}
+
+/**
+ * Synced storage is shared across every knowledge base the user owns, so the
+ * state is partitioned by KB id — the same shape as the shield history. A tip
+ * dismissed while learning anatomy should not be silently pre-dismissed in a
+ * knowledge base started next year.
+ */
+type TipsStateByKb = Record<string, TipsState>;
+
+/** Tip id → when it was acknowledged, or `null` when only the legacy array knew. */
+export type AcknowledgedTipMap = Record<string, number | null>;
+
+/**
+ * The bucket written when the current knowledge base cannot be identified.
+ *
+ * `getCurrentKnowledgeBaseData()` is an IPC round trip that can come back empty
+ * — most plausibly while the sidebar mounts during startup, which is exactly
+ * when this panel reads. An acknowledgement made in that window used to land in
+ * this bucket and stay there, invisible to every later read once the real id
+ * resolved: the tip came back. Reads now fold this bucket into the current KB
+ * and the next write clears it out.
+ *
+ * The fold is a guess, and knowingly so: the bucket exists precisely because the
+ * knowledge base was unknown, so it is adopted by whichever KB reads it first.
+ * With several knowledge bases that can pre-dismiss a tip in the wrong one. That
+ * is the cheaper error — a tip not shown costs a hint, a tip shown again after
+ * being retired reads as the plugin ignoring the user.
+ */
+const FALLBACK_KB_ID = 'default';
+
+async function getKbId(plugin: RNPlugin): Promise<string> {
+  try {
+    const kb = await plugin.kb.getCurrentKnowledgeBaseData();
+    return kb?._id ?? FALLBACK_KB_ID;
+  } catch {
+    return FALLBACK_KB_ID;
+  }
+}
+
+async function readStore(
+  plugin: RNPlugin,
+  scope: 'synced' | 'local'
+): Promise<TipsStateByKb> {
+  try {
+    const raw =
+      scope === 'synced'
+        ? await plugin.storage.getSynced<TipsStateByKb>(onboardingTipsStateKey)
+        : await plugin.storage.getLocal<TipsStateByKb>(onboardingTipsLocalMirrorKey);
+    return raw && typeof raw === 'object' ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Fold one KB's state into an accumulator, keeping the EARLIEST date known for
+ *  an id: the mirror and the synced copy can disagree by a few milliseconds, and
+ *  the honest answer is when the user actually pressed the button. */
+function foldState(into: AcknowledgedTipMap, state: TipsState | undefined): void {
+  if (!state) return;
+  for (const id of state.acknowledged ?? []) {
+    if (!(id in into)) into[id] = null;
+  }
+  for (const [id, at] of Object.entries(state.acknowledgedAt ?? {})) {
+    if (typeof at !== 'number') continue;
+    const prev = into[id];
+    into[id] = typeof prev === 'number' ? Math.min(prev, at) : at;
+  }
+}
+
+/**
+ * Everything this device knows about what has been acknowledged in this KB:
+ * the synced record, the local mirror and the fallback bucket, unioned.
+ *
+ * A union rather than a pick, because each source can be the only one holding a
+ * given id — the mirror survives a synced wipe, the synced copy carries what
+ * another device answered, and the fallback bucket holds whatever was answered
+ * before the KB id resolved. Nothing here can subtract an acknowledgement, which
+ * is the property that keeps a retired tip retired.
+ */
+async function collectForCurrentKb(plugin: RNPlugin): Promise<{
+  kbId: string;
+  map: AcknowledgedTipMap;
+  synced: TipsStateByKb;
+  local: TipsStateByKb;
+}> {
+  const [kbId, synced, local] = await Promise.all([
+    getKbId(plugin),
+    readStore(plugin, 'synced'),
+    readStore(plugin, 'local'),
+  ]);
+  const map: AcknowledgedTipMap = {};
+  foldState(map, synced[kbId]);
+  foldState(map, local[kbId]);
+  if (kbId !== FALLBACK_KB_ID) {
+    foldState(map, synced[FALLBACK_KB_ID]);
+    foldState(map, local[FALLBACK_KB_ID]);
+  }
+  return { kbId, map, synced, local };
+}
+
+/** Tip id → acknowledgement date (`null` if it predates the timestamps). */
+export async function getAcknowledgedTipMap(plugin: RNPlugin): Promise<AcknowledgedTipMap> {
+  return (await collectForCurrentKb(plugin)).map;
+}
+
+export async function getAcknowledgedTipIds(plugin: RNPlugin): Promise<string[]> {
+  return Object.keys(await getAcknowledgedTipMap(plugin));
+}
+
+/**
+ * Record "I Got It", to both stores.
+ *
+ * The write is a merge of everything already known, not an append to whichever
+ * copy answered first: if synced storage returns empty because it has not
+ * hydrated, appending to *that* would write a one-entry record over a full one
+ * and un-retire every other tip. Merging first makes the worst case a no-op.
+ */
+export async function acknowledgeTip(plugin: RNPlugin, tipId: string): Promise<void> {
+  const { kbId, map, synced, local } = await collectForCurrentKb(plugin);
+  if (!(tipId in map)) map[tipId] = Date.now();
+
+  // Dates only. The legacy array is folded into `map` above, so dropping it here
+  // loses nothing — and an id with no date keeps `null`, which cannot be stored
+  // in `acknowledgedAt`, so it is written back as the array it came from.
+  const acknowledgedAt: Record<string, number> = {};
+  const undated: string[] = [];
+  for (const [id, at] of Object.entries(map)) {
+    if (typeof at === 'number') acknowledgedAt[id] = at;
+    else undated.push(id);
+  }
+  const next: TipsState = undated.length
+    ? { acknowledgedAt, acknowledged: undated }
+    : { acknowledgedAt };
+
+  synced[kbId] = next;
+  local[kbId] = next;
+  // The fallback bucket has been folded in; leaving it would keep re-seeding
+  // every read with a copy that no longer gains entries.
+  if (kbId !== FALLBACK_KB_ID) {
+    delete synced[FALLBACK_KB_ID];
+    delete local[FALLBACK_KB_ID];
+  }
+
+  await plugin.storage.setSynced(onboardingTipsStateKey, synced);
+  await plugin.storage.setLocal(onboardingTipsLocalMirrorKey, local);
+}
+
+/** Used by the "start over" affordance, and by anyone debugging the pile. */
+export async function resetAcknowledgedTips(plugin: RNPlugin): Promise<void> {
+  const { kbId, synced, local } = await collectForCurrentKb(plugin);
+  for (const store of [synced, local]) {
+    delete store[kbId];
+    delete store[FALLBACK_KB_ID];
+  }
+  await plugin.storage.setSynced(onboardingTipsStateKey, synced);
+  await plugin.storage.setLocal(onboardingTipsLocalMirrorKey, local);
+  // This knowledge base's slots only — "start over" here must not clear the
+  // snooze or the session's tip in a knowledge base the user is not looking at.
+  const snooze = await readSnoozeMap(plugin);
+  delete snooze[kbId];
+  delete snooze[FALLBACK_KB_ID];
+  await plugin.storage.setLocal(onboardingTipsSnoozeKey, snooze);
+  // Otherwise "start over" hands back an empty pile and a panel that has
+  // already used up its one tip for the session.
+  for (const key of [onboardingTipsAnsweredSessionKey, onboardingTipsDrawnSessionKey]) {
+    const byKb = await readSessionMap<unknown>(plugin, key);
+    delete byKb[kbId];
+    delete byKb[FALLBACK_KB_ID];
+    await plugin.storage.setSession(key, byKb);
+  }
+  const lastShown =
+    (await plugin.storage.getLocal<Record<string, Record<string, number>>>(
+      onboardingTipsLastShownKey
+    )) || {};
+  delete lastShown[kbId];
+  await plugin.storage.setLocal(onboardingTipsLastShownKey, lastShown);
+}
+
+/**
+ * Snooze lives in *local* storage, not synced: "not right now" is about the
+ * session in front of you, and syncing it would silence the panel on a device
+ * the user has not touched yet.
+ */
+/**
+ * Reinterpret one of the tip keys as a per-knowledge-base map.
+ *
+ * The snooze and the two session keys each used to hold a single bare value
+ * shared by every knowledge base, which is wrong for the same reason the
+ * acknowledgements and the last-shown map are already partitioned: the piles are
+ * per knowledge base, so answering a tip in one should not silence the panel in
+ * another.
+ *
+ * A value left over from before that fix is a number, a boolean or a string
+ * rather than an object. It is dropped rather than migrated into the current
+ * knowledge base's slot: the only thing lost is up to two hours of quiet, and
+ * guessing which knowledge base an unlabelled timestamp belonged to would be
+ * wrong more often than right for anyone who uses more than one.
+ */
+function asKbMap<T>(stored: unknown): Record<string, T> {
+  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return {};
+  return stored as Record<string, T>;
+}
+
+async function readSnoozeMap(plugin: RNPlugin): Promise<Record<string, number>> {
+  try {
+    return asKbMap<number>(await plugin.storage.getLocal(onboardingTipsSnoozeKey));
+  } catch {
+    return {};
+  }
+}
+
+export async function snoozeTips(plugin: RNPlugin): Promise<void> {
+  const byKb = await readSnoozeMap(plugin);
+  byKb[await getKbId(plugin)] = Date.now() + TIP_SNOOZE_MS;
+  await plugin.storage.setLocal(onboardingTipsSnoozeKey, byKb);
+}
+
+export async function tipsAreSnoozed(plugin: RNPlugin): Promise<boolean> {
+  const byKb = await readSnoozeMap(plugin);
+  return Date.now() < (byKb[await getKbId(plugin)] ?? 0);
+}
+
+/** When the panel goes quiet until, for this knowledge base. 0 = not snoozed. */
+export async function getTipSnoozeUntil(plugin: RNPlugin): Promise<number> {
+  const byKb = await readSnoozeMap(plugin);
+  return byKb[await getKbId(plugin)] ?? 0;
+}
+
+/**
+ * Has a tip already been answered in this session?
+ *
+ * The panel promises one tip per session, and until this existed that promise
+ * rested on the component staying mounted: RemNote remounts the `SidebarEnd`
+ * slot as the app is used, and every remount re-ran the draw. That is invisible
+ * while the pile is large — a fresh tip each time looks like a fresh tip — and
+ * becomes obvious once a category is nearly exhausted, when the same two or
+ * three survivors come round again and again and read as tips that were already
+ * answered.
+ *
+ * Session storage, not local, and a separate key from the snooze because the two
+ * cover different gaps. The snooze is a wall clock: it survives reloads and
+ * restarts, but it expires after {@link TIP_SNOOZE_MS}. This one has no clock:
+ * it holds for as long as the session does. Without it, a session left open
+ * longer than the snooze — an ordinary working day with RemNote in the
+ * background — would hand out a fresh tip every two hours, which is not what
+ * "one tip per session" says. Neither key subsumes the other, so both answers
+ * write both.
+ */
+async function readSessionMap<T>(plugin: RNPlugin, key: string): Promise<Record<string, T>> {
+  try {
+    return asKbMap<T>(await plugin.storage.getSession(key));
+  } catch {
+    return {};
+  }
+}
+
+export async function tipAnsweredThisSession(plugin: RNPlugin): Promise<boolean> {
+  const byKb = await readSessionMap<boolean>(plugin, onboardingTipsAnsweredSessionKey);
+  return byKb[await getKbId(plugin)] ?? false;
+}
+
+export async function markTipAnsweredThisSession(plugin: RNPlugin): Promise<void> {
+  const byKb = await readSessionMap<boolean>(plugin, onboardingTipsAnsweredSessionKey);
+  byKb[await getKbId(plugin)] = true;
+  await plugin.storage.setSession(onboardingTipsAnsweredSessionKey, byKb);
+}
+
+/**
+ * Close the tip area after the user has answered the tip, whichever answer it
+ * was.
+ *
+ * Both answers go through here so they cannot drift apart. They did: ✕ snoozed
+ * *and* marked the session, while **I Got It** only marked the session — so
+ * reloading after the softer answer ("not now") stayed quiet for two hours,
+ * while reloading after the harder one ("I know this, retire it") produced a
+ * fresh tip immediately. The panel promises one tip per session either way, and
+ * a reload is not a new session.
+ *
+ * What the two answers still do differently is everything about the *tip*:
+ * {@link acknowledgeTip} retires it for good, ✕ leaves it in the pile. This
+ * function is only about how long the panel stays quiet afterwards.
+ *
+ * Not called by the All Tips popup: that is deliberately the way out of the
+ * one-per-session pacing, so acknowledging five tips there must not silence the
+ * panel for two hours.
+ */
+export async function pauseTipsAfterAnswer(plugin: RNPlugin): Promise<void> {
+  await snoozeTips(plugin);
+  await markTipAnsweredThisSession(plugin);
+}
+
+/** The tip already drawn in this session, if the panel has mounted before. */
+export async function getDrawnTipIdThisSession(plugin: RNPlugin): Promise<string | null> {
+  const byKb = await readSessionMap<string>(plugin, onboardingTipsDrawnSessionKey);
+  return byKb[await getKbId(plugin)] || null;
+}
+
+export async function setDrawnTipIdThisSession(plugin: RNPlugin, tipId: string): Promise<void> {
+  const byKb = await readSessionMap<string>(plugin, onboardingTipsDrawnSessionKey);
+  byKb[await getKbId(plugin)] = tipId;
+  await plugin.storage.setSession(onboardingTipsDrawnSessionKey, byKb);
+}
+
+/** Tip id → when it was last put on screen, for this knowledge base. */
+export async function getLastShownMap(plugin: RNPlugin): Promise<Record<string, number>> {
+  try {
+    const byKb =
+      (await plugin.storage.getLocal<Record<string, Record<string, number>>>(
+        onboardingTipsLastShownKey
+      )) || {};
+    return byKb[await getKbId(plugin)] ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Stamp a tip as shown. Called only on a fresh draw — a remount that re-shows
+ * the session's existing tip must not re-stamp it, or a tip could be pushed to
+ * the back of the rotation without the user ever having answered it.
+ */
+export async function recordTipShown(plugin: RNPlugin, tipId: string): Promise<void> {
+  try {
+    const kbId = await getKbId(plugin);
+    const byKb =
+      (await plugin.storage.getLocal<Record<string, Record<string, number>>>(
+        onboardingTipsLastShownKey
+      )) || {};
+    byKb[kbId] = { ...(byKb[kbId] ?? {}), [tipId]: Date.now() };
+    await plugin.storage.setLocal(onboardingTipsLastShownKey, byKb);
+  } catch {
+    // Pacing only. A failure here costs a repeat, not a correctness problem.
+  }
+}
+
+/**
+ * Copy the synced record into the local mirror when the mirror is missing ids.
+ *
+ * The mirror only starts filling from the first acknowledgement made after it
+ * was introduced, which leaves everything answered before then protected by
+ * synced storage alone — the arrangement that lost the shield history when
+ * RemNote reworked its storage layer. This closes that window on the next panel
+ * mount instead of waiting for the user to answer another tip.
+ *
+ * One-directional and additive: it only ever writes local, and only ids the
+ * union already contains, so it cannot resurrect a tip or clobber a mirror that
+ * is ahead of the synced copy.
+ */
+export async function backfillLocalMirror(plugin: RNPlugin): Promise<void> {
+  const { kbId, map, local } = await collectForCurrentKb(plugin);
+  const mirrored = new Set([
+    ...(local[kbId]?.acknowledged ?? []),
+    ...Object.keys(local[kbId]?.acknowledgedAt ?? {}),
+  ]);
+  if (Object.keys(map).every((id) => mirrored.has(id))) return;
+
+  const acknowledgedAt: Record<string, number> = {};
+  const undated: string[] = [];
+  for (const [id, at] of Object.entries(map)) {
+    if (typeof at === 'number') acknowledgedAt[id] = at;
+    else undated.push(id);
+  }
+  local[kbId] = undated.length ? { acknowledgedAt, acknowledged: undated } : { acknowledgedAt };
+  await plugin.storage.setLocal(onboardingTipsLocalMirrorKey, local);
+}
+
+/** One row of {@link readTipsDiagnostics}: what each store says about one id. */
+export interface TipsDiagnosticRow {
+  id: string;
+  /** Whether the id is still in {@link ONBOARDING_TIPS} — a stale id is dead weight. */
+  known: boolean;
+  inSynced: boolean;
+  inLocal: boolean;
+  /** True when the id was only found in the unidentified-KB fallback bucket. */
+  fromFallbackOnly: boolean;
+  at: number | null;
+}
+
+export interface TipsDiagnostics {
+  kbId: string;
+  /** False when `getCurrentKnowledgeBaseData()` came back empty — see FALLBACK_KB_ID. */
+  kbResolved: boolean;
+  /** Every partition in each store, with how many ids it holds. Shows at a
+   *  glance whether acknowledgements are piling up under the wrong key. */
+  syncedPartitions: { kbId: string; count: number; isCurrent: boolean }[];
+  localPartitions: { kbId: string; count: number; isCurrent: boolean }[];
+  rows: TipsDiagnosticRow[];
+  /** Ids in ONBOARDING_TIPS that have not been acknowledged. */
+  remaining: number;
+  snoozedUntil: number;
+  /** Session state: the tip drawn, and whether one has been answered already. */
+  drawnThisSession: string | null;
+  answeredThisSession: boolean;
+  /**
+   * The draw pool as the rotation sees it — every unacknowledged tip in the
+   * category currently being offered, oldest first. The tip at the top is the
+   * one the next session gets, which is the question this answers.
+   */
+  rotation: { id: string; category: TipCategory; lastShown: number | null }[];
+  /** Raw values, for copying into a bug report. */
+  raw: { synced: unknown; local: unknown };
+}
+
+/**
+ * Read every store without touching any of them.
+ *
+ * The question this answers is "why did an answered tip come back?", and the
+ * three ways that can happen are all visible here: the id is in one store and
+ * not the other (a synced wipe, or a mirror written on another device), the id
+ * sits under a KB partition that is not the current one (the fallback-bucket
+ * bug), or the id is not there at all (the write never happened).
+ */
+export async function readTipsDiagnostics(plugin: RNPlugin): Promise<TipsDiagnostics> {
+  const { kbId, map, synced, local } = await collectForCurrentKb(plugin);
+
+  const idsOf = (state: TipsState | undefined): Set<string> =>
+    new Set([
+      ...(state?.acknowledged ?? []),
+      ...Object.keys(state?.acknowledgedAt ?? {}),
+    ]);
+  const partitions = (store: TipsStateByKb) =>
+    Object.keys(store).map((k) => ({
+      kbId: k,
+      count: idsOf(store[k]).size,
+      isCurrent: k === kbId,
+    }));
+
+  const syncedCurrent = idsOf(synced[kbId]);
+  const localCurrent = idsOf(local[kbId]);
+  const known = new Set(ONBOARDING_TIPS.map((t) => t.id));
+
+  const rows: TipsDiagnosticRow[] = Object.entries(map)
+    .map(([id, at]) => ({
+      id,
+      known: known.has(id),
+      inSynced: syncedCurrent.has(id),
+      inLocal: localCurrent.has(id),
+      fromFallbackOnly: !syncedCurrent.has(id) && !localCurrent.has(id),
+      at,
+    }))
+    .sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+
+  // Only the stage actually being offered: a utilities tip cannot be drawn while
+  // a basics tip is unanswered, so listing it would misreport what comes next.
+  // Same staging rule as pickTip — and it must read the same STAGES, not the
+  // listing order, or the rotation would show only statistics while the draw was
+  // pooling statistics with utilities.
+  const lastShown = await getLastShownMap(plugin);
+  const activeStage = TIP_DRAW_STAGES.find((stage) =>
+    ONBOARDING_TIPS.some((t) => stage.includes(t.category) && !(t.id in map))
+  );
+  const rotation = ONBOARDING_TIPS.filter(
+    (t) => !!activeStage && activeStage.includes(t.category) && !(t.id in map)
+  )
+    .map((t) => ({ id: t.id, category: t.category, lastShown: lastShown[t.id] ?? null }))
+    .sort((a, b) => (a.lastShown ?? -Infinity) - (b.lastShown ?? -Infinity));
+
+  return {
+    kbId,
+    kbResolved: kbId !== FALLBACK_KB_ID,
+    syncedPartitions: partitions(synced),
+    localPartitions: partitions(local),
+    rows,
+    remaining: ONBOARDING_TIPS.filter((t) => !(t.id in map)).length,
+    snoozedUntil: await getTipSnoozeUntil(plugin),
+    drawnThisSession: await getDrawnTipIdThisSession(plugin),
+    answeredThisSession: await tipAnsweredThisSession(plugin),
+    rotation,
+    raw: { synced, local },
+  };
+}
+
+/**
+ * Draw one tip from what is left.
+ *
+ * Two rules, in order.
+ *
+ * **Stages are exhausted IN ORDER.** Nothing outside `basics` is offered while a
+ * `basics` tip is still unacknowledged. Without that staging the pile is a flat
+ * lottery, and adding the twelve utility tips would have made it more likely
+ * than not that a new user's first tip was about cycling text case rather than
+ * about Alt+X — the list order alone would not have prevented it, since nothing
+ * consulted the order. A stage may hold several categories, which then rotate as
+ * one pool; see {@link TIP_DRAW_STAGES} for why only `basics` stands alone.
+ *
+ * **Within a stage, least recently shown wins.** Never-shown tips come first
+ * (random among them, so the pile is not walked in list order), and only once
+ * they run out does the oldest previously-shown tip come round again. This is
+ * what stops a tip repeating while others wait: a plain random draw has no
+ * memory, so as a stage empties out the survivors recur constantly — with three
+ * tips left, the same one lands twice running about a third of the time, which
+ * reads as the panel having forgotten it was already answered. Rotating instead
+ * makes a repeat impossible until every other tip in the stage has had its
+ * turn.
+ *
+ * Ties are broken at random rather than by list order, so the rotation does not
+ * harden into a fixed cycle the first time through.
+ *
+ * @param acknowledged Ids the user has answered "I Got It" to.
+ * @param lastShown Tip id → when it was last on screen. Absent = never shown.
+ */
+export function pickTip(
+  acknowledged: string[],
+  lastShown: Record<string, number> = {}
+): OnboardingTip | null {
+  const answered = new Set(acknowledged);
+
+  for (const stage of TIP_DRAW_STAGES) {
+    const pool = ONBOARDING_TIPS.filter(
+      (t) => stage.includes(t.category) && !answered.has(t.id)
+    );
+    if (pool.length === 0) continue;
+
+    // `Infinity` is not a sentinel that needs special-casing anywhere below: a
+    // never-shown tip is simply older than every shown one, which is exactly the
+    // ordering wanted.
+    const shownAt = (t: OnboardingTip) => lastShown[t.id] ?? -Infinity;
+    const oldest = Math.min(...pool.map(shownAt));
+    const candidates = pool.filter((t) => shownAt(t) === oldest);
+    return candidates[Math.floor(Math.random() * candidates.length)];
+  }
+  return null;
+}

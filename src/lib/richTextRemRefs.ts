@@ -1,8 +1,9 @@
 import { RNPlugin, RichTextElementRemInterface } from '@remnote/plugin-sdk';
 
 export type RemTextSegment =
-  | { kind: 'text'; text: string }
-  | { kind: 'pin'; text: string };
+  /** `cId` is the cloze id of the element this text came from, when it was clozed. */
+  | { kind: 'text'; text: string; cId?: string }
+  | { kind: 'pin'; text: string; cId?: string };
 
 const isRemRef = (el: unknown): el is RichTextElementRemInterface =>
   el != null && typeof el === 'object' && (el as any).i === 'q';
@@ -85,11 +86,13 @@ export async function resolveRemTextSegments(
   if (!Array.isArray(richText)) return [];
 
   const segments: RemTextSegment[] = [];
-  const pushText = (t: string) => {
+  // Adjacent text merges only within the same cloze (or outside every cloze), so
+  // a clozed span stays its own segment and a renderer can mark it.
+  const pushText = (t: string, cId?: string) => {
     if (!t) return;
     const last = segments[segments.length - 1];
-    if (last?.kind === 'text') last.text += t;
-    else segments.push({ kind: 'text', text: t });
+    if (last?.kind === 'text' && last.cId === cId) last.text += t;
+    else segments.push({ kind: 'text', text: t, cId });
   };
 
   for (const el of richText) {
@@ -99,14 +102,58 @@ export async function resolveRemTextSegments(
     }
     if (isRemRef(el)) {
       const text = await resolveRefText(plugin, el);
-      if (el.pin) segments.push({ kind: 'pin', text });
-      else pushText(`[${text}]`);
+      // Cloze markup rides on the element itself, references included — a clozed
+      // rem reference is a `q` element carrying a `cId`. Carrying it through is
+      // what lets a caller attribute the resolved text to its cloze. Without it
+      // the reference drops out of the cloze silently: a cloze over
+      // "a [Carena]" resolves to just "a", and one over a reference alone to
+      // nothing at all.
+      const refCId = typeof (el as any).cId === 'string' ? ((el as any).cId as string) : undefined;
+      if (el.pin) segments.push({ kind: 'pin', text, cId: refCId });
+      else pushText(`[${text}]`, refCId);
       continue;
     }
     const anyEl = el as any;
-    if (anyEl?.text) pushText(anyEl.text);
+    const cId = typeof anyEl?.cId === 'string' ? (anyEl.cId as string) : undefined;
+    if (anyEl?.text) pushText(anyEl.text, cId);
     else if (anyEl?.i === 'i') pushText('🖼️');
     else if (anyEl?.url) pushText('🔗');
   }
   return segments;
+}
+
+
+/**
+ * Ancestor breadcrumb for a Rem — root, then the closest ancestors, with any
+ * middle gap collapsed to "…". Mirrors RemNote's own reference-search
+ * breadcrumb so a Rem shown out of context can still be placed.
+ *
+ * Extracted from the Reference Finder so every list that shows Rems out of
+ * context renders the same string. Empty/"Untitled" ancestors are skipped
+ * rather than rendered as blanks, and the walk is capped against cycles.
+ */
+export async function buildAncestorBreadcrumb(
+  plugin: RNPlugin,
+  rem: any,
+  opts: { maxDepth?: number; maxLabel?: number } = {}
+): Promise<string> {
+  const { maxDepth = 20, maxLabel = 24 } = opts;
+  const names: string[] = [];
+  try {
+    let cur = await rem.getParentRem();
+    let depth = 0;
+    while (cur && depth < maxDepth) {
+      const raw = (await resolveRemTextForBreadcrumb(plugin, cur.text)).trim();
+      const t = raw === 'Untitled' ? '' : raw;
+      if (t) names.push(t.length > maxLabel ? t.slice(0, maxLabel) + '…' : t);
+      cur = await cur.getParentRem();
+      depth++;
+    }
+  } catch {
+    /* a partial breadcrumb is still useful; an unreadable ancestor ends it */
+  }
+  if (names.length === 0) return '';
+  const topDown = names.reverse();
+  if (topDown.length <= 4) return topDown.join(' / ');
+  return `${topDown[0]} / … / ${topDown.slice(-3).join(' / ')}`;
 }

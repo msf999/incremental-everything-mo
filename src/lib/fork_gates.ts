@@ -363,7 +363,10 @@ const GROUPS: GateGroup[] = [
   {
     enabled: FORK_FEATURES.priorityReviewDocs,
     commands: ['create-priority-review'],
-    widgets: ['review_document_creator', 'priority_review_graph'],
+    // review_document_creator was deleted upstream (5b5ab31, bb758b8 sync); its successor
+    // is priority_queue_popup. webpack.config.js asserts every denied widget id has a
+    // source file, so a stale id here would silently rebuild ALL widget bundles.
+    widgets: ['priority_queue_popup', 'prd_cleanup_popup', 'priority_review_graph'],
     menuItems: ['create_priority_review_menuitem', 'create_priority_review_queue_menuitem'],
   },
   {

@@ -18,8 +18,10 @@ import {
   forkPluginId,
 } from '../lib/consts';
 import { consumePendingScrollRequest } from '../lib/remHelpers';
+import { isNativeDrillQueue } from '../lib/mastery_drill_native';
 import {
   PrefetchQueueInfo,
+  VERBOSE_QUEUE_INJECTION,
   buildQueuePrefetch,
   confirmServed,
   isPrefetchReadyFor,
@@ -47,6 +49,32 @@ const QUEUE_LAYOUT_FIX_CSS = `
   .rn-queue:has(${pluginIframeSelector}[src*="widgetName=queue&"]) div.fade-in-first-load:has(${pluginIframeSelector}[src*="widgetName=queue&"]) > div,
   .rn-queue:has(${pluginIframeSelector}[src*="widgetName=queue&"]) ${pluginIframeSelector}[src*="widgetName=queue&"] {
     flex-grow: 1 !important;
+  }
+
+  /* Beautiful variant: RemNote nests the card in a scroll layout whose stage and
+     content wrappers size to their content, so the grow chain above stops there and
+     the iframe falls back to its min-h-[500px]. The layout is already a min-h-full
+     flex column (ending in the spacer that clears the overlaid answer buttons), so
+     growing these two lets the card fill down to the buttons. */
+  .queue-beautiful-box:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]) .beautiful-queue-card-scroll-stage {
+    display: flex !important;
+    flex-direction: column;
+    flex-grow: 1 !important;
+    min-height: 0;
+  }
+  .queue-beautiful-box:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]) .beautiful-queue-card-content {
+    flex-grow: 1 !important;
+    min-height: 0;
+  }
+  /* RemNote sizes both the trailing spacer and the bottom fade mask as
+     gradient (56px) + controls height + solid padding (24px), so scrolling text
+     fades out behind the answer buttons. Our card fills the box and never scrolls
+     under them, so those extra 80px were only a blank band above the buttons.
+     Zeroing both vars shrinks the spacer and the mask together, keeping the
+     gradient off the bottom of the reader. */
+  .queue-beautiful-box:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]) {
+    --beautiful-queue-bottom-fade-gradient-height: 0px;
+    --beautiful-queue-bottom-fade-solid-padding: 0px;
   }
 
   /* Ensure card_info_bar (our widget) renders above flashcard-repetition-history.
@@ -122,10 +150,16 @@ const rewindSessionItemCounter = () => {
 // proves that, and because it is the only way a future regression that puts an
 // await back on this path would ever be noticed.
 //
-// Two things are measured:
-//   1. Wall time per phase on every return, both paths.
+// Two things are tracked:
+//   1. Wall time of the call. Only ever PRINTED when it crosses
+//      SLOW_CALL_WARN_MS, because at that point an `await` has crept back onto
+//      a path that is supposed to be synchronous — the exact regression that
+//      would resurrect the dropped-injection bug, and one that reports no
+//      symptom of its own.
 //   2. Whether the PREVIOUS decision actually reached the screen — read off the
 //      `queueInfo` counters RemNote hands us, which is exact and costs nothing.
+//      This is NOT diagnostics: it drives confirm-then-burn (see
+//      verifyPreviousDecision). Its logging is separable; its logic is not.
 //
 // On (2): the first version compared our returned remId against
 // `currentIncRemKey`, which the queue widget writes when it mounts. That
@@ -141,11 +175,24 @@ const rewindSessionItemCounter = () => {
 //   cardsPracticed UNCHANGED                           → same slot asked twice.
 //
 // A card rated AGAIN also leaves numCardsRemaining flat, so the SHOWN verdict is
-// the softer of the two; DROPPED is high-confidence, and it is the one wired to
-// a real consequence (rolling the candidate back onto the buffer).
+// the softer of the two.
+//
+// DROPPED needs more than the counters, though. numCardsRemaining is RemNote's
+// live queue size, and RemNote changes it on its own between two calls:
+// refreshItems() runs after every sync, reloading due cards and removing ones
+// that are no longer due (removeDoneCards), and a card rated AGAIN goes back in.
+// A count that moved for those reasons read as a drop, rolled an IncRem back
+// onto the buffer that the user was already reading, and served it again right
+// after they pressed Next (Sep 2026).
+//
+// A drop is only physically possible for a late answer. RemNote calls us from
+// its plugin card provider's preload, stores what we return as its
+// pendingPluginCard, and hands that out on the very next pop — nothing in
+// between discards it. Past the ~1s deadline it stops waiting instead. So the
+// counters are trusted to mean "dropped" only when the answer was slow, and only
+// when the count went DOWN.
 const SLOW_CALL_WARN_MS = 800;
-
-type PhaseTimings = Record<string, number>;
+const DROP_POSSIBLE_MS = SLOW_CALL_WARN_MS;
 
 type QueueInfo = {
   mode: 'practice-all' | 'in-order' | 'normal';
@@ -159,29 +206,12 @@ type Decision = {
   remId: string | null; // null = we deliberately yielded a flashcard turn
   reason: string;
   totalMs: number;
-  phases: PhaseTimings;
   cardsPracticed: number;
   numCardsRemaining: number;
 };
 
 let callSeq = 0;
 let lastDecision: Decision | null = null;
-let cachePayloadProbed = false;
-
-function startTimer() {
-  const t0 = Date.now();
-  let last = t0;
-  const phases: PhaseTimings = {};
-  return {
-    phases,
-    mark(label: string) {
-      const now = Date.now();
-      phases[label] = now - last;
-      last = now;
-    },
-    total: () => Date.now() - t0,
-  };
-}
 
 /**
  * Confirms (or refutes) that the item returned by the PREVIOUS GetNextCard call
@@ -203,7 +233,6 @@ function verifyPreviousDecision(plugin: ReactRNPlugin, queueInfo: QueueInfo) {
     practicedDelta,
     remainingDelta,
     tookMs: prev.totalMs,
-    phases: prev.phases,
     reason: prev.reason,
   };
 
@@ -221,27 +250,43 @@ function verifyPreviousDecision(plugin: ReactRNPlugin, queueInfo: QueueInfo) {
       rollbackServed();
       rewindSessionItemCounter();
     }
-    console.log(
-      `🔁 GetNextCard #${prev.seq}: same slot asked again ` +
-        `(cardsPracticed still ${queueInfo.cardsPracticed}) after our ${prev.totalMs}ms response.` +
-        (prev.remId !== null ? ` Candidate ${prev.remId} returned to the buffer.` : ''),
-      ctx
-    );
+    if (VERBOSE_QUEUE_INJECTION) {
+      console.log(
+        `🔁 GetNextCard #${prev.seq}: same slot asked again ` +
+          `(cardsPracticed still ${queueInfo.cardsPracticed}) after our ${prev.totalMs}ms response.` +
+          (prev.remId !== null ? ` Candidate ${prev.remId} returned to the buffer.` : ''),
+        ctx
+      );
+    }
     return;
   }
 
   if (prev.remId === null) return; // we yielded a flashcard on purpose; nothing to verify
 
-  if (remainingDelta === 0) {
+  if (remainingDelta !== 0 && (remainingDelta < 0 || prev.totalMs < DROP_POSSIBLE_MS)) {
+    // The queue changed size under us (sync refresh, AGAIN re-insert), but an
+    // answer this fast cannot have been dropped — see the block comment above.
     confirmServed(plugin);
     console.log(
-      `✅ GetNextCard #${prev.seq}: IncRem ${prev.remId} WAS SHOWN — flashcard count held at ` +
-        `${queueInfo.numCardsRemaining} while cardsPracticed advanced (${prev.totalMs}ms).`,
+      `ℹ️ GetNextCard #${prev.seq}: queue size moved by ${-remainingDelta} while IncRem ` +
+        `${prev.remId} was served in ${prev.totalMs}ms — RemNote's own queue refresh, not a drop.`,
       ctx
     );
+  } else if (remainingDelta === 0) {
+    confirmServed(plugin);
+    if (VERBOSE_QUEUE_INJECTION) {
+      console.log(
+        `✅ GetNextCard #${prev.seq}: IncRem ${prev.remId} WAS SHOWN — flashcard count held at ` +
+          `${queueInfo.numCardsRemaining} while cardsPracticed advanced (${prev.totalMs}ms).`,
+        ctx
+      );
+    }
   } else {
     const recovered = rollbackServed();
     rewindSessionItemCounter();
+    // Unconditional: a dropped injection is the failure this whole subsystem
+    // exists to prevent. If it starts happening again, it must be visible
+    // without anyone having to switch logging on first.
     console.warn(
       `⛔ GetNextCard #${prev.seq}: DROPPED INJECTION — we returned IncRem ${prev.remId} after ` +
         `${prev.totalMs}ms, but RemNote consumed ${remainingDelta} flashcard(s) instead. ` +
@@ -260,7 +305,7 @@ export function registerCallbacks(plugin: ReactRNPlugin) {
   plugin.app.registerCallback<SpecialPluginCallback.GetNextCard>(
     SpecialPluginCallback.GetNextCard,
     async (queueInfo) => {
-      const timer = startTimer();
+      const startedAt = Date.now();
       const seq = ++callSeq;
 
       // Did the item we returned LAST time actually make it onto the screen?
@@ -274,29 +319,30 @@ export function registerCallbacks(plugin: ReactRNPlugin) {
       };
 
       /**
-       * Single exit point. Records the decision for the next call's verification
-       * and logs the phase breakdown.
+       * Single exit point. Records the decision so the NEXT call can verify it —
+       * that part is load-bearing and runs regardless of logging.
        */
       const finish = <T extends { remId: string } | null>(result: T, reason: string): T => {
-        const totalMs = timer.total();
+        const totalMs = Date.now() - startedAt;
         lastDecision = {
           seq,
           remId: result?.remId ?? null,
           reason,
           totalMs,
-          phases: { ...timer.phases },
           cardsPracticed: queueInfo.cardsPracticed,
           numCardsRemaining: queueInfo.numCardsRemaining,
         };
         const label = result ? `IncRem ${result.remId}` : 'flashcard (null)';
         if (totalMs >= SLOW_CALL_WARN_MS) {
+          // Unconditional. This path is synchronous by construction, so it can
+          // only take this long if someone has put an `await` back in front of a
+          // return — which silently reintroduces dropped injections in large KBs.
           console.warn(
             `🐢 GetNextCard #${seq} → ${label} [${reason}] took ${totalMs}ms — ` +
               `slow enough that RemNote may have stopped waiting. An await has ` +
-              `crept back onto this path; it is supposed to be synchronous.`,
-            timer.phases
+              `crept back onto this path; it is supposed to be synchronous.`
           );
-        } else {
+        } else if (VERBOSE_QUEUE_INJECTION) {
           console.log(`⏱️ GetNextCard #${seq} → ${label} [${reason}] in ${totalMs}ms`);
         }
         return result;
@@ -331,6 +377,12 @@ export function registerCallbacks(plugin: ReactRNPlugin) {
       // front of any return below is exactly what caused injections to be
       // silently dropped in large KBs.
       // ---------------------------------------------------------------------
+
+      // The regular-queue Mastery Drill serves drill cards only (lib/mastery_drill_native).
+      if (isNativeDrillQueue(queueInfo.subQueueId)) {
+        clearStaleIncRemSignals();
+        return finish(null, 'mastery-drill');
+      }
 
       const gates = readGates();
       if (gates.blocked) {
@@ -384,19 +436,21 @@ export function registerCallbacks(plugin: ReactRNPlugin) {
         queueInfo.numCardsRemaining === 0 ||
         intervalBetweenIncRem === 'no-cards';
 
-      console.log('🎯 GetNextCard → deciding NEXT item:', {
-        willShowIncRem: shouldShowIncRem,
-        sessionItemCounter,
-        counterCheck:
-          typeof intervalBetweenIncRem === 'number'
-            ? `(${sessionItemCounter}+1) % ${intervalBetweenIncRem} = ${
-                (sessionItemCounter + 1) % intervalBetweenIncRem
-              }`
-            : intervalBetweenIncRem,
-        numCardsRemaining: queueInfo.numCardsRemaining,
-        dueIncRems: dueCount,
-        prefetchReady: isPrefetchReadyFor(prefetchInfo),
-      });
+      if (VERBOSE_QUEUE_INJECTION) {
+        console.log('🎯 GetNextCard → deciding NEXT item:', {
+          willShowIncRem: shouldShowIncRem,
+          sessionItemCounter,
+          counterCheck:
+            typeof intervalBetweenIncRem === 'number'
+              ? `(${sessionItemCounter}+1) % ${intervalBetweenIncRem} = ${
+                  (sessionItemCounter + 1) % intervalBetweenIncRem
+                }`
+              : intervalBetweenIncRem,
+          numCardsRemaining: queueInfo.numCardsRemaining,
+          dueIncRems: dueCount,
+          prefetchReady: isPrefetchReadyFor(prefetchInfo),
+        });
+      }
 
       if (!shouldShowIncRem) {
         sessionItemCounter++;
@@ -419,7 +473,12 @@ export function registerCallbacks(plugin: ReactRNPlugin) {
         return finish(null, 'prefetch-not-ready');
       }
 
-      const candidate = takePrefetchedCandidate(prefetchInfo);
+      // `allowDeferred` when no flashcards remain: with nothing left for the
+      // IncRem to spoil this session, holding it back would only cost the user
+      // the review. See spoiler protection in lib/queue_prefetch.
+      const candidate = takePrefetchedCandidate(prefetchInfo, {
+        allowDeferred: queueInfo.numCardsRemaining === 0,
+      });
       if (!candidate) {
         // Nothing due and in scope, or every candidate failed verification.
         plugin.app.registerCSS(queueCounterId, '');

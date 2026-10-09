@@ -7,22 +7,28 @@ The cardPriority tag is hidden by default using injected CSS (see user settings 
 
 ## Hiding cardPriority properties (priority and source)
 
-If you want also to hide the slots (properties) - priority and source: You can hide these properties as you would for any other tag: enter it and change the property location to "At top of Document" or "Only in Table":
+!!! tip "From v1.0.48 there is nothing left to hide"
+    The priority value now lives in a **hidden** slot, so no `Priority` row is drawn at all. The plugin offers to move existing knowledge bases over on startup — see [Where a priority is stored](Priorities-for-Flashcards.md#hidden-slot). Do that instead of the property-location workaround below: a visible `Priority` row inside a table cell makes RemNote render the row *in place of* the cell's own content, and changing the row's location does not fix that.
+
+If you are not migrated yet and want to hide the slots (properties) - priority and source: You can hide these properties as you would for any other tag: enter it and change the property location to "At top of Document" or "Only in Table":
 
 ![image](assets/uploaded/bae73752-1ed7-4982-948e-11c1b466517e.png){ width="800" }
 
 ## Removing cardPriority tags and its properties
 
-If you want to remove these tags (carPriority) and slots altogether of all your database, follow these steps:
+If you want to remove these tags (cardPriority) and slots altogether of all your database, follow these steps:
 
-- In your plugin settings, turn to the "[Light Mode](Full-Mode-x-Light-Mode.md)"
+- First, stop the plugin from writing new ones — otherwise they come straight back. Turn **Enable Flashcard Prioritisation** off (run **`Incremental RemNote: Settings`**, quick code `is`), or switch to "[Light Mode](Full-Mode-x-Light-Mode.md)".
 ![image](assets/uploaded/110d7e2f-4f78-41f2-8171-c7ae070aa4e4.png){ width="700" }
 
-- AFTER you change your settings to the "Light Mode", use the Omnibar to run the command "Remove All CardPriority Tags". The cardPriority tags and properties will be completely removed. 
+- AFTER changing that setting, use the Omnibar to run the command **"Remove CardPriority Tags…"**. It asks which tags to remove:
+    - **OK — inherited & default only:** removes the tags the plugin created by itself and keeps the priorities you set by hand. **Reversible.** This is what the plugin also offers to do for you on the first reload after you turn Flashcard Prioritisation off — see [Switching it back off](Priorities-for-Flashcards.md#switching-it-off).
+    - **Cancel — remove everything:** wipes every cardPriority tag, manual priorities included, and clears this knowledge base's shield history. **This cannot be undone**, so it asks again — and when manual priorities are at stake it offers, one dialog before the last, to switch to the reversible scope instead.
 
 ![image](assets/uploaded/803588e9-6a74-4732-aee4-bb33cee5159a.png){ width="700" }
 
 
 - Note 1: The command removes only flashcard priorities (stored in the cardPriority powerup). Incremental rems priorities are stored elsewhere (in the Incremental powerup) and will not be affected. (The plugin uses completely separated systems for the control of Incremental Rems priorities and flashcard priorities)
-- Note 2: If you change to the "Full mode" again, the process of pre-tagging will happen again.
+- Note 2: It only touches the knowledge base you have open — the one it names in its dialogs. Other knowledge bases are left alone.
+- Note 3: If you turn Flashcard Prioritisation (or "Full mode") back on, the process of pre-tagging will happen again.
 

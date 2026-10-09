@@ -4,6 +4,7 @@ import * as _ from 'remeda';
 import { calculateVolumeBasedPercentile, calculateWeightedShield } from './utils';
 import { IncrementalRem } from './incremental_rem';
 import { CardPriorityInfo, expandCardInfosToCards } from './card_priority';
+import { isPerCardDue } from './card_priority/types';
 import {
   allCardPriorityInfoKey,
   allIncrementalRemKey,
@@ -44,6 +45,12 @@ export type VerifyOptions<T extends PriorityItem> = {
   getCards: (item: T) => Promise<{ nextRepetitionTime?: number }[]>;
   /** Timestamp threshold — cards due at or before this count as overdue (e.g. startOfToday). */
   dueThreshold: number;
+  /**
+   * When given, verification notes (stale entries skipped, cap hit) are
+   * collected here instead of printed one by one, so QueueExit can report them
+   * in its single summary.
+   */
+  notes?: string[];
 };
 
 /**
@@ -66,6 +73,10 @@ async function verifyTopMissedByPriorityLevel<T extends PriorityItem>(
 ): Promise<T | undefined> {
   const MAX_VERIFY_CALLS = 20;
   const { getCards, dueThreshold } = verifyOptions;
+  const note = (level: 'log' | 'warn', msg: string) => {
+    if (verifyOptions.notes) verifyOptions.notes.push(msg);
+    else console[level](`[ShieldVerify] ${msg}`);
+  };
   const sorted = _.sortBy(candidates, (item) => item.priority);
   let totalChecks = 0;
   let idx = 0;
@@ -83,7 +94,7 @@ async function verifyTopMissedByPriorityLevel<T extends PriorityItem>(
     let staleCount = 0;
     for (const candidate of group) {
       if (totalChecks >= MAX_VERIFY_CALLS) {
-        console.warn(`[ShieldVerify] ${label}: Hit verification cap (${MAX_VERIFY_CALLS}) at priority ${currentPriority}. Trusting remaining cache.`);
+        note('warn', `${label}: hit verification cap (${MAX_VERIFY_CALLS}) at priority ${currentPriority}, trusting remaining cache`);
         return candidate;
       }
 
@@ -100,16 +111,16 @@ async function verifyTopMissedByPriorityLevel<T extends PriorityItem>(
       const actualDue = cards.filter(c => (c.nextRepetitionTime ?? Infinity) <= dueThreshold).length;
       if (actualDue > 0) {
         if (staleCount > 0) {
-          console.log(`[ShieldVerify] ✅ ${label} verified at priority ${currentPriority} after skipping ${staleCount} stale entries.`);
+          note('log', `${label} verified at priority ${currentPriority} after skipping ${staleCount} stale entries`);
         }
         return candidate;
       } else {
-        console.warn(`[ShieldVerify] ⚠️ ${label} Stale: rem ${candidate.remId} (priority ${currentPriority}) has no overdue cards.`);
+        note('warn', `${label} stale: rem ${candidate.remId} (priority ${currentPriority}) has no overdue cards`);
         staleCount++;
       }
     }
 
-    console.log(`[ShieldVerify] ${label}: All ${group.length} entries at priority ${currentPriority} are stale. Escalating...`);
+    note('log', `${label}: all ${group.length} entries at priority ${currentPriority} stale, escalating`);
   }
 
   return undefined;
@@ -126,9 +137,15 @@ async function verifyTopMissedByPriorityLevel<T extends PriorityItem>(
 function filterUnreviewedDue<T extends PriorityItem>(
   items: T[],
   isDue: (item: T) => boolean,
-  seenIds: string[]
+  seenIds: string[],
+  excludeRemIds?: ReadonlySet<string>
 ): T[] {
-  return items.filter(item => isDue(item) && !seenIds.includes(item.remId));
+  // Cooling Rems (see priority_review_document/cooling.ts) are ineligible to set
+  // the shield: a Rem whose sibling you just reviewed must not pin the value at
+  // its priority no matter how much else you clear.
+  return items.filter(
+    item => isDue(item) && !seenIds.includes(item.remId) && !excludeRemIds?.has(item.remId)
+  );
 }
 
 /**
@@ -347,6 +364,37 @@ async function saveScopedShieldHistory(
   await plugin.storage.setSynced(storageKey, rawHistory);
 }
 
+/** What one shield save computed, for the single QueueExit summary log. */
+export interface ShieldSaveSummary {
+  scope: 'KB' | 'Doc';
+  label: string;
+  /** Set when nothing was saved, with the reason. */
+  skipped?: string;
+  status?: ShieldHistoryEntry;
+  /** Items in the universe (scope-filtered for Doc). */
+  universe?: number;
+  /** Due and unreviewed, after the cooling exclusion. */
+  dueUnreviewed?: number;
+  triggerRemId?: string;
+}
+
+/** One line: `KB  Card    P5 · 5.6% · universe 67,348 · due 51,277 · dismissed 332 · weighted 41.9 · by ubFe…` */
+export function formatShieldSummary(s: ShieldSaveSummary): string {
+  const head = `${s.scope.padEnd(3)} ${s.label.padEnd(6)}`;
+  if (s.skipped || !s.status) return `${head} skipped: ${s.skipped ?? 'no status'}`;
+  const st = s.status;
+  const parts = [
+    st.absolute === null ? 'clear' : `P${st.absolute}`,
+    st.percentile === null ? '' : `${st.percentile}%`,
+    `universe ${(s.universe ?? st.universeSize).toLocaleString()}`,
+    s.dueUnreviewed === undefined ? '' : `due ${s.dueUnreviewed.toLocaleString()}`,
+    st.dismissedCount === undefined ? '' : `dismissed ${st.dismissedCount}`,
+    st.weightedShield === undefined || st.weightedShield === null ? '' : `weighted ${st.weightedShield}`,
+    s.triggerRemId ? `by ${s.triggerRemId}` : '',
+  ].filter(Boolean);
+  return `${head} ${parts.join(' · ')}`;
+}
+
 /**
  * Calculates and saves KB-level shield history for any item type.
  *
@@ -365,11 +413,11 @@ export async function saveKBShield<T extends PriorityItem>(
   storageKey: string,
   label: string,
   computeWeighted: boolean = false,
-  verifyOptions?: VerifyOptions<T>
-): Promise<void> {
+  verifyOptions?: VerifyOptions<T>,
+  excludeRemIds?: ReadonlySet<string>
+): Promise<ShieldSaveSummary> {
   if (allItems.length === 0) {
-    console.log(`[QueueExit] No ${label} items found, skipping KB shield save`);
-    return;
+    return { scope: 'KB', label, skipped: `no ${label} items` };
   }
 
   const dismissedPowerup = await plugin.powerup.getPowerupByCode(dismissedPowerupCode);
@@ -377,12 +425,19 @@ export async function saveKBShield<T extends PriorityItem>(
   const dismissedCount = dismissedRems.length;
 
   const today = dayjs().format('YYYY-MM-DD');
-  const unreviewedDue = filterUnreviewedDue(allItems, isDue, seenIds);
+  const unreviewedDue = filterUnreviewedDue(allItems, isDue, seenIds, excludeRemIds);
   const status = await calculateShieldStatus(plugin, allItems, unreviewedDue, isDue, seenIds, dismissedCount, computeWeighted, verifyOptions);
 
   await saveKBShieldHistory(plugin, storageKey, status, today);
   const kbTriggerItem = unreviewedDue.find(item => item.priority === status.absolute);
-  console.log(`[QueueExit] Saved KB ${label} shield:`, status, `Triggered by remId: ${kbTriggerItem?.remId ?? 'none'}`);
+  return {
+    scope: 'KB',
+    label,
+    status,
+    universe: allItems.length,
+    dueUnreviewed: unreviewedDue.length,
+    triggerRemId: kbTriggerItem?.remId,
+  };
 }
 
 /**
@@ -407,21 +462,16 @@ export async function saveDocumentShield<T extends PriorityItem>(
   historyKey: string,
   label: string,
   computeWeighted: boolean = false,
-  verifyOptions?: VerifyOptions<T>
-): Promise<void> {
+  verifyOptions?: VerifyOptions<T>,
+  excludeRemIds?: ReadonlySet<string>
+): Promise<ShieldSaveSummary> {
   if (!scopeRemIds || scopeRemIds.length === 0) {
-    console.log(`[QueueExit] No scope RemIds found, skipping ${label} document shield save`);
-    return;
+    return { scope: 'Doc', label, skipped: 'no scope Rems' };
   }
-
-  console.log(`[QueueExit] Processing ${label} document shield with PRIORITY CALC scope:`, scopeRemIds.length, 'rems');
 
   const scopeSet = new Set(scopeRemIds);
   const scopedItems = allItems.filter(item => scopeSet.has(item.remId));
-  console.log(`[QueueExit] Found ${scopedItems.length} ${label} items in priority calculation scope`);
-
-  const unreviewedDueInScope = filterUnreviewedDue(scopedItems, isDue, seenIds);
-  console.log(`[QueueExit] Found ${unreviewedDueInScope.length} due ${label} items in priority calculation scope`);
+  const unreviewedDueInScope = filterUnreviewedDue(scopedItems, isDue, seenIds, excludeRemIds);
 
   const dismissedPowerup = await plugin.powerup.getPowerupByCode(dismissedPowerupCode);
   const globalDismissedRems = (await dismissedPowerup?.taggedRem()) || [];
@@ -432,12 +482,14 @@ export async function saveDocumentShield<T extends PriorityItem>(
 
   await saveScopedShieldHistory(plugin, storageKey, historyKey, status, today);
   const docTriggerItem = unreviewedDueInScope.find(item => item.priority === status.absolute);
-  console.log(
-    `[QueueExit] ${label} doc shield - Priority: ${status.absolute}, ` +
-    `Percentile: ${status.percentile}%, Universe: ${status.universeSize}, Dismissed: ${scopedDismissedCount}, ` +
-    `Triggered by remId: ${docTriggerItem?.remId ?? 'none'}`
-  );
-  console.log(`Saved ${label} document history for original scope ${historyKey}:`, status);
+  return {
+    scope: 'Doc',
+    label,
+    status,
+    universe: scopedItems.length,
+    dueUnreviewed: unreviewedDueInScope.length,
+    triggerRemId: docTriggerItem?.remId,
+  };
 }
 
 /**
@@ -447,6 +499,21 @@ export const isIncRemDue = (rem: IncrementalRem): boolean => Date.now() >= rem.n
 export const isCardDue = (card: CardPriorityInfo): boolean => card.dueCards > 0;
 /** Shield-specific: card was due before start of today (filters intraday re-scheduling noise). */
 export const isCardDueOverdue = (card: CardPriorityInfo): boolean => (card.dueCardsOverdue ?? 0) > 0;
+
+/**
+ * Per-CARD version of `isCardDueOverdue`, for the shield history.
+ *
+ * The history used to be recorded over `CardPriorityInfo[]` — one entry per
+ * Rem-with-cards — while the queue's shield and its popup work over the per-card
+ * expansion. Two different universes, so the stored series never matched what
+ * the user saw: a knowledge base showing 67,597 cards recorded a universe of
+ * 45,350 and a weighted shield several points apart. Same predicate as the
+ * Rem-level one — overdue means "due at any point up to the start of today".
+ */
+export const isPerCardDueOverdue = (
+  item: { nextRepetitionTime?: number | null; paused?: boolean },
+  startOfToday: number,
+): boolean => isPerCardDue(item, startOfToday);
 
 export type ItemKind = 'incRem' | 'card';
 export type ScopeKind = 'kb' | 'doc';
@@ -593,8 +660,9 @@ export async function computeMonthlyShieldCatchUp(
   let dueCount = 0;
   for (const item of perCard) {
     if (item.priority > monthlyBest) continue;
-    const t = item.nextRepetitionTime;
-    if (t == null || t > now) continue;
+    // Same predicate as every other shield surface: a paused deck's cards keep
+    // a real next time that RemNote will never act on.
+    if (!isPerCardDue(item, now)) continue;
     if (seen.has(item.remId)) continue;
     dueCount++;
   }

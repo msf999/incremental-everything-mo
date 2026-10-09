@@ -131,7 +131,7 @@ export async function writeRawPdfState(
  * Returns null when there is nothing stored, so a Rem that never had legacy data
  * is not written back for no reason. The legacy keys are left in place: plugin
  * storage cannot delete a key, and writing null does not free the slot, so they
- * wait for the ledger sweep (STORAGE_PLAN.md Phase 7).
+ * wait for the ledger sweep (plans/STORAGE_PLAN.md Phase 7).
  */
 async function readLegacyPair(
   plugin: RNPlugin,
@@ -307,4 +307,71 @@ export async function transferPdfState(
   };
   await writeRawPdfState(rem, toPowerup, JSON.stringify(merged));
   return true;
+}
+
+// --- transfer between Rems -------------------------------------------------
+
+/**
+ * Moves one Rem's serialized state onto ANOTHER Rem, re-keying the entry it
+ * holds about ITSELF.
+ *
+ * Needed because a rem-type read point is stored under the IncRem's OWN id —
+ * `bySource[incRemId]` (see lib/remReadPoint.ts) — so a byte-for-byte copy to a
+ * different Rem lands the read point under a source key that Rem will never look
+ * up, and the bookmark silently disappears. Per-PDF entries are keyed by the PDF's
+ * id and are copied untouched.
+ *
+ * `existingRaw` is whatever the destination already holds (e.g. state parked on a
+ * Dismissed powerup): its per-source entries are kept, with the incoming ones
+ * winning on conflict, matching {@link transferPdfState}.
+ *
+ * Returns the serialized result, or null when there is nothing to write.
+ */
+export function rekeyPdfStateForNewHost(
+  incomingRaw: string | null,
+  existingRaw: string | null,
+  fromRemId: string,
+  toRemId: string
+): string | null {
+  const incoming = parseState(incomingRaw);
+  const existing = parseState(existingRaw);
+  if (!incoming && !existing) return null;
+
+  const bySource: Record<string, PdfSourceState> = { ...(existing?.bySource || {}) };
+  for (const [sourceId, state] of Object.entries(incoming?.bySource || {})) {
+    bySource[sourceId === fromRemId ? toRemId : sourceId] = state;
+  }
+
+  const active = incoming?.active ?? existing?.active;
+  const merged: PdfState = {
+    v: 1,
+    // The 'active PDF' pin can itself point at the old host in the read-point case.
+    active: active === fromRemId ? toRemId : active,
+    bySource,
+  };
+  return JSON.stringify(merged);
+}
+
+// --- highlight merges ------------------------------------------------------
+
+/**
+ * Points bookmarks (page-history entries' `highlightId`) at a different highlight,
+ * for when highlights are merged: `moved` maps each merged-away highlight to the
+ * one it now lives in. Every source's history is covered. Returns the serialized
+ * result, or null when nothing referred to a moved highlight.
+ */
+export function repointBookmarksInState(raw: string | null, moved: Record<string, string>): string | null {
+  const state = parseState(raw);
+  if (!state) return null;
+  let changed = false;
+  for (const source of Object.values(state.bySource)) {
+    for (const entry of source?.history || []) {
+      const to = entry?.highlightId && moved[entry.highlightId];
+      if (to) {
+        entry.highlightId = to;
+        changed = true;
+      }
+    }
+  }
+  return changed ? JSON.stringify(state) : null;
 }

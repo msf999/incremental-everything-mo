@@ -8,11 +8,11 @@ This page explains how the plugin allows you to layer a priority system on top o
 
 ## Switching it on { #the-opt-in }
 
-Flashcard prioritisation is **off by default**. Turn it on at **Settings → Plugins → Incremental Everything → Enable Flashcard Prioritisation**, then reload RemNote.
+Flashcard prioritisation is **off by default**. Turn it on in the plugin's settings popup — run **`Incremental RemNote: Settings`** (quick code `is`) → **Flashcard Prioritisation** → *Enable Flashcard Prioritisation* — then reload RemNote. (Before v1.0.45 this switch lived in RemNote's own plugin settings panel.)
 
 It is opt-in because it is the one part of the plugin that works across your **entire** knowledge base rather than on the Rems you are handling. While it is on, the plugin tags flashcard-bearing Rems with the `cardPriority` powerup and keeps those tags in step as you edit — on a large library that means a long initial pass and continuous background work, and RemNote can feel slow until it settles.
 
-**Only turn it on if you create [Priority Review Documents](Priority-Review-Document.md) for flashcards and review the queue there.** That is what the tags are for. If you are unsure, leave it off — you can switch it on later at any time and the plugin will build what it needs then.
+**Only turn it on if you practise your flashcards through the [Priority Queue](Priority-Review-Document.md).** That is what the tags are for. If you are unsure, leave it off — you can switch it on later at any time and the plugin will build what it needs then.
 
 ### What still works with it off
 
@@ -21,6 +21,21 @@ It is opt-in because it is the one part of the plugin that works across your **e
 - **Priorities you set yourself are still saved.** Setting a priority on a flashcard (`Alt+P`, the batch tools) records it with source `manual`, and dismissing an Incremental Rem still stamps `incremental` on the flashcards beneath it. Those two are deliberate acts on identified Rems, so the switch does not block them.
 
 What is skipped is the **bulk index**: the KB-wide tagging pass, the inheritance cascade over descendants, the priority cache, and everything built on it — the [Priority Shield](Prioritization-&-Sorting.md#priority-shield), relative percentiles, and flashcards in Priority Review Documents.
+
+### Switching it back off { #switching-it-off }
+
+Turning the setting off stops all of that work immediately, but it does **not** undo it: every `cardPriority` tag already written stays on your Rems, with its `Priority`, `Priority Source` and `Last Updated` slots.
+
+So, on the next reload after you switch it off, the plugin offers to clear them for you:
+
+> The plugin has stopped writing card priorities, but *N* tag(s) it created automatically (source: inherited or default) are still on your Rems. Would you like to remove them now?
+
+- **OK** removes them.
+- **Cancel** leaves everything as it is and tells you how to do it later. The offer is made **once per switch-off**, never repeatedly, and never on [Light Mode](Full-Mode-x-Light-Mode.md) devices — the cleanup is a knowledge-base-wide write, which is what Light Mode exists to avoid, so it waits for a Full Mode session.
+
+You can run the same cleanup at any time with **[Remove CardPriority Tags…](Plugin-Commands-Reference.md#remove-cardpriority-tags)** → *inherited & default only*.
+
+**Nothing is lost either way.** Inherited and default priorities are *computed* from your document tree, so they are rebuilt exactly by switching the setting back on and running *Update all inherited Card Priorities*. Your `manual` priorities, the `incremental` anchors left by dismissed Incremental Rems, and your shield history are never touched by this cleanup.
 
 ---
 
@@ -36,6 +51,7 @@ Every flashcard in your knowledge base is assigned a priority from **0-100** (Lo
 1.  **Manual (Highest Strength):** You explicitly set a priority for this specific Rem. This overrides everything else.
 2.  **Incremental (Highest Strength):** When you finish reviewing an Incremental Rem (e.g. by clicking "Dismiss"), its priority is automatically synced to its flashcards with this source type. Like a "manual" priority, it is "sticky" and won't be overwritten by inherited or default values, ensuring your specific prioritization from your reading workflow is preserved.
     * *Visual Cue:* In the Priority widgets, both `manual` and `incremental` priorities appear in **bold** (e.g., **P10**), making it clear they are explicitly assigned values. Inherited and default priorities appear in normal weight.
+    * *The Rem itself is always stamped,* whether or not it currently owns any flashcards, and in Light Mode as well as Full Mode. Dismissing removes the `Incremental` powerup, and with it the only record of that reading priority; the `cardPriority` tag left behind is what keeps the value, and what every card created under that Rem later inherits from. A Rem whose priority you set to 16 and then dismissed keeps 16 for its subtree, instead of falling back to whatever a distant ancestor happens to carry. Only a `manual` priority already on the Rem is left untouched.
 3.  **Inherited (Medium Strength):** If a Rem has no manual or incremental priority, it looks up its ancestry tree. It inherits the priority of the nearest ancestor that has:
     * A Manual or Incremental Flashcard Priority set.
     * **OR** An Incremental Rem Priority set (this creates a seamless bridge between your reading list and your flashcards).
@@ -49,6 +65,91 @@ This is the "magic" that makes the system manageable. You don't need to prioriti
 * **Action:** You highlight a sentence and create a flashcard from it.
 * **Result:** That new flashcard automatically inherits Priority **10**.
 * **Benefit:** If you decide the whole book is less important later and change the book's priority to 80, **all** flashcards generated from it update to 80 instantly (unless you manually overrode specific ones or specific branches / chapters / sections).
+
+## Where a priority is stored { #hidden-slot }
+
+A priority is a value on the `cardPriority` powerup. Until v1.0.48 it lived in a **visible** slot, which means RemNote drew a `Priority — 31` row under every prioritised Rem. From v1.0.48 it lives in a **hidden** slot instead, and that row is gone.
+
+### Why it moved
+
+The difference between the two is where the value physically lives. Since RemNote's v1.27 storage overhaul, a **hidden** slot holds its value directly on the Rem, while a **visible** one materialises it as a **child Rem** underneath. Three consequences follow, and all three favour hidden:
+
+**Fewer moving parts.** The plugin writes this value on tens of thousands of Rems. Every one of them used to carry an extra child Rem that could be duplicated, detached from its slot definition, or left behind by an import — states this plugin has [repair tooling](Troubleshooting.md) for precisely because they happen. A value stored directly has none of those failure modes.
+
+**Less clutter.** A priority is bookkeeping the plugin does on your behalf. It does not need a row in your outline, and on a knowledge base where most flashcards carry one, those rows were the plugin's largest visible footprint in your notes.
+
+**It stops RemNote blanking out table cells.** When the prioritised Rem is *itself a table cell* — which is what a filled tag slot is — RemNote's cell renderer sees that child Rem, switches the cell into list mode, draws the child, and never draws the cell's own content at all. The cell shows `Priority — 31` where your text should be. It affects **simple and advanced tables alike**: any column whose cells carry flashcards, because those cells are the Rems the plugin tags. A hidden slot leaves nothing there for the renderer to mistake for cell content.
+
+### The migration
+
+The first time the plugin starts and finds visible `Priority` rows still in place, it offers to move them:
+
+* **Every priority is backed up first**, to your device and to a JSON file you keep. If the backup cannot be written, **the migration refuses to run**.
+* Values move to the hidden slot one Rem at a time, and each one is **read back before the old row is deleted** — a value that failed to write keeps its visible row, so nothing can be lost in the gap.
+* A `Priority` row that has **children of its own** is never deleted, since removing it would take that subtree with it. Its value still moves to the hidden slot; the report says how many were kept, and re-running removes them once you have moved those children yourself.
+* **Interrupting it is safe.** Each Rem is finished before the next is started, so a crash, a restart or a quit leaves the Rems done actually done and the rest untouched. Run the command again to finish; already-migrated Rems are skipped, and the backup from the first attempt is reused rather than overwritten — it holds the pre-migration state, which is the one worth going back to.
+* Nothing else changes: the numbers, the sources, inheritance, the Card Shield, percentiles, the badges and the [Priority Review Documents](Priority-Review-Document.md) all work exactly as before.
+
+It is offered on **every start** until it has been done, because until then your tables are still rendering the wrong thing. Declining offers a *never ask again*, and the command is always available.
+
+### Retiring the old slot
+
+Deleting the values does not delete the *slot*, so a bare `Priority — Empty` row is left behind: RemNote draws a row for every slot the plugin registers, whether or not it holds anything. It goes away once the plugin stops registering that slot — and it only does that on **positive proof** that nothing is left in it: a migration run that finished with no failures, no rows kept back and no errors, or a full scan of every tagged Rem finding none.
+
+Until then the slot stays registered, which is deliberate. An unregistered slot can still be *read* — but it can no longer be *written*: the plugin's write returns without error, RemNote reports a slot that doesn't exist, and nothing changes. Retiring one that still held a value would therefore strand that value where nothing can correct it. A knowledge base whose migration was interrupted, or finished before that check existed, gets the full scan automatically on the next start; expect one extra pass of a few seconds, once, then a reload to see the row disappear.
+
+### The old value can linger behind the deleted row { #stale-visible-value }
+
+Deleting the `Priority` row does not clear the *value* underneath it. On knowledge bases migrated before v1.0.51, a Rem prioritised back then still answers the old slot with the number it held at migration time — the row is gone from your outline, but a second, frozen copy of the number stayed behind it.
+
+**It changes nothing about your priorities.** The hidden slot is what every part of the plugin reads, and it wins whenever both hold a value; a Rem prioritised after the migration has nothing in the old slot at all. What it did affect was the *debug widget*, which read the old slot and so reported that frozen number as the stored priority — and then flagged the correct, current value as a stale cache. Both now report the hidden slot, and show the leftover separately, labelled for what it is.
+
+From v1.0.51 the migration clears the value as well as the row, so new runs leave nothing behind.
+
+**On a knowledge base where the old slot has already been retired, those leftovers are permanent.** This was tested to a conclusion, and every route out is closed:
+
+* A retired slot can be **read** but not **written** — the plugin's write returns without error, RemNote reports a slot that doesn't exist, and nothing changes.
+* Registering the slot again does not expose them either. Slot values belong to a slot *definition* Rem, not to the slot's name, so registering mints a **new** definition and the old values end up masked behind it: while it is registered the slot reads empty, and when it is retired again the old numbers come back.
+
+They are inert, and the plugin no longer reads them: the priority read now settles the retirement question before it consults that slot, rather than consulting it and preferring the hidden value afterwards. The difference matters for a Rem whose priority was cleared after the migration — without it, a frozen number could have been served in place of the inherited one.
+
+## Priority history { #priority-history }
+
+Every priority a flashcard Rem has held is kept, with **when** it changed, **what it changed to**, the **source** recorded alongside it, and the **gesture that caused it**. It lives in its own hidden `Priority History` slot on the `cardPriority` powerup — machine-written only, so it is a record you can trust rather than a row you can edit.
+
+Read it at the bottom of the **[Flashcard Repetition History](Plugin-Widgets-Reference.md#211-flashcard-repetition-history)** popup (`Ctrl+Shift+H` on the Rem). It is Rem-level, not per-card: the powerup tags the Rem, and every card it generates shares the value.
+
+### What gets recorded
+
+| Event | What did it |
+|---|---|
+| 🏷 Initial assignment | The Rem was tagged and given its first priority |
+| ⌨️ Priority popup | [`Alt+P`](Prioritization-&-Sorting.md#main-priority-popup) or [`Ctrl+Opt+P`](Prioritization-&-Sorting.md#light-priority-popup), single Rem or a multi-selection |
+| ⚡ Quick priority change | [`Ctrl+Opt+↑/↓`](Prioritization-&-Sorting.md#quick-priority-shortcuts) and the [Priority Editor](Prioritization-&-Sorting.md#priority-editor-widget)'s ± buttons |
+| ✏️ Inline edit | A priority typed into a list view or a history sidebar |
+| 📦 Batch priority | The [batch tools](#3-unified-batch-priority-change) |
+| ♾ From Incremental Rem | Adopted from the Rem's own Incremental priority |
+| ⬇ Inherited from ancestor | Taken from the closest ancestor carrying a priority |
+| 🌊 Inheritance cascade | An ancestor's change re-applied downwards |
+| • Default priority | Nothing else applied, so the configured default was used |
+| 🎯 Mastery drill · 🃏 Card enablement · ✂️ Cloze split · 📥 Import · 🛠 Slot repair | The tool named |
+
+Every writer goes through one function, so a gesture that changes a priority cannot avoid being recorded.
+
+### Two rules keep it small
+
+The history lives *inside* the Rem, and a Rem that outgrows RemNote's per-document sync ceiling stops syncing — so it is deliberately terse.
+
+* **A restatement is not a change.** A cascade or a startup rebuild that writes back the same value and source it wrote last time records nothing.
+* **A burst is one decision.** Successive changes from the *same* gesture within **one minute** collapse into a single entry carrying the value you settled on. Walking a priority from 80 to 30 by holding `Ctrl+Opt+↓` leaves one row, not eight. Coalescing keys on the gesture, so a quick change seconds after the initial tagging still appends — it never swallows a different kind of change that happened to land in the same minute.
+
+At 150 entries the oldest are dropped, but the **first is always kept**: it is the origin of the priority and the one row nothing else can reconstruct.
+
+### It starts from now
+
+There is no way to recover changes made before this existed — a priority slot holds a number, not the story of how it got there. A Rem you have had for years opens on an empty history until the next time its priority moves.
+
+---
 
 ## Setting & Managing Priorities
 
@@ -80,6 +181,32 @@ If you previously used tags like `#HighPriority` or `#P1` to organise your cards
 4.  The plugin will apply this `Manual` priority to every Rem tagged with `#Important` (or that references the Rem).
 
 ![Batch Card Priority widget](assets/batch-card-assign-priority-taggedrems.png){ width="900" }
+
+#### Removing card priorities in bulk { #removing-card-priorities }
+
+The same panel takes priorities **off** the same selection. Tick the rows and press **Remove priority from N** — red, next to Apply.
+
+Only Rems that **physically carry the CardPriority tag** are counted. A Rem with no tag of its own still *resolves* a priority, inherited from its nearest prioritised ancestor, but there is nothing there to remove — including those would report a removal larger than what happened.
+
+The confirmation splits the selection into `manual` / `incremental` and derived (`inherited` / `default`) tags, and says how many selected Rems carry no tag and are left alone.
+
+**Undoable.** The value, source and timestamp of every Rem are captured before the first write, downloaded as a JSON file, and restorable with **Undo removal** in the panel.
+
+!!! note "Removing a derived tag is a reset, not a permanent state"
+    `inherited` and `default` priorities are **computed** from your document tree. While Flashcard Prioritisation is on, the plugin recreates them for card-bearing Rems the next time it cascades over them. Removing a `manual` or `incremental` priority is the durable case — nothing re-derives those, which is what the undo is really for.
+
+##### Do you need to run "Update all inherited Card Priorities" afterwards?
+
+**No.**
+
+* **The cache is already correct.** The removal drops exactly those Rems from the in-memory index and the saved copy, leaving every other row intact. That is a complete update, not an approximation, so there is nothing for a rebuild to fix.
+* **The sweep is the *rebuild*, not the *refresh*.** [It walks the whole knowledge base and tags every card-bearing Rem that lacks a priority](#manual-full-kb-sweep-update-all-inherited-card-priorities) with a derived value — the Rems you just cleared included.
+* **What does go stale is descendants.** Rems that were inheriting from the ones you cleared now resolve against a priority that no longer exists. The checkbox **After a removal, recompute inherited priorities for descendants** (on by default) cascades from the removed Rems only — seconds instead of minutes — and touches descendants, never the roots, so the removals themselves stand.
+
+!!! warning "Selecting a parent and its child together"
+    If both are selected and the recompute is left on, the child is a descendant of a cascade root and gets an inherited priority back. The dialog counts those and tells you to untick the recompute if you want every removal to stand.
+
+The table badge goes with the priority — unlike the knowledge-base-wide cleanup, which leaves the badge behind and asks you to run **Remove All Priority Band Tags** afterwards.
 
 ### 3. Unified Batch Priority Change
 
@@ -143,14 +270,14 @@ This is the most critical concept to understand:
 
 If you just click "Flashcards" in the sidebar, RemNote will show you cards in its standard SRS order. It does not know about the `cardPriority` powerup.
 
-### The Solution: Priority Review Documents
+### The Solution: the Priority Queue
 
-To review your flashcards in priority order, you **must** use the **[Priority Review Document](Priority-Review-Document.md)** feature.
+To review your flashcards in priority order, you **must** practise the **[Priority Queue](Priority-Review-Document.md)** document.
 
 1.  This feature scans your database for due cards.
 2.  It looks at the priorities you've set (Manual/Inherited).
-3.  It generates a temporary document containing portals to your **Highest Priority Due Cards**.
-4.  You review that temporary document.
+3.  It keeps one persistent document topped up with references to your **Highest Priority Due Cards**, and drains it as you review them.
+4.  You practise that document.
 
 This effectively bypasses the native scheduler's "all cards are equal" logic and forces a "best cards first" workflow.
 
@@ -278,6 +405,15 @@ The seven-day limit covers the one change that cannot be detected. If you edit a
     The command **Refresh Card Priority Cache** ignores the saved copy and re-reads every priority from the database, rebuilding both the cache and the saved copy from what it finds. That is the one to run if you suspect a priority is being displayed wrongly — the saved copy is derived from the same state you would be doubting, so a refresh that reused it would tell you nothing.
 
     The debug widget's **Warm-Start Store** panel also clears the copy, which makes the *next* start rebuild from scratch. Clearing it is harmless — it is derived data, and the rebuild writes it again.
+
+### What the cache cannot see { #cache-blind-spot }
+
+Within a session, the cache is kept current by what happens **on this device**: every card you rate in a queue updates its entry straight away, and every start rebuilds the card data from scratch.
+
+!!! warning "Reviews synced from another device arrive only at the next start"
+    Cards you review on **another device** while the plugin is running here — your phone, another computer, the web app — are synced into RemNote, but nothing tells this device's cache about them. Until you restart RemNote here, those cards still look due to the plugin.
+
+    Everything that reads the cache is affected the same way: the [Card Shield](#monitoring-your-load-card-shield) and its history, the choice of what goes into the [Priority Queue](Priority-Review-Document.md), what its drain removes, and which Rems are [cooling](Priority-Review-Document.md#cooling-spoiler-protection-across-sessions). If you study on two devices in one day, restart RemNote on the one you come back to.
 
 ## See also
 

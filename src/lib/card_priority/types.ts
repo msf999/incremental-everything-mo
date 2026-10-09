@@ -2,7 +2,23 @@ import { RemId } from '@remnote/plugin-sdk';
 import { IncrementalRem } from '../incremental_rem';
 
 export const CARD_PRIORITY_CODE = 'cardPriority';
+/**
+ * The ORIGINAL, VISIBLE priority slot. Still read (and, before the hidden-slot
+ * migration, still written) but no longer the slot new values belong in — a
+ * visible slot materialises a property CHILD rem on every tagged rem, and a
+ * tagged rem that is itself a table cell then renders that child instead of its
+ * own value. See lib/card_priority/slot_access.ts.
+ */
 export const PRIORITY_SLOT = 'priority';
+/**
+ * Where the priority value lives from v1.0.48 on: a HIDDEN slot, whose values
+ * RemNote stores without creating a property child (confirmed in
+ * lib/powerup_slot_compat.ts — a rem with hidden slots set can have zero
+ * property children). Registered fresh, so unlike PRIORITY_SLOT it is hidden in
+ * existing knowledge bases too: RemNote applies slot options when the slot
+ * definition rem is created, and this code had no rem before.
+ */
+export const PRIORITY_VALUE_SLOT = 'priorityValue';
 export const SOURCE_SLOT = 'prioritySource';
 export const LAST_UPDATED_SLOT = 'lastUpdated';
 
@@ -21,12 +37,45 @@ export interface CardPriorityInfo {
   kbPercentile?: number;
   /**
    * Per-card nextRepetitionTime, length === cardCount, order arbitrary but stable.
-   * `null` for disabled/never-scheduled cards (their `nextRepetitionTime` was null).
+   * `null` for unscheduled cards (their `nextRepetitionTime` was null: disabled,
+   * table rows, markup-removed…). `expandCardInfosToCards` drops those from the
+   * per-card universe — they are not cards the user intends to practise. Cards
+   * in a paused deck keep a real value here and are deliberately retained.
    * Used to expand the rem's CardPriorityInfo into per-card items for the Weighted
    * Shield of Cards so that buckets are formed by cards (not by rems-with-cards),
    * matching the Card Priority × Memory Analytics tab.
    */
   cardsNextRep?: (number | null)[];
+  /**
+   * Per-card time the card was last SHOWN (a graded or skipped repetition),
+   * same length and order as `cardsNextRep`; `null` for a card never shown.
+   * Computed with priority_review_document/cooling.ts `cardLastSeenAt` from
+   * the same cards the entry is built from, so it costs no extra read. Lets
+   * the Priority Queue's cooling judge spoilers from the cache instead of a
+   * `card.getAll()`.
+   */
+  cardsLastSeen?: (number | null)[];
+  /**
+   * Per-card direction, same length and order as `cardsNextRep`: 'forward',
+   * 'backward', 'cloze', or null. Lets cooling tell a descriptor's backward card
+   * (which answers with its concept) from the rest without a card read.
+   */
+  cardsType?: ('forward' | 'backward' | 'cloze' | null)[];
+  /**
+   * Per-card creation time, same length and order as `cardsNextRep`. Lets the
+   * Priority Queue's new-card cooling tell a card you just wrote from an old one
+   * without a card read. Per card — never the Rem's createdAt, which can be
+   * younger than its own cards.
+   */
+  cardsCreatedAt?: (number | null)[];
+  /**
+   * The owning Rem sits under a PAUSED deck. Its cards keep real
+   * `nextRepetitionTime` values — pausing does not clear them — so due-ness has
+   * to be suppressed explicitly or the queue's shields will count cards RemNote
+   * refuses to serve. Stamped at cache-write time from the paused-deck scan
+   * (`lib/paused_decks.ts`); undefined when no scan has run.
+   */
+  paused?: boolean;
 }
 
 /** Per-card item shape consumed by `calculateWeightedShield` and
@@ -38,6 +87,30 @@ export interface PerCardShieldItem {
   remId: string;
   /** Card's own nextRepetitionTime; null/undefined for disabled or never-scheduled cards. */
   nextRepetitionTime?: number | null;
+  /** Inside a paused deck: counts toward the ranking, never toward due. */
+  paused?: boolean;
+}
+
+/**
+ * The one due predicate for per-card shield items.
+ *
+ * A card in a paused deck IS due when its date has passed. Pausing defers the
+ * work; it does not cancel it, and it does not un-forget the card. Suppressing
+ * due-ness here would mean pausing a backlog-heavy deck instantly improved
+ * every statistic that counts it — the shield, its history, the percentiles —
+ * and unpausing would undo the improvement, so a metric meant to be tracked
+ * over time would move for a reason that has nothing to do with studying.
+ * Measured on a live KB: unpausing one deck moved the Cards shield 42.2% →
+ * 39.7% and the top bucket's weight share 24.4% → 22.9%.
+ *
+ * Only `nextRepetitionTime === null` takes a card out — an unscheduled card is
+ * not deferred work, it is not work at all.
+ */
+export function isPerCardDue(
+  item: Pick<PerCardShieldItem, 'nextRepetitionTime' | 'paused'>,
+  now: number,
+): boolean {
+  return (item.nextRepetitionTime ?? Infinity) <= now;
 }
 
 /**
@@ -148,13 +221,38 @@ function upperBoundIdx(arr: number[], target: number): number {
   return lo;
 }
 
+/**
+ * A timestamp far enough ahead that nothing treats it as due. Used by the
+ * stale-cache fallback below for cards known to exist but not to be due — they
+ * must NOT be emitted as `null`, which now means "RemNote will never schedule
+ * this card" and would drop them from the ranking population entirely.
+ */
+const NOT_DUE_SENTINEL = 8_640_000_000_000; // ≈ year 2243
+
 export function expandCardInfosToCards(infos: CardPriorityInfo[]): PerCardShieldItem[] {
   const out: PerCardShieldItem[] = [];
   for (const info of infos) {
     if (!info || info.cardCount === 0) continue;
     if (info.cardsNextRep && info.cardsNextRep.length > 0) {
       for (const nextRep of info.cardsNextRep) {
-        out.push({ priority: info.priority, remId: info.remId, nextRepetitionTime: nextRep });
+        // `null` here means unscheduled: disabled on the card or the Rem, an
+        // ancestor's Disable Descendant Cards, a table row, or a cloze whose
+        // markup is gone. Those are not cards the user intends to practise, so
+        // they take no part in the priority ranking — leaving them in would let
+        // them push real cards across percentile boundaries.
+        //
+        // Cards in a PAUSED deck are deliberately NOT excluded: pausing defers
+        // a card, it does not demote it, and it keeps a real nextRepetitionTime.
+        // Dropping them would make every other card's percentile shift when a
+        // deck is paused and shift back when it is unpaused — priority drifting
+        // as a side effect of a scheduling decision. See findings/CARD_STATE_REFERENCE.md.
+        if (nextRep === null || nextRep === undefined) continue;
+        out.push({
+          priority: info.priority,
+          remId: info.remId,
+          nextRepetitionTime: nextRep,
+          paused: info.paused,
+        });
       }
     } else {
       // Fallback for stale caches: synthesize one item per card. We can't tell
@@ -166,7 +264,8 @@ export function expandCardInfosToCards(infos: CardPriorityInfo[]): PerCardShield
         out.push({
           priority: info.priority,
           remId: info.remId,
-          nextRepetitionTime: i < dueCount ? 0 : null,
+          nextRepetitionTime: i < dueCount ? 0 : NOT_DUE_SENTINEL,
+          paused: info.paused,
         });
       }
     }

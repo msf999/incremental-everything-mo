@@ -1,130 +1,271 @@
-
-
-The **Priority Review Document** is a powerful feature designed to solve the "information overflow" problem inherent to Incremental Reading. It allows you to generate a custom, disposable review queue containing your highest-priority material — both Flashcards and Incremental Rems — sorted exactly how you want them.
+The **Priority Queue** solves the "information overflow" problem inherent to Incremental Reading. It is one persistent review document per scope, kept topped up with your highest-priority due material — both Flashcards and Incremental Rems — and drained as you review it, so each session is a short list drawn from the top of your ranking, following your Sorting Criteria.
 
 ---
 ## The Problem: Why do I need this?
 
-In the standard RemNote queue, plugins like *Incremental Everything* can control when **Incremental Rems** (articles, videos, notes) appear. However, plugins **cannot control the order of standard Flashcards**. RemNote's native scheduler decides which flashcard comes next, regardless of the priority you set in this plugin.
+In the standard RemNote queue, plugins like *Incremental RemNote* can control when **Incremental Rems** (articles, videos, notes) appear. However, plugins **cannot control the order of standard Flashcards**. RemNote's native scheduler decides which flashcard comes next, regardless of the priority you set in this plugin.
 
 This creates a problem when you are overwhelmed. If you have 1000 due flashcards, but only time to review 50, you want to ensure those 50 are your *most important* ones. In the standard queue, you might spend your time reviewing low-priority trivia while critical exams or project knowledge remains unseen.
 
 ## The Solution
 
-The **Priority Review Document** bypasses this limitation by creating a temporary document filled with **Rem References (Portals)** to your most important due items.
+A document made of **Rem references** to your most important due items bypasses that limitation: practise the document and RemNote serves exactly those cards. The plugin used to build such a document as a one-off, timestamped snapshot. The Priority Queue is the same document **kept alive**:
 
-When you practice this specific document, you are guaranteed to see:
-1.  **High-Priority Flashcards** first.
-2.  **High-Priority Incremental Rems** interleaved according to your ratio settings.
-3.  A manageable workload (e.g., exactly 50 items) instead of an endless queue.
+* **One document per scope** — one for your whole knowledge base, one per document or folder you choose — instead of a new one every day.
+* **Refill** tops it up to a *fill target* (25 items by default) from the current priority ranking.
+* **Drain** removes the entries you have reviewed, and the ones that are [cooling](#cooling-spoiler-protection-across-sessions).
+* **Refresh** is both, draws the document's [IncRems again](#flashcard-and-increm-slots), and runs on its own when you leave the queue.
 
-## How to Create a Priority Review Document
+Small fills are the point. RemNote serves a document's cards in **random order** — its queue provider for a normal document is literally named `random` — so a 100-item document can show its most important card last. The only control a plugin has over what comes *first* is how few items the document holds. Twenty-five items, most of them the top of your ranking (following your Sorting Criteria), is a session you can finish, and the next refresh prepares the next twenty-five.
 
-You can create a review document from anywhere in RemNote:
+## The Priority Queue popup
 
-### 1. Access the Creator
-* **Command Palette:** Type `/Create Priority Review Document` and press Enter.
-![CleanShot 2025-12-09 at 12 12 49@2x](assets/uploaded/d3dd2dcf-f0f0-4720-b6d2-ec6b5850eeee.png){ width="700" }
+Everything happens from one popup: **Priority Queue** in the Command Palette (quick code `prq`, shortcut `Opt+Shift+L` / `Alt+Shift+L`), the **Priority Queue** entry in any document's ⋯ menu and in the queue's ⋮ menu, or the **Priority Queue** button of the [Incremental RemNote panel](Getting-Started.md#the-incremental-plugin-panel).
 
+![The Priority Queue popup: scope, status card, fill target and shield slice, and the action buttons](assets/priority-queue-popup.png){ width="640" }
 
-* **Document Menu:** Click the 3-dots menu (`...`) at the top right of any document → "Create Priority Review Document".
-![Create Priority Review Document](assets/uploaded/3191b597-1b5e-4af3-b172-ee70784c5311.png){ width="700" }
+* **Scope** — the document you came from, or the whole knowledge base. The popup opens on the document only when it already has a Priority Queue of its own, and on the whole knowledge base otherwise; the document stays one click away to build one. A review document is never offered as a scope: a queue built from a queue would only re-select what it already holds.
+* **Status** — what the document holds, how many flashcard Rems and IncRems are still due, how many entries a refresh would drain and how many of those are cooling, the last refresh, and the current settings. Below it, the **card shield now** and **after this document** — the priority the shield would reach once every entry is reviewed — for the KB or for the document scope, with cooling Rems already excluded.
+* **Fill target** — how many items the document is topped up to. `25`, `50` and `100` are one click; any number from 5 to 200 works. This is the size of one *burst*: one session works through one fill, and the refresh at the end prepares the next. Your Flashcard Ratio divides it between [flashcard Rems and IncRems](#flashcard-and-increm-slots).
+* **Shield slice** — the share of each fill taken strictly by priority before your randomness applies. See [why it exists](#the-shield-slice). `0%` follows your [Sorting Criteria](Prioritization-&-Sorting.md#sorting-criteria) exactly.
+* **Skip paused documents** — leave out flashcard Rems inside paused documents, but always keep the ones at or below the priority you set (20 by default). See [Paused Document Filtering](#paused-document-filtering).
+* **Build / Refresh**, **Drain**, **Refill**, **▶ Practice**, **Open document**, **Cooling**, **Sorting…**.
 
+None of the actions runs while a queue is open — RemNote gathers a document's cards when you press Practice, so editing the document between sessions is safe and editing it during one is not. The popup says so and waits.
 
-* **Queue Menu:** Inside the queue, click the plugin menu icon (puzzle piece or 3-dots) → "Create Priority Review Document".
-![queue menu create priority review doc](assets/uploaded/70378912-9b7a-4bd1-b13c-2de2aec75b9f.png){ width="700" }
+The popup is keyboard-driven: `←` `→` move the selection ring across the controls, `Enter` activates, `Esc` closes. Fill target and shield slice are plain number fields; `Enter` or `Esc` inside one hands the keys back.
 
+### Practise it
 
-* **Keyboard Shortcut:** Press [`Opt+Shift+R`](Keyboard-Shortcuts.md#batch-operations) (Mac) or [`Alt+Shift+R`](Keyboard-Shortcuts.md#batch-operations) (Windows).
+**▶ Practice** opens the queue on the document — the same thing as its own Practice button. With no document yet, it builds one first. The **▶** button of the [Incremental RemNote panel](Getting-Started.md#the-incremental-plugin-panel) and the command **Learn - Practice Priority Queue (Full Knowledge Base)** (`Cmd+L` / `Ctrl+L`, quick code `learn`) do the same for the whole knowledge base from anywhere. **Learn** is the plugin's main action, as in SuperMemo: open RemNote, press `Cmd/Ctrl+L`, and study what matters most.
 
-### 2. Configure Your Session
-A popup will appear allowing you to tailor the session:
+While you practise, the plugin knows where the items came from: the [Priority Shield](Prioritization-&-Sorting.md#priority-shield) and its history are computed against the **original scope** (the document you chose, or the whole knowledge base), not against the review document itself. See [Smart Scope](#smart-scope-priority-shield-integration).
 
-* **(1) Scope:**
-    * **Current Document:** Selects high-priority items only from the document you were just viewing (and its descendants/references).
-    * **Full Knowledge Base:** Scans your entire database to find the absolute highest priority items due today.
-* **(2) Number of Items:** Set a hard limit (e.g., 50, 100, or 200). This helps prevent burnout by giving you a finish line.
-  * Note: Due to RemNote queue [gathering rules](https://help.remnote.com/en/articles/8892109-how-does-remnote-decide-what-flashcards-are-part-of-a-document) and its _recursive_ nature, the size of the queue when you click "Practice" and enter the queue will probably be larger, as RemNote will gather e.g. rems that are referenced within the selected items.
-* **(3) Content Mix:** Displays the current ratio of Flashcards to Incremental Rems (e.g., "6 flashcards for every incremental rem"). 
-  * Note: This ratio is pulled from your "[Prioritization-&-Sorting#sorting-criteria](Prioritization-&-Sorting.md#sorting-criteria)" settings. _If the ratio is not the desired or if you can check the randomness, press the button (4) **Change Sorting Criteria Settings**_.
-* **(4) Skip paused documents** *(default: on)*: When enabled, flashcard rems that live inside a document whose **Deck Status** is **"Paused"** are excluded from the review session. This prevents a paused deck from silently filling slots that should go to your active, high-priority material.
-  * **Priority override threshold:** A number input (default **20**) lets you keep items with a priority of that value or less — even if they sit inside a paused document. This ensures genuinely critical items are never silently dropped.
-  * If any items are skipped, a **warning panel** appears after creation listing each skipped rem (name and absolute priority), sorted from highest to lowest priority. Items with priority < 20 are highlighted in red as potential high-priority oversights. The same list is printed to the browser console with rem IDs for easy lookup.
+### Refresh at startup and after every session { #refresh-after-every-session }
 
-> **Keyboard tip :keyboard: :** 
-> The popup is fully keyboard-navigable:
-> * **Initial focus** lands on the **Scope** radio buttons when the popup opens — no mouse click needed to start.
-> * **↑ / ↓ arrow keys** switch between "Current Document" (↑) and "Full Knowledge Base" (↓) (when "Scope" selection section is focused), and increment/decrement the "Number of Items" (if focused) by 10.
-> * **Tab / Shift+Tab** cycles between the Scope selection and the Number of Items field.
-> * **Enter** at any point — regardless of which element has focus — triggers "Create Review Document" immediately, while **Esc** cancels the operation and closes the widget.
+When you leave the queue after practising a Priority Queue document, the plugin refreshes it a couple of seconds later: what you reviewed is drained, what is now cooling is drained, and the document is topped back up. A toast reports the result.
 
-![create priority review doc popup](assets/priority-review-doc-creator-2.png){ width="600" }
+When RemNote starts, the **full-KB** Priority Queue is refreshed once, so the first Practice of the day finds it up to date. This waits for the caches and the cooling scan to finish, and the ▶ button of the [plugin panel](Getting-Started.md#when-learn-starts-pulsing) only starts pulsing once it is done. A toast reports the result. Document-scoped Priority Queues are not refreshed at startup — each can take many seconds on a large document, and some are rarely used. Each one is refreshed after its own sessions, or from the popup.
 
+Both are the **Refresh the Priority Queues at startup and after each session** setting, on by default.
 
-### 3. Review
-Click (5) **"Create Review Document"**.
-The plugin will generate a new document tagged `#Priority Review Queue` and automatically open it.
-1.  Click the **Practice** button (Flashcards) on this new document.
-2.  Review your items as normal.
-3.  When finished, you can safely **delete** the Priority Review Document. The actual items (your cards and notes) are just references; deleting the review document **does not** delete your actual data.
-
-![Priority Review Document](assets/uploaded/10db4390-8299-4167-be38-7afc431d1aec.png){ width="800" }
-
-![deleting priority review document](assets/uploaded/afd7a2d7-3318-4496-b69b-0f5b29dbe0c9.png){ width="800" }
-
----
+In [Light Mode](Full-Mode-x-Light-Mode.md), including on mobile, the automatic refresh does not run. Light Mode keeps no card cache, so a refresh there has to read every card in your knowledge base — once, shared by the drain, cooling and the new selection — which is the kind of work Light Mode exists to avoid after every session. Press **Refresh** or **▶ Practice** in the popup instead; both still work, cooling included. In Full Mode a refresh reads no cards at all: everything comes from the card cache.
 
 ## How Items Are Selected
 
-The plugin uses a sophisticated selection process to ensure you see the right material:
+Every refill runs the same selection:
 
-1.  **Filtering:** It gathers all items (Flashcards and Incremental Rems) that are **Due** (scheduled for today or in the past).
-2.  **Scoping:** It filters these items based on your selected scope (Specific Document or Full KB).
-3.  **Sorting:** It ranks them by **Priority** (0 is highest, 100 is lowest).
-4.  **Randomness:** It applies your **[Prioritization-&-Sorting#sorting-criteria](Prioritization-&-Sorting.md#sorting-criteria)** randomness settings.
-    * *Low randomness* = Strict adherence to priority (0, 1, 2...).
-    * *High randomness* = Introduces serendipity, allowing lower priority items to surface occasionally.
-5.  **Mixing:** It interleaves the lists based on your **Flashcard Ratio**.
-    * *Example:* If your ratio is "6 cards per rem", the document will contain roughly 6 flashcard references followed by 1 incremental rem reference, repeating until the item limit is reached.
+1.  **Filtering:** every Flashcard Rem and Incremental Rem in scope that is **due** (scheduled for today or earlier).
+2.  **Ranking:** by **priority** (0 is highest, 100 is lowest), with your [randomness](Prioritization-&-Sorting.md#sorting-criteria) applied through the priority-weighted lottery — after the [shield slice](#the-shield-slice) has been carved off.
+3.  **Mixing:** each list fills its own [slots](#flashcard-and-increm-slots), interleaved at your **Flashcard Ratio** — with "10 cards per rem", roughly ten flashcard entries follow each incremental entry.
+4.  **Gates**, applied to each flashcard Rem as it is drawn, so their cost is bounded by the fill target rather than by the size of your knowledge base: already in the document, [paused](#paused-document-filtering), [due ancestor](#ancestor-spoiler-protection), [cooling](#cooling-spoiler-protection-across-sessions), and [Card Cluster](#card-cluster-support) expansion.
 
-### Priority Review Document Graph View
+The status block at the top of the document records what each refresh did, and the popup shows the Rems each gate held back, by name, after every action.
 
-To help users visualize how the items are selected, a **Priority Distribution Graph** is automatically generated at the **top** of the Priority Review Document (in a rem with the **Priority Review Graph** _powerup_).
+![The Priority Queue popup after a refresh: the result line, a blue panel with one Rem left out as cooling, and a purple panel with one Rem held back by a due ancestor that is cooling too](assets/priority-queue-popup-cooling-ancestor-messages.png){ width="640" }
+
+Above, a refresh drained 4 reviewed entries and added 4. Under the result line, each gate that held something back gets its own panel, one row per Rem with its priority:
+
+* **🧊 left out, cooling** — why the Rem is [cooling](#cooling-spoiler-protection-across-sessions) and the day it comes back: here, another card of the same Rem was reviewed 7 days ago, so it returns on Sep 17.
+* **🎭 held back by a due ancestor** — the blocking parent or grandparent and what happened to it. Here the parent is itself cooling, so nothing was swapped in and both wait; see [Ancestor Spoiler Protection](#ancestor-spoiler-protection).
+
+### Flashcard and IncRem slots
+
+The Flashcard Ratio divides the fill target for the **whole document**: IncRems get one slot for every *ratio + 1* items, rounded up, and flashcard Rems the rest. A fill target of 25 at "10 cards per rem" holds **22 flashcard Rems and 3 IncRems**. With "no cards" or "no incremental rems", everything goes to the other kind.
+
+The two kinds are refilled differently:
+
+* **Flashcard Rems stay until you review them.** A refresh only fills the flashcard slots that are empty.
+* **IncRems are drawn again on every Refresh.** The queue injects IncRems at your ratio however many the document holds, so an IncRem that was not reached has no claim on its slot. The draw runs your sorting criteria again, as the regular queue does each session: IncRems drawn again stay where they are, the others leave and are replaced, and they return to the pool of due IncRems for a later draw. An IncRem entry with notes or text of your own on it is never drawn away.
+
+**Refill** only fills empty slots, and **Drain** adds nothing. The status block shows the split on its *Holding* line and what the draw kept and replaced on its *Last refresh* line.
+
+### The shield slice
+
+Your randomness setting marks a share of *positions* across the **whole** ranked due list, uniformly, and refills each marked position from a priority-weighted draw. It does not carve off the bottom of the list. So the first position is marked exactly as often as the ten-thousandth, and when it is, the most important due Rem is thrown into a pool of thousands and lands far down the list. At 40% randomness that happens to each of your top items four times in ten — see [what randomness does not guarantee](Prioritization-&-Sorting.md#what-it-does-not-guarantee).
+
+In a 100-item snapshot a displaced top item usually still landed inside the document, just later. In a 25-item fill there is no "later": the item is simply absent until the next refresh, and the Priority Shield stays where it was however hard you work. The shield slice says the lottery may not touch the first positions. With the default `20%`, the first 5 of a 25-item fill are the 5 most important due items, and your randomness runs over the other 20. Set it to `0%` to follow the Sorting Criteria exactly, or higher to protect more of the head.
+
+The status block and the popup report how many of the added items came from the slice.
+
+### The status block and the graph
+
+The document's first child is a code block that the refresh rewrites each time: scope, fill target and shield slice, what it holds and how the fill target is split, what the last refresh drained and added and what the IncRem draw kept and replaced, how many Rems are cooling, how many were held back by a due ancestor or skipped as paused, and what is due in scope. Its second child is the **Priority Distribution Graph**, regenerated on every refresh over the document's current entries — absolute priorities and relative percentiles, IncRems and flashcard Rems — so you can see at a glance how concentrated at the top a fill is, and what your randomness setting does to it.
+
+Entries are always appended **below** these two, so the graph stays where it is.
 
 ![Priority Review Doc Graph](assets/priority-review-doc-graph.png){ width="800" }
 
-This visualization helps you verify:
-*   **The effect of Randomness:** See how "shuffled" your review session is compared to a strict priority order.
-*   **[Priority Shield](Prioritization-&-Sorting.md#priority-shield) Logic:** Confirm that the system is correctly prioritizing your high-value items as expected.
-*   **Scope Distribution:** Visualize the balance of absolute priorities and relative percentiles within your included Incremental Rems and Flashcards.
+## Cooling: spoiler protection across sessions
 
-![Sorting Criteria randomness](assets/uploaded/544ec922-131d-4017-95dd-df6a6798b8c1.png){ width="400" }
+RemNote's own bury rule keeps a card out of the queue while *another card of the same Rem* was seen in the last **hour**. Anki buries siblings until the next day. Neither is enough for a mature card: a descriptor whose answer was read as context yesterday, or an `Alt+Z` cloze whose sibling cloze was graded three days ago, is still a free recall — and FSRS rewards a free recall with years of unearned stability, as the [ancestor case below](#ancestor-spoiler-protection) shows.
 
-![Create Priority Review Doc dialog](assets/uploaded/6f8f9a49-16e9-469f-b204-420e90814f40.png){ width="500" }
+A Rem is **cooling** when it still owes the queue a card, and a card that gives that answer away was graded recently and has since moved on. While cooling, it is left out of the Priority Queue, [skipped in RemNote's own queues](#cooling-in-remnotes-own-queues), and **ineligible to set the Priority Shield** — a Rem whose sibling you just reviewed cannot pin the shield at its priority however much else you clear.
+
+### What counts as a spoiler
+
+Seven relations, each a distinct way one review puts another card's answer on screen:
+
+* **Another card of the same Rem** — the other direction, or another cloze in the same text. RemNote's hour-long bury, extended.
+* **A sibling `Alt+Z` cloze under the same parent extract**, or the **parent extract itself** read as an Incremental Rem. Each cloze quotes the whole sentence with one span blanked, so any one of them shows the others' answers.
+* **One of the Rem's own `Alt+Z` clozes**, when the Rem carries a card of its own as well.
+* **A child or grandchild card**, whose context line displayed this Rem's answer — the [ancestor gate](#ancestor-spoiler-protection) extended across time, in the direction that actually spoils.
+* **An answer line of a multi-line card.** Reviewing one puts part of the multi-line card's answer on screen. Only its answer lines count — the other children of a multi-line card show just its question — and while one of them is still due, the multi-line card waits for it: see [Multi-line cards: answer lines first](#multi-line-cards-answer-lines-first).
+* **Its multi-line card**, when the Rem is one of that card's answer lines: the multi-line card's back shows the line in full.
+* **Its concept, for a descriptor's backward card.** A descriptor's backward card shows the descriptor and asks for the concept it belongs to: the nearest ancestor that is not itself a descriptor, which is a grandparent or higher when descriptors are nested. Reviewing any card of that concept, forward, backward or a cloze in it, puts the answer on screen, so the descriptor waits. RemNote buries this pairing for an hour; cooling extends it for the whole window.
+
+**And one rule about the card itself: new cards.** In the Priority Queue — and in RemNote's own queues only [if you ask for it](#cooling-in-remnotes-own-queues) — a card you have just created and never reviewed cools too, for a fixed number of days counted from the moment the card was created (**Cooling: new cards**, 1 day by default, up to 10, 0 to turn it off). SuperMemo counts creating an item as its first repetition, so a cloze you wrote while reading is never asked the same day, while its answer is still in view. The date is the card's own: a cloze added today to an old Rem counts as new, and a direction you switch off and back on keeps its original card and history, so it does not. A direction switched on for the first time is a new card.
+
+Card Cluster siblings never cool each other: a cluster is designed to be shown together, and RemNote treats it as one unit. A sibling rated *Again* that is still due does not cool anything either — RemNote's own rule already separates that pair within the hour.
+
+### Image Occlusion is never cooled { #image-occlusion-is-never-cooled }
+
+An Image Occlusion Rem never cools. With **Hide All, Test One** on, every other box stays covered while one is tested, so reviewing one box gives nothing away, and RemNote's own bury leaves those boxes alone too. The plugin cannot read that setting, so it exempts every Image Occlusion Rem, whether the setting is on or off. With it off, RemNote's hour-long bury still separates the boxes within a session.
+
+### How long
+
+The window belongs to the cooled card and scales with its own interval, because a mature card is both more damaged by a free recall and cheaper to delay:
+
+```
+cooling days = clamp( ceil( interval × 5% ), 1, 15 )
+```
+
+| Card interval | Cooling |
+|---|---|
+| a new card | 1 day |
+| 10 days | 1 day |
+| 60 days | 3 days |
+| 200 days | 10 days |
+| a year or more | 15 days |
+
+Counted from the moment the spoiling card was seen, not from when the plugin noticed. The three parameters — the share of the interval, the minimum and the maximum — are in the [settings](Plugin-Settings-Reference.md#priority-queue).
+
+### Nothing is stored
+
+The cooling set is **recomputed from your card data** on every refresh, at every queue exit, and once when RemNote starts — it is a function of what is scheduled and when each card was last shown. In Full Mode both come from the card cache, which records when each card was last shown alongside when it is due; note [what the cache cannot see](Priorities-for-Flashcards.md#cache-blind-spot). That is what makes it correct on every device the moment your cards sync, impossible to disagree with reality, and immune to a wipe of the plugin's synced storage. The only thing persisted is what *you* decide about specific Rems (below), one small record per knowledge base.
+
+### The Cooling list
+
+**Cooling** in the popup lists every Rem currently cooling, highest priority first: the reason and when it happened, the day it comes back, and the length of its window. Three actions per Rem:
+
+* **Release** — stop cooling now. A sibling reviewed *later* cools it again.
+* **+7d** — keep it cooling a week longer.
+* **Never** — exempt this Rem from cooling for good.
+
+`↑` `↓` choose a row, `R`, `E`, `N` act on it, `Enter` opens the Rem, `Esc` goes back. **Rescan** re-judges the 200 highest-priority Rems with due cards on the spot.
+
+### Cooling in RemNote's own queues { #cooling-in-remnotes-own-queues }
+
+Cooling also works outside the Priority Queue: when a card of a cooling Rem comes up in one of RemNote's own queues, the plugin skips it. It stays due and comes back once its cooling ends.
+
+| Queue | Cooling |
+|---|---|
+| **Learn New Cards** | Always |
+| **Practice with Spaced Repetition** on a document, the daily queue, a Priority Queue document | With **Cooling in RemNote's queues** set to **All queues** (the default), in Full Mode |
+| Practice All Flashcards (shuffled or in order), no-SRS, Mastery Drill | Never — there you asked for every card |
+
+**Learn New Cards** is where it matters most. The cards RemNote generates with AI, and the ones you import, wait there as *Need to Learn* until you choose **Learn New Cards**. That queue has RemNote's hour-long bury switched off, so the clozes of one Rem run back to back, and with **In Order** each one is shown right after its sibling. With cooling, once you rate one cloze, the others of that Rem wait for a later batch. The first skip of a session shows a toast.
+
+In the other queues each skip shows a toast with the reason, e.g. *Cooling: skipped a card — a sibling Alt+Z cloze was reviewed 2 days ago.* The skipped card may flash briefly before it goes. In Learn New Cards every card fades in half a second late, so the skipped ones are never seen.
+
+A few things work as they do in the Priority Queue:
+
+* **Release** and **Never** in the [Cooling list](#the-cooling-list) apply here too.
+* **Card Cluster** members are never skipped: a cluster is shown as one unit.
+* **Image Occlusion** cards are never skipped: see [Image Occlusion is never cooled](#image-occlusion-is-never-cooled).
+* A card never cools itself: when it comes back in the same session — after **Forgot**, say — it is shown, even while its siblings are being skipped.
+* **Cooling: new cards** does not apply unless you switch it on: in the daily queue it would skip every card you wrote today, and Learn New Cards exists to learn new cards.
+
+**New cards, if you want them cooled here too.** Set **Cooling: where new cards cool** to **RemNote's queues too** (it is **Priority Queue only** by default) and a card you just created and never reviewed is also skipped in the spaced-repetition queues — a document, the daily queue, a Priority Queue document — for the days set in **Cooling: new cards**. It needs **Cooling in RemNote's queues** on **All queues**, and never touches Learn New Cards. Two things to expect:
+
+* The queue of a document you wrote today opens empty: every card in it is skipped, with a single toast for the session, *Cooling: cards you just created are held back until their cooling ends.*
+* The rule holds the whole Rem, as in the Priority Queue: a cloze added today to an old Rem keeps that Rem's other due cards out as well.
+
+In Light Mode only Learn New Cards is covered: judging the other queues would mean reading every card in the knowledge base each time a queue opens.
+
+## The Priority Review Queue in your sidebar
+
+Every Priority Queue document is tagged `#Priority Review Queue`, and that tag Rem lists all of them: open it and the **All Tagged Bullets** table shows every one, on desktop and on your phone alike. The **👁** button of the panel opens it.
+
+The first time the plugin builds a review document, it **pins that tag Rem to your left sidebar**. This happens once per knowledge base, ever. If you unpin it, it stays unpinned — the plugin will not put it back. The reason is mobile: the plugin panel is not rendered on a phone, the sidebar is, and a pinned Priority Review Queue is one tap away from a document you refreshed at your desk.
+
+The documents themselves live as children of the tag Rem, so they stay together, and practising the tag Rem still gathers every one of them with its descendants.
 
 ## Paused Document Filtering
 
-RemNote's **Deck Status** system lets you mark a document (deck) as **Paused**, which signals that you are temporarily not reviewing material from that source. Without any filtering, due flashcards inside paused documents would still be selected by the Priority Review Document generator — consuming slots that belong to your active material.
+RemNote's **Deck Status** system lets you mark a document (deck) as **Paused**, which signals that you are temporarily not reviewing material from that source. Without any filtering, due flashcards inside paused documents would still be selected — consuming slots that belong to your active material.
 
 ### How It Works
 
-When **Skip paused documents** is enabled (default), the plugin checks each candidate flashcard rem as it is pulled into the mixing loop:
+As each candidate flashcard Rem is pulled into the mixing loop:
 
-1. It walks the rem's ancestor chain looking for a rem that carries the `Deck` powerup.
+1. The plugin walks the Rem's ancestor chain looking for a Rem that carries the `Deck` powerup.
 2. If it finds one, it reads the `Status` slot.
-3. If the status is `"Paused"`, the rem is skipped and added to a warning list instead of the document — **unless** its absolute priority is ≤ the configured threshold (default: 20), in which case it is always included.
+3. If the status is `"Paused"`, the Rem is skipped and reported — **unless** its absolute priority is at or below the **always keep** priority, in which case it is always included.
 
-This check is **lazy**: the ancestor walk runs for each card as it is pulled into the mixing loop, rather than pre-walking every due card in the knowledge base upfront. If you request 50 items, at most ~50 ancestor walks happen — not one per due card in your entire KB (which could be thousands). The total ancestor-walk cost is bounded by the number of items requested, not by the size of your knowledge base.
+This check is **lazy**: it runs for each card as it is drawn, so the number of ancestor walks is bounded by the fill target, not by the number of due cards in your knowledge base.
+
+Both controls sit under the fill target in the popup: the **Skip paused documents** checkbox, on by default, and **but always keep priority … or less**, 20 by default. Like the fill target, they are stored on each Priority Queue document, so the full-KB queue and a document-scoped one can differ.
 
 ### What You See
 
-After creation, if any items were skipped:
-- A **warning panel** replaces the "How it works" info box, showing the count and a scrollable list of skipped rems (name + priority score).
-- Items with priority < 20 are highlighted in **red** to flag potential high-priority oversight.
-- The document's **metadata code block** includes a `Skipped (paused docs): N flashcard rems` line.
-- The full list with rem IDs is printed to the **browser console** for investigation.
+After an action, an **amber ⚠️ panel** in the popup lists every skipped Rem with its priority. Rems below priority 20 are shown in red, and the header calls them out as **HIGH PRIORITY** — which only happens once you have lowered the always-keep priority below 20. The status block counts the skipped Rems, and the toast after the [automatic refresh](#refresh-after-every-session) says how many were skipped and how many of them were high priority, since no popup is open then.
 
-The document auto-closes only when there are no skipped items; otherwise the warning panel stays open until you explicitly click **Close**.
+---
+
+## Ancestor Spoiler Protection
+
+A descriptor with flashcards can sit above another descriptor with flashcards. When you practise the **child**, RemNote shows the parent above the question as context — **answer included**. If the parent's own card was due too and simply happened to come up later in the session, you have already read its answer: it gets graded as a successful recall it never had to make, and a card with years of accumulated stability walks away with years more.
+
+![A queue card for a second-level descriptor: the first-level descriptor above it is displayed in full, answer included, and both were due](assets/PRD-card-spoiler-protection.png){ width="800" }
+
+Above, the card being asked is the **second-level** descriptor — the stats bar belongs to *it*, not to the card it is about to give away. The **first-level** descriptor sits right on top of it with its answer, *encurtar caminho*, in plain sight, and it was due in the same session. When it came up a few minutes later it was graded **Good** (*Recalled With Effort*) in **17 seconds**, and its interval went from **1.3 years to 8.1 years** — next practice in 2034 — on the strength of a line that had already been read.
+
+![The plugin's Flashcard Repetition History for the first-level descriptor, with repetitions 9 and 10 boxed: a 1.3-year interval becoming 8.1 years, and stability going from 4.1 to 7.9 years](assets/PRD-card-spoiler-protection-consequence.png){ width="800" }
+
+The [Flashcard Repetition History](Reviewing-Items-in-the-Queue.md#flashcard-repetition-history) of that first-level card records the damage. Repetition 10 answered a card a little before (3.3 years since last repetition) the optimum time suggested by its calculated previous 4.1 years stability (Retrievability being estimated at 91.4%), and FSRS read that as a card far stronger than it was: stability **4.1 → 7.9 years**, a ×1.90 bump, and a decade of scheduling bought with no retrieval at all. Nothing in the history marks it as unearned — from here on, it is simply what the card knows about itself.
+
+RemNote does not prevent this natively, so the Priority Queue does.
+
+### How It Works
+
+As each candidate flashcard Rem is drawn, the plugin looks at its **parent and grandparent** — two levels, the range where the context line still carries an answer rather than a section or document title:
+
+1. If neither ancestor has a due card, the Rem is included as normal.
+2. If one does, the Rem is **held back**, and the blocking ancestor **takes its place in the document**.
+3. When *both* ancestors are due, the **grandparent** is the one swapped in — the highest blocker, not the nearest — so releasing it frees the parent for the next refresh, which in turn frees the original card. The tree drains top-down, one level per review.
+4. If the blocking ancestor is itself [cooling](#cooling-spoiler-protection-across-sessions), nothing is swapped in: both wait, and the popup says so. While it waits, the child cannot set the [Priority Shield](#smart-scope-priority-shield-integration) either. A child whose due ancestor is *not* cooling keeps counting, because that ancestor can be reviewed right away.
+
+The swap is the point. Dropping the child on its own would leave the block standing: the parent might not be drawn this time, and the same pair would collide again at the next refresh. Practising the ancestor **now** is what makes the descendant free next time. The ancestor swapped in may be **lower priority** than the card it displaced — its priority is beside the point; it is in the way.
+
+Due-ness is read from the ancestor's **actual cards**, not from the plugin's priority cache, so a flashcard you created minutes ago still protects its descendants. A never-practised card counts as due — the case that matters most, since nothing has been recalled for the descendant to give away.
+
+**Entries already in the document are checked too.** The draw only looks at a child's ancestors when it first picks the child, so every refresh also checks each flashcard entry the document already holds. A child whose parent or grandparent has come due since it was added is drained, and that ancestor is pulled in ahead of the normal fill, so it is reviewed first. The toast after the [automatic refresh](#refresh-after-every-session) counts these, and the status block shows how many ancestors were swapped in.
+
+Once the ancestor *has* been reviewed, its descendant returns at a later refresh — and that is exactly when the reverse relation takes over: a descendant reviewed recently cools its ancestor, since the descendant's context line showed the ancestor's answer. The two rules are the same rule in the two directions of time.
+
+### Multi-line cards: answer lines first { #multi-line-cards-answer-lines-first }
+
+A multi-line card (`>>>`) is the one case where the order is **inverted**. Its answer is a list of children, and when those answer lines are flashcards themselves, each one is a smaller question inside the big one. So the answer lines go **first**, and the multi-line card waits for them.
+
+![A multi-line card "which short lines?" whose two answer lines, "forward" and "aft", are flashcards of their own; the image and the note below them are children but not part of the answer](assets/cooling-multiline-answer-lines.png){ width="700" }
+
+Above, *which short lines?* is a multi-line card, and its answer lines *forward* and *aft* have cards of their own:
+
+1. While *forward* or *aft* is due, *which short lines?* is **held back** — left out of the Priority Queue, skipped in [RemNote's own queues](#cooling-in-remnotes-own-queues), and not counted by the Priority Shield. The reason reads *one of its answer lines is due and goes first*.
+2. *forward* and *aft* are **not** held back by their parent, and they do not cool each other: review them in any order, in the same session.
+3. When the held card comes up in a Priority Queue fill, its due answer lines are **pulled in** in its place — the ancestor swap in reverse.
+4. Once they are reviewed, *which short lines?* **cools** from that review, for its own window, and then comes back to be reviewed last.
+5. The other way round works too. In RemNote's own queues the order is random: if *which short lines?* is reviewed first anyway, its back shows *forward* and *aft* in full, so they **cool** from that review.
+
+Only children marked as **card items** — the lines on the back of the card — trigger this. Other children of a multi-line card, like the image and the *~Lógica* note above, are not part of its answer: they neither hold it nor cool it. A due **grandparent** still goes first, as for any other card.
+
+### What You See
+
+After an action, a **purple 🎭 panel** in the popup lists each held-back Rem with its priority, the blocking parent or grandparent, and what happened to that ancestor: swapped in, already in the document, cooling, or unavailable. The status block counts them.
+
+> [!NOTE]
+> This check is always on and has no threshold — unlike the paused filter, there is no priority high enough to make reading an answer before recalling it a good trade.
 
 ---
 
@@ -134,49 +275,69 @@ RemNote's **[Card Cluster](https://help.remnote.com/en/articles/10104223-card-cl
 
 ### The Problem
 
-Without any special handling, the Priority Review Document generator would select individual flashcard rems based solely on priority. If a clustered parent had three children — all with due cards — but only one ranked among the top-N by priority, the other two siblings would be absent from the document. When RemNote encountered that isolated rem during the review queue, it would have no cluster siblings to display, silently breaking the cluster experience.
+Without special handling, the selection would pick individual flashcard Rems on priority alone. If a clustered parent had three children — all due — but only one ranked among the top by priority, the other two siblings would be absent from the document. When RemNote encountered that isolated Rem in the queue, it would have no cluster siblings to display, silently breaking the cluster experience.
 
 ### How the Plugin Handles It
 
-Starting from **v0.2.178**, every time a flashcard rem is selected for inclusion in the document, the plugin:
+A flashcard Rem is a cluster member when its **direct parent** carries the Card Cluster powerup. The plugin keeps every cluster in the document whole, at three moments:
 
-1. Looks up the rem's **direct parent**.
-2. Checks whether the parent carries the Card Cluster powerup (using multiple code variants and a tag-name fallback, since RemNote does not yet expose the cluster powerup code in its public Plugin SDK).
-3. If a cluster is detected, **all sibling rems** (other direct children of that parent) that currently have **due cards** are automatically added to the document alongside the triggering rem.
+1. **When a flashcard Rem is drawn**, every sibling with a **due card** is added with it — cooling or not, since cluster members are meant to be seen together.
+2. **On every Refresh and Refill**, each flashcard entry the document holds is checked the same way — entries kept from earlier fills, new ones, and ancestors swapped in — and any due sibling missing from the document is added. A sibling that came due after its cluster entered the document is brought in this way.
+3. **When draining**, a cooling cluster member stays while another member of its cluster in the document is due and not cooling. A cluster whose due members are all cooling leaves together.
 
-### What This Means in Practice
+A sibling held back by a [due ancestor](#ancestor-spoiler-protection) is not added: its siblings share that ancestor, so they are held back with it. Siblings whose cards are not due are not added either — RemNote still shows them in the cluster, the earlier ones as context.
 
 | Scenario | Behaviour |
 |---|---|
 | Only one cluster member meets the priority threshold | All due siblings are pulled in automatically |
-| Multiple cluster members independently meet the threshold | Each one triggers the cluster check; the deduplication set ensures no rem is added twice |
-| No cluster members are due | Nothing extra is added (the normal selection path applies) |
-| Cluster siblings push the total above the configured item limit | Siblings are still included — a partial cluster would break the queue experience |
+| Multiple cluster members independently meet the threshold | Each one triggers the cluster check; no Rem is added twice |
+| A sibling comes due after its cluster entered the document | The next Refresh or Refill adds it |
+| One cluster member is cooling, another is due | Both stay; the cluster is practised together |
+| No cluster members are due | Nothing extra is added |
+| Cluster siblings push the total above the fill target | Siblings are still included — a partial cluster would break the queue experience |
+
+The refresh logs what it did: `[CardCluster] N clusters in the document: added X due siblings, kept Y cooling members with their cluster`, and the status block adds *N Card Cluster siblings added*.
 
 > [!NOTE]
-> The item count shown in the document metadata reflects the **actual** number of portals created, which may exceed your requested limit when cluster siblings are added. This is intentional and expected.
+> Card Cluster is RemNote's built-in powerup with the code `cc`, which the Plugin SDK does not list. Until RemNote turned clusters into that powerup (July 2026) they were a tag, and the plugin looked for the tag and for guessed codes; from then on it no longer recognised clusters, and a member could enter the Priority Queue without its siblings. Clusters are recognised by `cc` since v1.0.114.
 
-### Why You Don't Need to Do Anything
-
-The cluster expansion is **fully automatic**. As long as your flashcard rems have been grouped under a parent tagged with `/cluster`, the plugin detects and respects the cluster. No extra configuration is required.
+> [!NOTE]
+> The count in the status block reflects the **actual** number of entries, which may exceed the fill target when cluster siblings are added. This is intentional.
 
 ---
 
 ## Smart Scope & Priority Shield Integration
 
-Even though you are reviewing a generated list, the plugin is smart enough to know where the items came from.
+Even though you are reviewing a generated list, the plugin knows where the items came from.
 
-* **Original Scope Awareness:** While reviewing a Priority Review Document, the plugin "pretends" you are reviewing the original source.
-* **[Priority Shield](Prioritization-&-Sorting.md#priority-shield):** The Priority Shield (the stats below the answer buttons) will calculate your protection based on the **Original Scope**.
-    * *Example:* If you generate a review doc for "Biology 101", the shield will show you how well you are protecting priorities within the "Biology 101" folder, not just the temporary review document.
-* **Stats Tracking:** The history graph will record your progress against the original document or Full KB, keeping your long-term stats accurate.
+* **Original Scope Awareness:** While reviewing a Priority Queue document, the plugin "pretends" you are reviewing the original source.
+* **[Priority Shield](Prioritization-&-Sorting.md#priority-shield):** The Priority Shield (the stats below the answer buttons) calculates your protection against the **original scope** — the document you chose, or the whole knowledge base — never against the review document itself. *Example:* a Priority Queue scoped to "Biology 101" shows how well you are protecting priorities within "Biology 101".
+* **Cooling Rems are not counted.** A Rem whose spoiler sibling you reviewed recently cannot set the shield, live or in the history graph — the set is recomputed once when RemNote starts and at every queue exit, so the siblings you just reviewed are already accounted for, and the first queue after a restart counts the same Rems as the last one. Neither can a Rem held back because its parent or grandparent is due and cooling: the Priority Queue will not serve it until that window ends.
+* **Cooling counts for the whole day.** The shield counts only cards that were already overdue at the start of the day, and cooling follows the same clock: a Rem that was cooling at any moment since midnight stays out of that day's shield, even after its window closes. A card created at 20:55 yesterday cools until 20:55 today and can set the shield only from tomorrow, so the shield no longer drops in the evening just because a window closed. The queues are not affected: they serve the card as soon as its cooling ends.
+* **Stats Tracking:** The history graph records your progress against the original document or the whole knowledge base, keeping your long-term stats accurate.
+
+## Cleaning up leftovers
+
+The **Clean Priority Review Documents** command (quick code `clean`) is the manual counterpart of Drain, across every document tagged `#Priority Review Queue` at once: it works out which entries still have something due and removes the rest after you confirm, per document. It also handles any timestamped snapshot documents built by earlier versions of the plugin, and offers to delete those once no flashcard in them is due.
+
+A Priority Queue document is never deleted by it — it is emptied and refilled, not thrown away — and the same rules protect your own writing everywhere: an entry with notes written under it, an entry you typed next to, or a bullet of your own in the document is never touched, and a document holding any of these is never deleted.
+
+"Due" here means **due at any point up to the end of today**, not due at this exact second. A card you answered *Forgot* an hour ago is sitting in a learning step ten minutes out: it is not due right now, but it is coming back in this very session, and deleting its entry would take it out of the document that is meant to bring it back.
+
+![Cleaning a PRD](assets/clean-PRD.png){ width="650" }
+
+!!! note "Incremental Rems need the queue to have been opened once"
+    `INC` entries are judged against the plugin's Incremental Rem cache. If that cache has not been built yet in this session, an unbuilt cache is indistinguishable from *every incremental Rem has been reviewed* — so the command says so and leaves all `INC` entries alone. Open the queue once and run it again.
+
+---
 
 ## Best Practices
 
-* **The "Overwhelmed" Workflow:** If you wake up to 1000+ due cards, don't panic. Create a Priority Review Document for 100 items (Full KB). Review them. If you have energy left, create another. If not, you can stop knowing you tackled the most important 100 items.
-* **The "Deep Dive" Workflow:** If you want to focus specifically on one project, navigate to that folder, create a Priority Review Document (Current Document scope), and finish that queue completely before moving on.
-* **Maintain Priority Hygiene:** To ensure your Priority Review Documents accurately catch your most critical content, regularly set priorities on your key documents and flashcards. Crucially, run the "**[Priorities-for-Flashcards#maintenance-the-update-all-inherited-card-priorities-command](Priorities-for-Flashcards.md#manual-full-kb-sweep-update-all-inherited-card-priorities)**" command periodically (e.g., weekly). This updates the priority inheritance across your entire knowledge base, ensuring that every single flashcard — even those you haven't manually touched — inherits the correct priority from its parent document.
-* **Cleanup:** Get in the habit of deleting these documents after you finish the queue. They are meant to be temporary snapshots of your priorities at that specific moment. Leaving them in your collection will create unnecessary rem references to your items, cluttering the UI and making your KB heavier and slower.
+* **The daily loop:** open the popup, press **Refresh** (or trust the automatic one from your last session), press **Practice**, finish the fill. Leave the queue; the document is ready again before you are. Repeat as long as you have energy — each fill is the current top of your ranking, and each one raises your [Priority Shield](Prioritization-&-Sorting.md#priority-shield).
+* **The "Overwhelmed" workflow:** 1000+ due cards is not a problem the queue can solve by itself. A fill target of 25 or 50 on the full knowledge base is a session you can finish, and finishing it is what moves the shield.
+* **The "Deep Dive" workflow:** to focus on one project, open that document, pick it as the scope, and work through its Priority Queue until the document-scoped shield reads clear.
+* **Watch the Cooling list.** It is the list of Rems the plugin is deliberately not asking you about. If a Rem there surprises you, **Release** it.
+* **Maintain Priority Hygiene:** to make sure the Priority Queue catches your most critical content, set priorities on your key documents and flashcards, and run "**[Update all inherited Card Priorities](Priorities-for-Flashcards.md#manual-full-kb-sweep-update-all-inherited-card-priorities)**" periodically (e.g., weekly), so every flashcard — even those you haven't manually touched — inherits the correct priority from its parent document.
 
 ---
 
@@ -195,9 +356,10 @@ This section documents how the plugin distinguishes between **active**, **paused
 
 ### Key API Behaviour
 
-**`plugin.card.getAll()`** returns *all* cards in the knowledge base, regardless of state — active, due, disabled, and paused-deck cards alike. This is the call used when building the priority cache at startup.
+**`plugin.card.getAll()`** returns *all* cards in the knowledge base, regardless of state — active, due, disabled, and paused-deck cards alike. This is the call used when building the priority cache at startup, and the one read the cooling scan pays once per refresh.
 
 **`rem.getCards()`** returns the cards for a specific rem but behaves differently depending on rem state:
+
 - For a **normal rem**: returns the rem's cards as expected.
 - For a rem inside a **paused document**: returns `[]` — the SDK silently suppresses the cards. This makes `rem.getCards()` an *unreliable* source for building the full card universe; use `plugin.card.getAll()` instead.
 - For a rem with **disabled cards**: also returns `[]`.
@@ -218,7 +380,8 @@ maps `null` to `Infinity`, so a disabled card never satisfies the `<= now` condi
 |---|---|
 | **Due-card priority cache** (`card_priority/index.ts`) | Excluded — `?? Infinity` never satisfies `<= now`. Not counted in `dueCards` or `dueCardsOverdue`. |
 | **`getDueCardsWithPriorities`** | Excluded — uses the same `?? Infinity` filter to build the `remDueCardCount` map. |
-| **Priority Review Document** | Excluded — flows through `getDueCardsWithPriorities`, so they never reach the mixing loop. |
+| **Priority Queue selection** | Excluded — flows through `getDueCardsWithPriorities`, so they never reach the mixing loop. |
+| **Cooling** | A disabled card cannot be spoiled (never due) and, having no viewing after it was disabled, does not spoil. |
 | **Priority Shield (widget)** | Excluded from due count; cached `dueCards` field is always 0 for disabled cards. |
 
 #### Paused-deck cards (`nextRepetitionTime` is a valid past timestamp)
@@ -227,9 +390,9 @@ Paused cards *do* have a valid `nextRepetitionTime` in the past, so they pass th
 
 | Where | Effect on paused-deck cards |
 |---|---|
-| **Due-card priority cache** | **Included** — `nextRepetitionTime` is valid, so the `?? Infinity` filter does not exclude them. Their `CardPriorityInfo` entry enters the cache. |
-| **Priority Shield (widget)** | **Slightly inflated** — paused cards are counted in the shield's due total. The absolute-priority score (top candidate) is safe because it uses `rem.getCards()` against the shield's top-priority rem, and that rem is typically not paused. The percentile/count view may be marginally overstated. This is an accepted minor inaccuracy. |
-| **Priority Review Document** | **Filtered out** (when "Skip paused documents" is on) via the lazy `isInPausedDocument` ancestor walk inside `addCard`. High-priority items (priority ≤ threshold) bypass the filter and are always included. |
+| **Due-card priority cache** | **Included** — `nextRepetitionTime` is valid, so the `?? Infinity` filter does not exclude them. Their `CardPriorityInfo` entry enters the cache, stamped `paused` by the paused-deck scan. |
+| **Priority Shield (widget)** | Suppressed through the `paused` stamp. |
+| **Priority Queue selection** | **Filtered out** via the lazy `isInPausedDocument` ancestor walk. Rems at or below the always-keep priority (20 by default) bypass the filter and are always included. |
 
 ### Why `rem.getCards()` Is Not Used for Paused Detection
 
@@ -237,9 +400,10 @@ A paused rem returns `[]` from `rem.getCards()`, which looks identical to a disa
 
 ### Source References
 
-| File | Lines | Topic |
-|---|---|---|
-| `src/lib/card_priority/index.ts` | `~70–71` | `?? Infinity` due filter with disabled-card comment |
-| `src/lib/card_priority/index.ts` | `~427` | Same filter in `getDueCardsWithPrioritiesSlow` |
-| `src/lib/priority_review_document/index.ts` | `isInPausedDocument` helper | Ancestor-chain paused detection |
-| `src/lib/priority_review_document/index.ts` | `addCard` inner function | Lazy per-card paused check with threshold bypass |
+| File | Topic |
+|---|---|
+| `src/lib/priority_review_document/select.ts` | The selection: ranking, shield slice, mixing, and the four gates |
+| `src/lib/priority_review_document/queue_doc.ts` | The persistent document: find-or-create, refresh / drain / refill, status block, Practice route |
+| `src/lib/priority_review_document/cooling.ts` | The cooling rule, pure and fixture-tested (`npm test`) |
+| `src/lib/priority_review_document/cooling_gather.ts` | Turning cards and the tree into the facts the rule judges |
+| `src/lib/priority_review_document/clean.ts` | Drain, and the Clean command |

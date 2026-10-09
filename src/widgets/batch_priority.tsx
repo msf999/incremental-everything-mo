@@ -12,7 +12,8 @@ import {
   allIncrementalRemKey,
   allCardPriorityInfoKey
 } from '../lib/consts';
-import { CARD_PRIORITY_CODE, PRIORITY_SLOT, SOURCE_SLOT, CardPriorityInfo } from '../lib/card_priority/types';
+import { CARD_PRIORITY_CODE, SOURCE_SLOT, CardPriorityInfo } from '../lib/card_priority/types';
+import { getRawCardPriorityString } from '../lib/card_priority/slot_access';
 import { updateCardPriorityCache } from '../lib/card_priority/cache';
 import { setCardPriority } from '../lib/card_priority';
 import { IncrementalRem, ActionItemType } from '../lib/incremental_rem';
@@ -214,7 +215,7 @@ function BatchPriority() {
               if (sourceStr === 'manual' || sourceStr === 'incremental') {
                 hasValidCardPriority = true;
                 cardPrioritySource = sourceStr;
-                const priorityStr = await rem.getPowerupProperty(CARD_PRIORITY_CODE, PRIORITY_SLOT);
+                const priorityStr = await getRawCardPriorityString(rem);
                 currentCardPriority = parseInt(priorityStr);
                 if (isNaN(currentCardPriority)) currentCardPriority = 50;
               }
@@ -567,7 +568,9 @@ function BatchPriority() {
 
         if (remData.hasIncRem && remData.newIncPriority !== null) {
           console.log(`   - Updating IncRem ${i + 1}/${toUpdate.length}: ${remData.name} to priority ${remData.newIncPriority}`);
-          await setIncRemPriority(plugin, remData.rem, remData.newIncPriority);
+          await setIncRemPriority(plugin, remData.rem, remData.newIncPriority, {
+            event: 'batch',
+          });
         }
 
         if (remData.hasCardPriority && remData.newCardPriority !== null) {
@@ -575,7 +578,9 @@ function BatchPriority() {
           const source = (remData.cardPrioritySource === 'incremental' || remData.cardPrioritySource === 'manual')
             ? remData.cardPrioritySource
             : 'manual';
-          await setCardPriority(plugin, remData.rem, remData.newCardPriority, source as any);
+          await setCardPriority(plugin, remData.rem, remData.newCardPriority, source as any, false, {
+            event: 'batch',
+          });
         }
 
         // Only update the progress bar every 10% (or on the last item) to avoid re-renders

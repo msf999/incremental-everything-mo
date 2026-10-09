@@ -1,3 +1,4 @@
+import { CoolingCache, shieldExclusionIds } from '../lib/priority_review_document/cooling_store';
 import {
   renderWidget,
   usePlugin,
@@ -14,22 +15,32 @@ import {
   displayWeightedShieldId,
   cardPriorityCacheRefreshKey,
   seenCardInSessionKey,
+  coolingCacheKey,
   priorityCalcScopeRemIdsKey,
   incrementalQueueActiveKey,
   displayFsrsDsrId,
   fsrsWeightsId,
+  fsrsRequestedRetentionId,
 } from '../lib/consts';
 import {
   CardPriorityInfo,
   QueueSessionCache,
   expandCardInfosToCards,
+  isPerCardDue,
   getCardPriority,
+  PerCardShieldItem,
 } from '../lib/card_priority';
 import { getPendingCacheUpdate } from '../lib/card_priority/cache';
+import { reportCardInfoBarHeight } from '../lib/card_info_bar_dock';
 import { PERFORMANCE_MODE_LIGHT, calculateVolumeBasedPercentile, calculateWeightedShield, formatStabilityDays, getRetrievabilityColor, percentileToHslColor } from '../lib/utils';
 import { getEffectivePerformanceMode } from '../lib/mobileUtils';
 import { PriorityBadge, WeightedShieldTooltip } from '../components';
-import { computeFSRSState, parseWeightsString, FSRSState } from '../lib/fsrs';
+import {
+  computeFSRSState,
+  parseWeightsString,
+  FSRSState,
+  DEFAULT_REQUESTED_RETENTION,
+} from '../lib/fsrs';
 import * as _ from 'remeda';
 import { useIESetting } from '../lib/settings';
 
@@ -47,48 +58,79 @@ type ShieldStatus = {
  * Compute the shield status using pre-filtered session cache data.
  * Falls back to the main cache only when percentiles are missing.
  */
+/**
+ * The per-CARD universe the saved shield ranks, built once per cache version.
+ * The live shield used to rank Rems-with-cards while the history saved at queue
+ * exit ranks cards (see shield_history.ts), so the same shield read P9 · 8.2%
+ * live and P9 · 7.3% saved. Keyed by the cache array's identity: a new cache
+ * write is a new array, so the expansion never goes stale.
+ */
+const perCardUniverseCache = new WeakMap<object, PerCardShieldItem[]>();
+function perCardUniverse(infos: CardPriorityInfo[]): PerCardShieldItem[] {
+  let universe = perCardUniverseCache.get(infos);
+  if (!universe) {
+    universe = expandCardInfosToCards(infos);
+    perCardUniverseCache.set(infos, universe);
+  }
+  return universe;
+}
+
 function computeShieldStatus(
   remId: string | undefined,
   sessionCache: QueueSessionCache | null,
   allPrioritizedCardInfo: CardPriorityInfo[] | null | undefined,
   seenRemIds: string[],
-  scopeRemIds: string[] | null | undefined
+  scopeRemIds: string[] | null | undefined,
+  coolingRemIds: ReadonlySet<string> = new Set()
 ): ShieldStatus {
   if (!remId || !sessionCache) return null;
 
+  // A cooling Rem (priority_review_document/cooling.ts) cannot set the shield:
+  // its sibling was reviewed recently, so it is deliberately not being asked.
   const filterUnreviewed = (list: CardPriorityInfo[]) =>
-    list.filter((info) => !seenRemIds.includes(info.remId) || info.remId === remId);
+    list.filter(
+      (info) =>
+        (!seenRemIds.includes(info.remId) && !coolingRemIds.has(info.remId)) || info.remId === remId
+    );
 
   // Use the overdue lists (start-of-today criterion) for the shield.
   // Falls back to [] when the session cache pre-dates this feature.
   const topMissedInKb = _.minBy(filterUnreviewed(sessionCache.overdueCardsInKB ?? []), (info) => info.priority);
   const topMissedInDoc = _.minBy(filterUnreviewed(sessionCache.overdueCardsInScope ?? []), (info) => info.priority);
 
-  // Predicate for percentile calculation also uses the start-of-today boundary.
-  const predicate = (info: CardPriorityInfo) =>
-    (info.dueCardsOverdue ?? 0) > 0 && (!seenRemIds.includes(info.remId) || info.remId === remId);
+  // Percentile over CARDS, with exactly the saved shield's test (QueueExit →
+  // calculateShieldStatus): a card is still pending when it was due by the start
+  // of today and its Rem has not been reviewed this session (the Rem on screen
+  // always counts, as in the pick above). Cooling decides which Rem sets the
+  // shield, not how the ranking counts — same as the saved one.
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const startOfTodayMs = startOfToday.getTime();
+  const seenSet = new Set(seenRemIds);
+  const perCardPending = (item: PerCardShieldItem) =>
+    isPerCardDue(item, startOfTodayMs) && (!seenSet.has(item.remId) || item.remId === remId);
 
   let kbPercentile: number | undefined;
   if (topMissedInKb && allPrioritizedCardInfo) {
     kbPercentile = calculateVolumeBasedPercentile(
-      allPrioritizedCardInfo,
+      perCardUniverse(allPrioritizedCardInfo),
       topMissedInKb.priority,
-      predicate
+      perCardPending
     );
-    // console.log(`[CardShield] KB Shield: priority ${topMissedInKb.priority}, percentile ${kbPercentile}%, triggered by remId: ${topMissedInKb.remId}`);
+
   }
 
   let docPercentile: number | undefined;
   if (topMissedInDoc && allPrioritizedCardInfo && scopeRemIds) {
     const scopeSet = new Set(scopeRemIds);
-    const allCardsInScope = allPrioritizedCardInfo.filter(c => scopeSet.has(c.remId));
-    if (allCardsInScope.length > 0) {
+    const cardsInScope = perCardUniverse(allPrioritizedCardInfo).filter((c) => scopeSet.has(c.remId));
+    if (cardsInScope.length > 0) {
       docPercentile = calculateVolumeBasedPercentile(
-        allCardsInScope,
+        cardsInScope,
         topMissedInDoc.priority,
-        predicate
+        perCardPending
       );
-      // console.log(`[CardShield] Doc Shield: priority ${topMissedInDoc.priority}, percentile ${docPercentile}%, triggered by remId: ${topMissedInDoc.remId}`);
+
     }
   }
 
@@ -138,6 +180,17 @@ export function CardInfoBar() {
     (rp) => rp.storage.getSession<string[]>(seenCardInSessionKey),
     [refreshSignal]
   ) ?? [];
+
+  // Rems cooling as of the last cooling scan (published at QueueExit and on
+  // every Priority Queue refresh). Read from the session cache only — no scan
+  // runs on this path — and self-expiring, since each verdict carries its end.
+  const coolingCache = useTrackerPlugin(
+    (rp) => rp.storage.getSession<CoolingCache>(coolingCacheKey),
+    []
+  );
+  // Cooling Rems AND Rems held back by a cooling ancestor: neither can be
+  // practised now, so neither may set the live shield.
+  const coolingRemIds = React.useMemo(() => shieldExclusionIds(coolingCache), [coolingCache]);
 
   // Inside a Card Cluster, RemNote keeps this FlashcardUnder widget mounted across all
   // sibling cards and `getWidgetContext().remId` stays pinned to the cluster parent.
@@ -252,6 +305,9 @@ export function CardInfoBar() {
 
   const fsrsWeightsRaw = useIESetting(fsrsWeightsId);
 
+  // Stored as a percentage for the settings UI; FSRS wants a 0–1 probability.
+  const requestedRetentionPct = useIESetting(fsrsRequestedRetentionId);
+
   // --- Fetch card repetition history ---
   const cardRepData = useTrackerPlugin(async (rp) => {
     const cardId = currentIds.cardId;
@@ -338,8 +394,73 @@ export function CardInfoBar() {
   const fsrsState: FSRSState | null = useMemo(() => {
     if (!showFsrsDsr || !cardRepData?.history || cardRepData.history.length === 0) return null;
     const weights = parseWeightsString(fsrsWeightsRaw);
-    return computeFSRSState(cardRepData.history, weights);
-  }, [showFsrsDsr, cardRepData?.history, fsrsWeightsRaw]);
+    const retention = Number.isFinite(requestedRetentionPct)
+      ? requestedRetentionPct / 100
+      : DEFAULT_REQUESTED_RETENTION;
+    return computeFSRSState(cardRepData.history, weights, retention);
+  }, [showFsrsDsr, cardRepData?.history, fsrsWeightsRaw, requestedRetentionPct]);
+
+  /**
+   * At the 90% default the interval equals the stability, so the U-Factor has a
+   * single value and the extra parenthesised figure would be noise. Off the
+   * default the two diverge and both are worth showing.
+   */
+  const usesCustomRetention =
+    !!fsrsState && Math.abs(fsrsState.requestedRetention - DEFAULT_REQUESTED_RETENTION) > 1e-6;
+
+  // Built here rather than inline in the JSX: three multi-line tooltips that all
+  // restate the same stability/interval relationship.
+  const fsrsTooltips = useMemo(() => {
+    if (!fsrsState) return null;
+    const fmt = formatStabilityDays;
+    const retentionPct = (fsrsState.requestedRetention * 100).toFixed(1).replace(/\.0$/, '');
+    const intervalNote = usesCustomRetention
+      ? `You review at ${retentionPct}% requested retention, so the interval you actually get is ` +
+        `${fsrsState.intervalFactor.toFixed(2)}× the stability — a Good rating schedules ` +
+        `${fmt(fsrsState.nextInterval.good)}, not ${fmt(fsrsState.nextS.good)}. That is the ` +
+        `"int." figure shown after the arrow.`
+      : `At the default 90% requested retention the interval equals the stability, so a Good ` +
+        `rating schedules ${fmt(fsrsState.nextInterval.good)}.`;
+
+    const dsr =
+      `FSRS v6 — Difficulty: how hard this card is to remember (1=easy, 10=hard).\n` +
+      `Stability: expected interval in days at 90% retention.\n` +
+      `Retrievability: probability of recall right now.\n\n` +
+      `The number inside the parenthesis after Stability tells you how much time has passed ` +
+      `since your last review of this card. The arrow points to the stability a Good rating ` +
+      `would leave it with.\n\n` +
+      `${intervalNote}\n\n` +
+      `Based on ${fsrsState.reviewCount} reviews.\n\n` +
+      `Next Difficulty:\nAgain: ${fsrsState.nextD.again.toFixed(2)}\nHard: ${fsrsState.nextD.hard.toFixed(2)}\n` +
+      `Good: ${fsrsState.nextD.good.toFixed(2)}\nEasy: ${fsrsState.nextD.easy.toFixed(2)}`;
+
+    const sInc =
+      `SInc (Stability Increase) — how much your memory stability grows after answering.\n\n` +
+      `Hard: ×${fsrsState.sInc.hard.toFixed(2)} → ${fmt(fsrsState.nextS.hard)}\n` +
+      `Good: ×${fsrsState.sInc.good.toFixed(2)} → ${fmt(fsrsState.nextS.good)}\n` +
+      `Easy: ×${fsrsState.sInc.easy.toFixed(2)} → ${fmt(fsrsState.nextS.easy)}\n\n` +
+      `Higher = faster learning. A value of 1.0 means no growth.`;
+
+    const uFactorRow = (grade: 'hard' | 'good' | 'easy', label: string) =>
+      `${label}: ×${fsrsState.uFactor[grade].toFixed(2)} → ${fmt(fsrsState.nextInterval[grade])}` +
+      (usesCustomRetention
+        ? ` (×${fsrsState.uFactorAtDefaultRetention[grade].toFixed(2)} → ${fmt(fsrsState.nextS[grade])} at 90%)`
+        : '');
+
+    const uFactor =
+      `U-Factor (Used-Interval Increase) — how much the new interval grows compared to the ` +
+      `interval you actually used (time since last review: ${fmt(fsrsState.daysSinceLastReview)}).\n\n` +
+      `${uFactorRow('hard', 'Hard')}\n${uFactorRow('good', 'Good')}\n${uFactorRow('easy', 'Easy')}\n\n` +
+      (usesCustomRetention
+        ? `The first value is what you will really get at ${retentionPct}% retention; the value in ` +
+          `parentheses is what it would be at the 90% default, where the interval equals the ` +
+          `stability.\n\n`
+        : '') +
+      `Higher = a bigger jump in scheduling. A value of 1.0 means the new interval equals the ` +
+      `interval you just used.`;
+
+    return { dsr, sInc, uFactor };
+  }, [fsrsState, usesCustomRetention]);
 
 
   // --- 🔌 CACHE-BASED PATH (Full Mode) ---
@@ -381,8 +502,8 @@ export function CardInfoBar() {
   // --- REWRITTEN: The Shield calculation is now ultra-fast ---
   const shieldStatus = useMemo(() => {
     if (useLightMode || !rem || !sessionCache) return null;
-    return computeShieldStatus(rem._id, sessionCache, allPrioritizedCardInfo, seenCardIds, scopeRemIds);
-  }, [rem, sessionCache, useLightMode, allPrioritizedCardInfo, seenCardIds, scopeRemIds]);
+    return computeShieldStatus(rem._id, sessionCache, allPrioritizedCardInfo, seenCardIds, scopeRemIds, coolingRemIds);
+  }, [rem, sessionCache, useLightMode, allPrioritizedCardInfo, seenCardIds, scopeRemIds, coolingRemIds]);
 
   // --- Weighted Shield: per-CARD bucketing (matches Card Priority × Memory
   // Analytics). Expand each CardPriorityInfo into one item per card and use
@@ -390,8 +511,8 @@ export function CardInfoBar() {
   // card of this rem is due → the rem is due".
   const seenCardSet = useMemo(() => new Set(seenCardIds), [seenCardIds]);
   const weightedIsDuePredicate = useCallback(
-    (item: { remId: string; nextRepetitionTime?: number | null }) => {
-      const due = (item.nextRepetitionTime ?? Infinity) <= Date.now();
+    (item: { remId: string; nextRepetitionTime?: number | null; paused?: boolean }) => {
+      const due = isPerCardDue(item, Date.now());
       // Same "current rem still counts as due" override as before so the
       // value doesn't tick up the moment you grade the card you're seeing.
       return due && (!seenCardSet.has(item.remId) || item.remId === rem?._id);
@@ -462,8 +583,26 @@ export function CardInfoBar() {
     setStatsSepVisible(sameRow);
   }); // No deps — runs after every render so it catches the first render where refs are populated
 
+  // Report the bar's height so the Beautiful queue can reserve exactly that much
+  // room above the answer buttons (lib/card_info_bar_dock). 0 while it renders nothing.
+  const rendersBar = !!(rem && finalCardInfo && !isIncrementalQueueActive);
+  const barObserverRef = React.useRef<ResizeObserver | null>(null);
+  const barRef = React.useCallback((el: HTMLDivElement | null) => {
+    barObserverRef.current?.disconnect();
+    barObserverRef.current = null;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      void reportCardInfoBarHeight(plugin, el.offsetHeight);
+    });
+    observer.observe(el);
+    barObserverRef.current = observer;
+  }, [plugin]);
+  React.useEffect(() => {
+    if (!rendersBar) void reportCardInfoBarHeight(plugin, 0);
+  }, [plugin, rendersBar]);
+
   // Check isIncrementalQueueActive
-  if (!rem || !finalCardInfo || isIncrementalQueueActive) {
+  if (!rendersBar) {
     // console.log('[CardInfoBar] Early return — rem:', !!rem, ', finalCardInfo:', !!finalCardInfo,
     //   ', isIncrementalQueueActive:', isIncrementalQueueActive,
     //   ', cardInfo:', !!cardInfo, ', lightCardInfo:', !!lightCardInfo,
@@ -504,7 +643,9 @@ export function CardInfoBar() {
   };
 
   return (
-    <div style={{ paddingTop: '30px', paddingBottom: '10px' }}>
+    // No vertical padding here: the spacing from the card above is host CSS
+    // (lib/card_info_bar_dock), so the docked bar in the Beautiful queue has none.
+    <div ref={barRef}>
       <div
         className="flex items-center justify-center gap-3 px-3 py-1.5"
         style={{
@@ -644,31 +785,39 @@ export function CardInfoBar() {
                 <strong>{historyStats.reps}</strong> Reps <span style={{ color: '#ef4444' }}>({historyStats.lapses})</span>, ⏳ <strong>{historyStats.totalMinutes}</strong> min, <strong>{historyStats.cardAgeText}</strong> age{historyStats.costText && <>, 💰 <strong>{historyStats.costText}</strong></>}
               </span>
 
-              {showFsrsDsr && fsrsState && (
+              {showFsrsDsr && fsrsState && fsrsTooltips && (
                 <>
                   <span style={{ opacity: 0.4 }}>|</span>
-                  <span title={`FSRS v6 — Difficulty: how hard this card is to remember (1=easy, 10=hard).\nStability: expected interval in days at target retention.\nRetrievability: probability of recall right now.\n\nThe number inside the parenthesis after Stability tells you how much time has passed since your last review of this card.\n\nBased on ${fsrsState.reviewCount} reviews.\n\nNext Difficulty:\nAgain: ${fsrsState.nextD.again.toFixed(2)}\nHard: ${fsrsState.nextD.hard.toFixed(2)}\nGood: ${fsrsState.nextD.good.toFixed(2)}\nEasy: ${fsrsState.nextD.easy.toFixed(2)}`}>
+                  <span title={fsrsTooltips.dsr} style={{ cursor: 'help' }}>
                     D: <strong>{fsrsState.d.toFixed(2)}</strong>
                     {' · '}
                     S: <strong>{formatStabilityDays(fsrsState.s)}</strong> ({formatStabilityDays(fsrsState.daysSinceLastReview)} passed)
+                    {' → '}
+                    <strong>{formatStabilityDays(fsrsState.nextS.good)}</strong>
+                    {/* Off the 90% default the stability is no longer the interval
+                        that gets scheduled, so the real one is spelled out. */}
+                    {usesCustomRetention && (
+                      <> (int. <strong>{formatStabilityDays(fsrsState.nextInterval.good)}</strong>)</>
+                    )}
                     {' · '}
                     R: <strong style={{ color: getRetrievabilityColor(fsrsState.r) }}>
                       {(fsrsState.r * 100).toFixed(1)}%
                     </strong>
                   </span>
                   {' · '}
-                  <span title={`SInc (Stability Increase) — how much your memory stability grows after answering.\n\nHard: ×${fsrsState.sInc.hard.toFixed(2)} → ${formatStabilityDays(fsrsState.s * fsrsState.sInc.hard)}\nGood: ×${fsrsState.sInc.good.toFixed(2)} → ${formatStabilityDays(fsrsState.s * fsrsState.sInc.good)}\nEasy: ×${fsrsState.sInc.easy.toFixed(2)} → ${formatStabilityDays(fsrsState.s * fsrsState.sInc.easy)}\n\nHigher = faster learning. A value of 1.0 means no growth.`}
-                    style={{ cursor: 'help' }}
-                  >
+                  <span title={fsrsTooltips.sInc} style={{ cursor: 'help' }}>
                     SInc: <strong>{fsrsState.sInc.good.toFixed(2)}×</strong>
                   </span>
                   {fsrsState.uFactor.good > 0 && (
                     <>
                       {' · '}
-                      <span title={`U-Factor (Used-Interval Increase) — how much the new interval grows compared to the interval you actually used (time since last review: ${formatStabilityDays(fsrsState.daysSinceLastReview)}).\n\nHard: ×${fsrsState.uFactor.hard.toFixed(2)} → ${formatStabilityDays(fsrsState.s * fsrsState.sInc.hard)}\nGood: ×${fsrsState.uFactor.good.toFixed(2)} → ${formatStabilityDays(fsrsState.s * fsrsState.sInc.good)}\nEasy: ×${fsrsState.uFactor.easy.toFixed(2)} → ${formatStabilityDays(fsrsState.s * fsrsState.sInc.easy)}\n\nHigher = a bigger jump in scheduling. A value of 1.0 means the new interval equals the interval you just used.`}
-                        style={{ cursor: 'help' }}
-                      >
+                      <span title={fsrsTooltips.uFactor} style={{ cursor: 'help' }}>
                         U-Factor: <strong>{fsrsState.uFactor.good.toFixed(2)}×</strong>
+                        {/* Off the 90% default the interval no longer equals the
+                            stability, so the textbook figure is shown alongside. */}
+                        {usesCustomRetention && (
+                          <> ({fsrsState.uFactorAtDefaultRetention.good.toFixed(2)}×)</>
+                        )}
                       </span>
                     </>
                   )}

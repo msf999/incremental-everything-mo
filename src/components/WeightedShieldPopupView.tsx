@@ -1,10 +1,14 @@
 import { usePlugin } from '@remnote/plugin-sdk';
+import { doneBarColor, isBarFull } from '../lib/ui_helpers';
 import React from 'react';
 import { WeightedShieldBreakdown } from '../lib/utils';
 import { currentSubQueueIdKey } from '../lib/consts';
 import { getMonthlyBestAbsolutePriorityShield } from '../lib/shield_history';
 import { CardMemoryAnalyticsView } from './CardMemoryAnalyticsView';
+import { SuppressedCardsView } from './SuppressedCardsView';
 import { FSRSCalibrationView } from './FSRSCalibrationView';
+import { OddsUniverse, SelectionOddsPanel } from './SelectionOddsPanel';
+import { IE_DOCS_BASE_URL } from '../lib/settings';
 
 interface MonthlyBests {
   kbIncRem: number | null;
@@ -258,12 +262,8 @@ function MiniBar({ processedPct }: { processedPct: number }) {
       <div style={{
         width: `${processedPct}%`,
         height: '100%',
-        borderRadius: processedPct >= 100 ? '4px' : '4px 0 0 4px',
-        background: processedPct >= 100
-          ? '#22c55e'
-          : processedPct >= 50
-            ? '#eab308'
-            : '#ef4444',
+        borderRadius: isBarFull(processedPct) ? '4px' : '4px 0 0 4px',
+        background: doneBarColor(processedPct),
         transition: 'width 0.3s ease',
       }} />
     </div>
@@ -415,7 +415,56 @@ function BreakdownSection({
   );
 }
 
-type TabId = 'shield' | 'cardMemory' | 'fsrsCalibration';
+type TabId = 'shield' | 'cardMemory' | 'suppressed' | 'fsrsCalibration';
+
+/** Docs section for each tab, relative to IE_DOCS_BASE_URL. */
+const TAB_DOCS_PATHS: Record<TabId, string> = {
+  shield: 'Prioritization-%26-Sorting/#weighted-shield',
+  cardMemory: 'Prioritization-%26-Sorting/#card-memory-analytics',
+  suppressed: 'Prioritization-%26-Sorting/#suppressed-cards',
+  fsrsCalibration: 'Prioritization-%26-Sorting/#fsrs-calibration',
+};
+
+/**
+ * Opens a docs section. `window.open` is blocked in some embedded contexts, so
+ * fall back to a synthesised anchor click — same helper shape as the IE
+ * Settings popup.
+ */
+const openDocs = (path: string) => {
+  const url = `${IE_DOCS_BASE_URL}${path}`;
+  const opened = window.open(url, '_blank');
+  if (!opened || opened.closed) {
+    const link = document.createElement('a');
+    link.href = url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(() => document.body.removeChild(link), 100);
+  }
+};
+
+const DocsButton = ({ tab }: { tab: TabId }) => (
+  <button
+    type="button"
+    onClick={() => openDocs(TAB_DOCS_PATHS[tab])}
+    title="Open the documentation for this view"
+    className="rounded-full w-6 h-6 flex items-center justify-center hover:opacity-75"
+    style={{
+      marginLeft: 'auto',
+      alignSelf: 'center',
+      flexShrink: 0,
+      border: '1px solid var(--rn-clr-border-opaque, rgba(128,128,128,0.3))',
+      color: 'var(--rn-clr-content-secondary)',
+      background: 'transparent',
+      cursor: 'pointer',
+      fontSize: '13px',
+      fontWeight: 400,
+    }}
+  >
+    ?
+  </button>
+);
 
 export function WeightedShieldPopup() {
   const plugin = usePlugin();
@@ -466,6 +515,40 @@ export function WeightedShieldPopup() {
   // narrow popup is shown when only one group exists — no tabs there.
   const showTabs = hasGroups && ctx.groups!.length >= 2;
 
+  // Universes offered to the Queue Selection Odds panel: every (item type ×
+  // scope) pair that actually has a breakdown, in the order they're displayed.
+  const oddsUniverses: OddsUniverse[] = [];
+  const pushUniverse = (
+    breakdown: WeightedShieldBreakdown | null | undefined,
+    label: string,
+    kind: 'incRem' | 'card',
+    scope: 'kb' | 'doc'
+  ) => {
+    if (!breakdown?.sortedItems || breakdown.sortedItems.length === 0) return;
+    oddsUniverses.push({
+      key: `${kind}-${scope}`,
+      label,
+      kind,
+      scope,
+      sortedItems: breakdown.sortedItems,
+    });
+  };
+  const kindOf = (label: string): 'incRem' | 'card' =>
+    label.toLowerCase() === 'cards' ? 'card' : 'incRem';
+  const iconOf = (kind: 'incRem' | 'card') => (kind === 'card' ? '🃏' : '📘');
+  if (hasGroups) {
+    for (const group of ctx.groups!) {
+      const kind = kindOf(group.itemLabel);
+      pushUniverse(group.kb, `${iconOf(kind)} ${group.title} · 🌐 Knowledge Base`, kind, 'kb');
+      pushUniverse(group.doc, `${iconOf(kind)} ${group.title} · 📄 Document Scope`, kind, 'doc');
+    }
+  } else if (ctx.kbBreakdown) {
+    const kind = kindOf(itemLabel);
+    const title = kind === 'card' ? 'Cards' : 'Incremental Rems';
+    pushUniverse(ctx.kbBreakdown, `${iconOf(kind)} ${title} · 🌐 Knowledge Base`, kind, 'kb');
+    pushUniverse(ctx.docBreakdown, `${iconOf(kind)} ${title} · 📄 Document Scope`, kind, 'doc');
+  }
+
   const tabBtnStyle = (active: boolean): React.CSSProperties => ({
     padding: '8px 14px',
     fontSize: '12px',
@@ -505,14 +588,20 @@ export function WeightedShieldPopup() {
           <button type="button" role="tab" aria-selected={tab === 'cardMemory'} style={tabBtnStyle(tab === 'cardMemory')} onClick={() => setTab('cardMemory')}>
             🃏 Card Priority × Memory Analytics
           </button>
+          <button type="button" role="tab" aria-selected={tab === 'suppressed'} style={tabBtnStyle(tab === 'suppressed')} onClick={() => setTab('suppressed')}>
+            🚫 Suppressed Cards
+          </button>
           <button type="button" role="tab" aria-selected={tab === 'fsrsCalibration'} style={tabBtnStyle(tab === 'fsrsCalibration')} onClick={() => setTab('fsrsCalibration')}>
             🎯 FSRS Calibration
           </button>
+          <DocsButton tab={tab} />
         </div>
       )}
 
       {showTabs && tab === 'cardMemory' ? (
         <CardMemoryAnalyticsView />
+      ) : showTabs && tab === 'suppressed' ? (
+        <SuppressedCardsView />
       ) : showTabs && tab === 'fsrsCalibration' ? (
         <FSRSCalibrationView />
       ) : (
@@ -528,6 +617,7 @@ export function WeightedShieldPopup() {
               gap: '8px',
             }}>
               <span>⚖️ Weighted Shield Breakdown</span>
+              <DocsButton tab="shield" />
             </div>
           )}
 
@@ -655,6 +745,10 @@ export function WeightedShieldPopup() {
             <div style={{ padding: '12px', color: 'var(--rn-clr-content-tertiary)', textAlign: 'center' }}>
               No prioritized items found.
             </div>
+          )}
+
+          {oddsUniverses.length > 0 && (
+            <SelectionOddsPanel universes={oddsUniverses} compact={!showTabs} />
           )}
         </>
       )}

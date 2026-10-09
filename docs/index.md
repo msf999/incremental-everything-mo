@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="assets/inc-logo.png" width="400" alt="Incremental Everything Logo" />
+  <img src="assets/inc-logo-2.jpeg" width="400" alt="Incremental RemNote Logo" />
 </p>
 
 > **Review notes, PDFs, Youtube videos and web articles incrementally alongside your flashcards, and tackle overload by prioritizing your learning.**
 
-Welcome to the official **User's Manual** for the **Incremental Everything plugin** for RemNote!
+Welcome to the official **User's Manual** for the **Incremental RemNote plugin** for RemNote!
 
 This Wiki is your comprehensive guide to mastering a powerful learning technique inspired by SuperMemo's Incremental Reading. Whether you want to read books and articles in parallel, watch videos incrementally, or manage your writing projects more effectively, this plugin allows you to seamlessly interleave all of your learning material directly into your daily flashcard queue.
 
@@ -15,10 +15,10 @@ ___
 ### 🎥 Videos about the basics
 
 - **Introductory Videos**: 
-  * [Incremental Reading Web Pages in RemNote](https://youtu.be/eXRlfCTOQNw)
-  * [Incremental Reading in RemNote](https://youtu.be/SL7wjgntrbg)
+    * [Incremental Reading Web Pages in RemNote](https://youtu.be/eXRlfCTOQNw)
+    * [Incremental Reading in RemNote](https://youtu.be/SL7wjgntrbg)
 
-- **Priorities Playlist**: [Prioritization in Incremental Everything](https://www.youtube.com/playlist?list=PLpmcfTqNVuo9DWjeIrMZZfG140kOZD8Tl) – Covers setting priorities, inheritance, the Priority Shield, creating Priority Review Documents, and how to use prioritization to manage information overload.  
+- **Priorities Playlist**: [Prioritization in Incremental RemNote](https://www.youtube.com/playlist?list=PLpmcfTqNVuo9DWjeIrMZZfG140kOZD8Tl) – Covers setting priorities, inheritance, the Priority Shield, creating Priority Review Documents, and how to use prioritization to manage information overload.  
 
 - **What is Incremental Reading?**: [Incremental Journey - Incremental Reading in Simple Terms](https://youtu.be/V4xEziM8mco)
 
@@ -28,7 +28,7 @@ See the latest changes and improvements in our [Changelog](Changelog.md).
 
 ---
 
-# 🚀 Incremental Everything: Your Complete Learning System is Here
+# 🚀 Incremental RemNote: Your Complete Learning System is Here
 
 **TL;DR:** The plugin now delivers a complete learning workflow from first encounter with material to lifetime retention, with robust prioritization to handle information overload. Works seamlessly on mobile too!
 
@@ -36,25 +36,28 @@ See the latest changes and improvements in our [Changelog](Changelog.md).
 
 Hey RemNote community! 👋
 
-I'm excited to share that **Incremental Everything (Plus)** has reached a major milestone. Since implementing flashcard priorities in v0.2.0, I've been focused on completing the missing pieces of the learning puzzle. The result? A comprehensive system that handles the entire learning lifecycle while giving you the tools to manage the inevitable information overflow.
+I'm excited to share that **Incremental RemNote** has reached a major milestone. Since implementing flashcard priorities in v0.2.0, I've been focused on completing the missing pieces of the learning puzzle. The result? A comprehensive system that handles the entire learning lifecycle while giving you the tools to manage the inevitable information overflow.
 
 ## 🎯 What Makes This Complete Now?
 
 ### The Full Learning Flow
 
 **1. First Contact → Acquisition (Incremental Reading)**
+
 - Import PDFs, articles, and reading material into your queue
 - Read actively using page-by-page control with rem-specific progress tracking
 - Extract insights and create flashcards as you read
 - Priority system ensures you process your most important material first
 
 **2. Active Processing → Understanding (Mixed Review)**
+
 - Alternate between passive reading (IncRems) and active recall (flashcards) in a single session
 - **[Priority Review Documents](Priority-Review-Document.md)** let you create custom study sessions mixing both types
 - Study your top 50-100 priority items when facing thousands of due cards
 - Everything sorted by priority, not just chronologically
 
 **3. Long-term → Mastery (Spaced Repetition)**
+
 - Flashcards inherit priorities from their parent notes
 - High-priority cards get preferential review scheduling (through the [Priority Review Document](Priority-Review-Document.md))
 - **[Priority Shields](Prioritization-&-Sorting.md#priority-shield)** track whether you're keeping up with critical material
@@ -62,7 +65,7 @@ I'm excited to share that **Incremental Everything (Plus)** has reached a major 
 
 ### The Prioritization Solution
 
-Here's the reality of serious learning: **you will always have more to learn than time available**. Traditional SRS systems ignore this, treating all due cards equally. Incremental Everything embraces it:
+Here's the reality of serious learning: **you will always have more to learn than time available**. Traditional SRS systems ignore this, treating all due cards equally. Incremental RemNote embraces it:
 
 - **Dual Priority Systems**: Separate priorities for reading material (IncRems) and [flashcards](Priorities-for-Flashcards.md)
 - **[Inheritance by Default](Prioritization-&-Sorting.md#priority-inheritance-system)**: Child cards inherit priorities from parent notes automatically
@@ -74,7 +77,7 @@ Here's the reality of serious learning: **you will always have more to learn tha
 
 The breakthrough feature is **[Priority Review Documents](Priority-Review-Document.md)**. When you have 5,000 due cards:
 
-1. Press `Opt+Shift+R` (Mac) / `Alt+Shift+R` (Windows/Linux)
+1. Press `Opt+Shift+L` (Mac) / `Alt+Shift+L` (Windows/Linux)
 2. Select your scope (document/folder or full KB)
 3. Choose item count (e.g., 100) and flashcard/IncRem ratio (e.g., 6:1)
 4. Review a manageable session of your **highest-priority** items
@@ -85,6 +88,7 @@ The priority shield graphs show you exactly how well you're keeping up with impo
 ## 📱 Now Mobile-Ready!
 
 **v0.2.9** adds automatic Light Mode switching for iOS/Android:
+
 - Prevents mobile crashes from resource-intensive features
 - Auto-detects your device and adjusts performance mode
 - Desktop still gets full feature set
@@ -93,11 +97,13 @@ The priority shield graphs show you exactly how well you're keeping up with impo
 ## 🎨 [Performance Modes](Full-Mode-x-Light-Mode.md)
 
 **Light Mode** (default, recommended for web/mobile):
+
 - Manual priority tools for flashcards
 - Fast, stable performance
 - Essential features only
 
 **Full Mode** (Desktop App recommended):
+
 - Automatic priority inheritance and caching
 - Relative priority percentiles
 - Priority shield tracking with universe size
@@ -107,12 +113,14 @@ The priority shield graphs show you exactly how well you're keeping up with impo
 ## 💡 Why This Matters for SRS Enthusiasts
 
 If you're familiar with Anki or any SRS system (except SuperMemo), you know the pain:
+
 - **Queue explosion** when life gets busy
 - **All-or-nothing** review sessions
 - **No way to triage** when overwhelmed
 - **Guilt** over skipped reviews
 
-Incremental Everything solves this by:
+Incremental RemNote solves this by:
+
 - ✅ **Guaranteeing** high-priority items get reviewed
 - ✅ **Mixing** acquisition and retention in one flow
 - ✅ **Tracking** your capacity with [priority shields](Prioritization-&-Sorting.md#priority-shield)
@@ -139,7 +147,7 @@ The minimum cost comes from intelligent prioritization—you spend your limited 
 
 ## 🚀 Getting Started
 
-1. Install **Incremental Everything (Plus)** from RemNote plugin library
+1. Install **Incremental RemNote** from RemNote plugin library
 2. Tag any rem with `#Incremental` (using [Alt+X or Alt+Shift+X](Keyboard-Shortcuts.md#core-commands)) to add it to your reading queue
 3. [Set priorities](Prioritization-&-Sorting.md#main-priority-popup) ([Alt+P](Keyboard-Shortcuts.md#priority-commands)) on important material
 4. Enter queue and [start reviewing](Reviewing-Items-in-the-Queue.md)
@@ -153,11 +161,17 @@ The workflow is designed to grow with you—start simple, add complexity as need
 ## 🙏 Feedback Welcome
 
 This represents months of iteration to build a complete learning system. I'd love to hear from the community:
+
 - What workflows are you using?
 - What features would enhance your process?
 - How are you handling information overload?
 
 The goal is to make RemNote the ultimate tool for serious, long-term learners. Let me know what you think!
+
+**Where to reach us:**
+
+- **[GitHub Issues](https://github.com/bjsi/incremental-everything/issues)** — bug reports and feature requests. Best for anything that needs tracking down, since an issue keeps its history.
+- **[The plugin's thread on RemNote's Discord](https://discord.com/channels/689979930804617224/1201559830431809566)** — questions, workflows and general discussion with other users.
 
 
 Happy learning! 📚✨
@@ -176,7 +190,7 @@ Happy learning! 📚✨
         * Making a Rem incremental (slash command, shortcuts, menu).
         * Reviewing Incremental Rems in the queue (answer buttons overview).
         * Dismissing and re-activating Rems (with history preservation).
-        * Using the [Repetition History widget](Getting-Started.md#repetition-history-statistics).
+        * Using the [Repetition History widget](Repetition-History-and-Statistics.md).
         * Setting priorities basics.
 
 * **2. The Philosophy: [What is Incrementalism?](What-is-Incrementalism%3F.md)**
@@ -197,7 +211,7 @@ Happy learning! 📚✨
             * **[Dismiss](Reviewing-Items-in-the-Queue.md#dismiss):** How to finish an item and remove it from the queue.
             * **[Change Priority](Reviewing-Items-in-the-Queue.md#change-priority):** Its basic function of opening the priority menu.
             * **[Review & Open](Reviewing-Items-in-the-Queue.md#review-in-editor):** The workflow for moving from the queue to the editor.
-            * **[Scroll to Highlight](Utilities.md#scroll-to-highlight):** Its function for PDF extracts.
+            * **[Scroll to Highlight](Utilities-Finding-and-Navigating.md#scroll-to-highlight):** Its function for PDF extracts.
             * **[Strategic Guide to the Answer Buttons](Reviewing-Items-in-the-Queue.md#a-strategic-guide-to-the-answer-buttons):** In-depth explanation of when to use each action.
 
     * **3.3 [Reviewing Items in the Editor](Reviewing-Items-in-the-Editor.md)**
@@ -231,17 +245,32 @@ Happy learning! 📚✨
         * How to use document/folder-specific queues for **Subset Review**.
         * **[History-Queue-Dashboard-and-Mastery-Drill](History-Queue-Dashboard-and-Mastery-Drill.md)**: Track session history, monitor real-time study metrics, find recently reviewed cards, and deliberately re-practice difficult material with the Mastery Drill.
 
-* **6. Essential References**
+* **6. Integrations**
+    * **Purpose:** Connect the incremental workflow to other applications.
+    * **Content:**
+        * **[Logos Bible Software](Logos-Bible-Software-Integration.md)**: Read Logos books incrementally — import a book, send passages as extracts and keep a bookmark with keyboard shortcuts pressed in Logos (macOS).
+
+* **7. [Utilities](Utilities.md)**
+    * **Purpose:** Tools built into the plugin that support the workflow without being part of the queue itself.
+    * **Content:**
+        * **[Text & Lists](Utilities-Text-and-Lists.md)**: the Word-like Text Case Converter (Shift+F3), bulletizing, and inlinizing or breaking lists from PDF highlights.
+        * **[Outline & Headings](Utilities-Outline-and-Headings.md)**: Restructure Outline by Headings (`roh`) for fixing flat or mis-pasted documents, and heading-level tools.
+        * **[Finding & Navigating](Utilities-Finding-and-Navigating.md)**: **Find Rem — Reference or Open** (`Opt+Shift+F`) for Rems RemNote's own search can't find, source popups, and filtering a document by images.
+        * **[True or False Cards](Utilities-True-or-False-Cards.md)**: Mark statements as true or false with one command; the queue shows a large ✔ / ✘ badge and a green or red answer.
+        * **[Queue Display](Utilities-Queue-Display.md)**: Hide in Queue, Remove Parent and the other powerups that control how a card's context shows in the queue.
+        * **[Cleaning Up](Utilities-Cleaning-Up.md)**: delete empty Extra Card Detail Rems, audit disabled cards, and store linked images and audio in RemNote.
+        * **[Under the Hood](Utilities-Under-the-Hood.md)**: infrastructure several commands rely on.
+
+* **8. Essential References**
     * **Purpose:** A complete index of the plugin's visual and functional capabilities.
     * **Content:**
         * **[Plugin Widgets Reference](Plugin-Widgets-Reference.md)**: Comprehensive visual manual of all widgets (History, Graphs, Trackers, etc).
         * **[Plugin Commands Reference](Plugin-Commands-Reference.md)**: Complete list of all keyboard and palette commands registered in RemNote by the plugin.
         * **[Plugin Settings Reference](Plugin-Settings-Reference.md)**: Every configurable option explained, with defaults and context.
-        * **[IncRem Scheduler](IncRem-Scheduler.md)**: How the plugin calculates review intervals — default exponential and beta saturating schedulers explained.
+        * **[IncRem Scheduler](IncRem-Scheduler.md)**: How the plugin calculates review intervals — the Multiplier and Saturating Curve schedulers, and how to choose one per type or per Rem.
         * **[Keyboard Shortcuts](Keyboard-Shortcuts.md)**: Quick cheatsheet mapping essential actions to default keys.
-        * **[Utilities](Utilities.md)**: Additional tools built into the plugin, such as the Word-like Text Case Converter (Shift+F3), Restructure Outline by Headings (`roh`) for fixing flat or mis-pasted documents, and **Find Rem — Reference or Open** (`Opt+Shift+F`) for referencing/opening Rems that RemNote's own search can't find.
 
-* **7. FAQ & Troubleshooting**
+* **9. FAQ & Troubleshooting**
     * **Purpose:** A crucial section to help users solve common problems.
     * **Content:**
         * [How the Incremental Queue takes priority and due date in consideration](How-the-Incremental-Queue-takes-priority-and-due-date-in-consideration.md)
@@ -255,8 +284,5 @@ Happy learning! 📚✨
           * [Page History Diagnostic & Cleanup](Troubleshooting.md#page-history-diagnostic-cleanup-debug-widget)
           * [Search / Linkage Diagnostics](Troubleshooting.md#search-linkage-diagnostics-debug-widget)
 
-* **8. [Changelog](Changelog.md)**
-    * **Purpose:** Detail the history of updates.
-
-* **9. [Contributing to the Wiki](Contributing-to-the-Wiki.md)**
+* **10. [Contributing to the Wiki](Contributing-to-the-Wiki.md)**
     * **Purpose:** Guidelines on how to suggest changes or submit updates to this documentation.

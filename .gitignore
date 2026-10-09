@@ -22,3 +22,10 @@ UPSTREAM_ISSUES.md
 
 # Local-only upstream-sync analysis bundles (reports, plans, diffs) — never published
 .claude/sync-*/
+
+__pycache__/
+
+# Personal editor settings (shared files can be re-included below)
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json

@@ -11,9 +11,11 @@ import {
   noIncRemTimerKey,
   pageRangeWidgetId,
   incRemDisabledDeviceKey,
+  cardEnablementAnchorKey,
 } from '../lib/consts';
 import { safeRemTextToString, getActivePdfForIncRem, getAllPDFsInRem, findIncrementalRemForPDF, getPdfInfoFromHighlight, addPageToHistory, setIncrementalReadingPosition } from '../lib/pdfUtils';
 import { initIncrementalRem } from './powerups';
+import { markRemsAsFreshlyCreated } from '../lib/incRemHelpers';
 import { createRemFromHighlight } from '../lib/highlightActions';
 
 export async function registerMenus(plugin: ReactRNPlugin) {
@@ -73,6 +75,7 @@ export async function registerMenus(plugin: ReactRNPlugin) {
         await plugin.app.toast('✅ Tagged as Incremental Rem');
         // Clear stale session storage to prevent race condition with widget context
         await plugin.storage.setSession('priorityPopupTargetRemId', undefined);
+        await markRemsAsFreshlyCreated(plugin, [rem._id]);
         await plugin.widget.openPopup('priority_interval', {
           remId: rem._id,
         });
@@ -149,6 +152,21 @@ export async function registerMenus(plugin: ReactRNPlugin) {
   });
 
   plugin.app.registerMenuItem({
+    id: 'card_enablement_audit_menuitem',
+    location: PluginCommandMenuLocation.DocumentMenu,
+    name: 'Audit Card Enablement (tagged / referencing / descendants)',
+    action: async (args: { remId: string }) => {
+      const rem = await plugin.rem.findOne(args.remId);
+      if (!rem) {
+        await plugin.app.toast('Could not find the rem');
+        return;
+      }
+      await plugin.storage.setSession(cardEnablementAnchorKey, rem._id);
+      await plugin.widget.openPopup('card_enablement_audit');
+    },
+  });
+
+  plugin.app.registerMenuItem({
     id: noIncRemMenuItemId,
     name: 'No Inc Rem for 15 min',
     location: PluginCommandMenuLocation.QueueMenu,
@@ -192,7 +210,7 @@ export async function registerMenus(plugin: ReactRNPlugin) {
   plugin.app.registerMenuItem({
     id: 'create_priority_review_menuitem',
     location: PluginCommandMenuLocation.DocumentMenu,
-    name: 'Create Priority Review Document',
+    name: 'Priority Queue',
     action: async (args: { remId: string }) => {
       const rem = await plugin.rem.findOne(args.remId);
       if (!rem) return;
@@ -204,7 +222,7 @@ export async function registerMenus(plugin: ReactRNPlugin) {
         scopeName: remName,
       });
 
-      await plugin.widget.openPopup('review_document_creator');
+      await plugin.widget.openPopup('priority_queue_popup');
     },
   });
 
@@ -256,7 +274,7 @@ export async function registerMenus(plugin: ReactRNPlugin) {
   plugin.app.registerMenuItem({
     id: 'create_priority_review_queue_menuitem',
     location: PluginCommandMenuLocation.QueueMenu,
-    name: 'Create Priority Review Document',
+    name: 'Priority Queue',
     action: async () => {
       const subQueueId = await plugin.storage.getSession<string>(currentSubQueueIdKey);
 
@@ -275,7 +293,7 @@ export async function registerMenus(plugin: ReactRNPlugin) {
         });
       }
 
-      await plugin.widget.openPopup('review_document_creator');
+      await plugin.widget.openPopup('priority_queue_popup');
     },
   });
 }

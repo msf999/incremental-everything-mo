@@ -5,12 +5,12 @@
   "author": "Jamesb, Hugomarins and Jonathangimeno",
   "repoUrl": "https://github.com/msf999/incremental-everything-mo",
   "supportUrl": "https://github.com/bjsi/incremental-everything/issues",
-  "projectUrl": "https://hugomarins.github.io/incremental-everything/",
-  "changeLogUrl": "https://hugomarins.github.io/incremental-everything/Changelog/",
+  "projectUrl": "https://hugomarins.github.io/incremental-remnote/",
+  "changeLogUrl": "https://hugomarins.github.io/incremental-remnote/Changelog/",
   "version": {
     "major": 1,
     "minor": 0,
-    "patch": 44
+    "patch": 150
   },
   "unlisted": true,
   "theme": [],

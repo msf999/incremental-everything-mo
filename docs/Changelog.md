@@ -1,6 +1,1599 @@
 # Changelog
 
-This page documents the major changes and improvements for each version of the Incremental Everything (Plus) plugin.
+This page documents the major changes and improvements for each version of the Incremental RemNote plugin.
+
+## v1.0.150 - October 8th, 2026
+
+### 🐛 Fixed
+
+**Cooling**: A card that had only just loaded when you left the queue for the editor is no longer counted as seen, so its sibling is not skipped as "reviewed 1 min ago" when you come back.
+
+📖 [Cooling in RemNote's own queues](Priority-Review-Document.md#cooling-in-remnotes-own-queues)
+
+## v1.0.148 - October 7th, 2026
+
+### ✨ New - Multiplier scheduler, and a scheduler per Incremental Rem
+
+**Scheduling**: The default scheduler now multiplies the interval the item is on (`current interval × multiplier`) instead of counting reviews, so an interval you choose is kept: an extract created at 50 days goes to 75, then 113.
+
+- **What changes for you**: on the Multiplier scheduler a Reschedule is no longer a one-time override, it is the interval the next ones grow from. On the Saturating Curve it stays a one-off.
+- **Per Rem**: the Reschedule and Priority & Interval popups have a **Scheduler** row to switch a single Rem between Multiplier and Saturating Curve (`←`/`→`) and to give it its own multiplier.
+- **Per type**: new settings pick a scheduler and an Initial Interval for documents, videos, highlights and regular Rems, prevailing over the *Default Scheduler* (the former *Use Beta Scheduler* switch) and the general *Initial Interval*.
+- **At a glance**: the Next button shows `×1.5` or `curve`, and the Repetition History popup names the scheduler in use.
+
+![The Reschedule popup with its Scheduler row: × Multiplier selected, the multiplier at 1.5 and the preview "After that: 36 → 54 → 81 days"](assets/reschedule-with-scheduler.png){ width="400" }
+
+![The Next button with a ×1.5 chip before "in 24 days"](assets/scheduler-indication-in-next-button.png){ width="900" }
+
+![The Scheduling group of the settings popup: Initial Interval and its four per-type settings, Default Scheduler, Multiplier, the two Saturating Curve settings and the four per-type schedulers](assets/settings-popup-all-scheduling-options.png){ width="600" }
+
+📖 [IncRem Scheduler](IncRem-Scheduler.md#two-schedulers)
+
+## v1.0.147 - October 4th, 2026
+
+### 🐛 Fixed
+
+**Mastery Drill**: Fixed Card Cluster cards staying in the regular-queue drill after being rated *Good* or *Easy*; cluster cards already stuck in the list are removed the next time the drill starts.
+
+📖 [The regular-queue drill](History-Queue-Dashboard-and-Mastery-Drill.md#regular-queue-drill)
+
+## v1.0.146 - October 3rd, 2026
+
+### ✨ Improved
+
+**True or False cards**: Statements inside a Card Cluster now get the ✔ / ✘ badge and the green or red answer block too, in both queue variants.
+
+📖 [True/False cards in a Card Cluster](Utilities-True-or-False-Cards.md#card-clusters)
+
+**Pin Source Quote**: The source can now be open in another RemNote window: when this window has no PDF or web article in a pane, the command uses the one open in the other.
+
+📖 [Pin Source Quote](Source-Pins.md#pin-source-quote)
+
+## v1.0.145 - October 3rd, 2026
+
+### ✨ New - new-card cooling in RemNote's own queues
+
+**Setting**: *Cooling: where new cards cool* — set it to **RemNote's queues too** and a card you just created is also skipped in RemNote's spaced-repetition queues (a document, the daily queue) until its new-card cooling ends, not only kept out of the Priority Queue; off by default.
+
+📖 [Cooling in RemNote's own queues](Priority-Review-Document.md#cooling-in-remnotes-own-queues)
+
+## v1.0.144 - October 3rd, 2026
+
+### ✨ New - True or False cards
+
+**Commands**: *True/False: Mark as True* (`tft`) and *Mark as False* (`tff`) turn a statement into a True/False card — the back gets its ✅ or ❌ with the rest of it kept, the queue shows a large ✔ / ✘ badge on the question and a green or red answer block on the back, and the editor bullet becomes the verdict; *Convert Pasted Tags* (`tfc`) does the same for cards imported from text with `#[[TFT]]` / `#[[TFF]]`.
+
+![Two statements in the editor with ✔ and ✘ bullets; the queue opens, shows the ✔/✘ badge over a statement, and the answer is revealed in a red block, then the next one in a green block](assets/true-or-false.gif){ width="900" }
+
+📖 [True or False Cards](Utilities-True-or-False-Cards.md)
+
+## v1.0.143 - October 3rd, 2026
+
+### ✨ New - size imported images that show cropped in the queue
+
+**Command**: *Cycle Image Size* (`Opt+Shift+G` / `Alt+Shift+G`) sizes the images of a card that were never sized in RemNote — the ones the queue shows zoomed in behind scrollbars — and each press steps through Fit, Large, Medium and back to Original; images you have resized are left alone.
+
+![A queue card whose imported diagram is cropped behind scrollbars; the command is pressed and the image redraws whole](assets/cycle-image-size.gif){ width="900" }
+
+📖 [Cycle Image Size](Utilities-Cleaning-Up.md#cycle-image-size)
+
+## v1.0.141 - October 2nd, 2026
+
+### ✨ New - store linked images and audio in RemNote
+
+**Commands**: *Store linked images & audio in RemNote* (`slm`) fetches the images and audio a Rem only links to and stores them in RemNote like uploaded files, so the Rem no longer breaks when the outside server moves the file; a second command covers a whole subtree.
+
+📖 [Store Linked Images & Audio in RemNote](Utilities-Cleaning-Up.md#store-linked-images-audio)
+
+## v1.0.140 - September 30th, 2026
+
+### ✨ Improved
+
+**Card Info Bar**: In the Beautiful queue the bar now stays docked above the answer buttons, below RemNote's AI Explanation, instead of moving with the card's length.
+
+![The answer side of a card in the Beautiful queue: the AI Explanation panel, then the Card Info Bar with priority, shields and FSRS figures, then the four answer buttons](assets/card-info-bar-docked-answer.png){ width="900" }
+
+![The question side of a card in the Beautiful queue: the Card Info Bar docked just above the Reveal Answer button, well below the card text](assets/card-info-bar-docked-question.png){ width="900" }
+
+📖 [Card Info Bar in the Beautiful queue](Plugin-Widgets-Reference.md#card-info-bar-beautiful)
+
+## v1.0.139 - September 30th, 2026
+
+### ♻️ Changed
+
+**Cooling**: Image Occlusion Rems are no longer cooled, in the Priority Queue or in RemNote's own queues; with Hide All, Test One on, a reviewed box gives nothing away.
+
+📖 [Image Occlusion is never cooled](Priority-Review-Document.md#image-occlusion-is-never-cooled)
+
+## v1.0.138 - September 30th, 2026
+
+### 🐛 Fixed
+
+**Queue Display**: Fixed the "Hidden in queue" label missing when Hide in Queue, Hide Parent or Hide Grandparent hid the top row of the Beautiful queue; the row vanished instead.
+
+📖 [Beautiful Queue](Utilities-Queue-Display.md#beautiful-queue)
+
+## v1.0.137 - September 29th, 2026
+
+### ✨ Improved - multi-line cards cool their answer lines
+
+**Cooling**: Reviewing a multi-line card now cools its answer lines, for when RemNote shows it before them.
+
+📖 [Multi-line cards: answer lines first](Priority-Review-Document.md#multi-line-cards-answer-lines-first)
+
+### 🐛 Fixed
+
+**Priority Shield**: A Rem whose cooling ends during the day no longer lowers that day's shield; like overdue cards, cooling is now judged from the start of the day.
+
+📖 [Smart Scope & Priority Shield Integration](Priority-Review-Document.md#smart-scope-priority-shield-integration)
+
+## v1.0.136 - September 29th, 2026
+
+### ✨ New - multi-line cards go after their answer lines
+
+**Cooling**: When the answer lines of a multi-line card are flashcards themselves, they now come first; the multi-line card waits while any of them is due, then cools from their review.
+
+📖 [Multi-line cards: answer lines first](Priority-Review-Document.md#multi-line-cards-answer-lines-first)
+
+## v1.0.135 - September 29th, 2026
+
+### ⚡ Improved - the Forgetting Curve shows the whole next interval
+
+**Forgetting Curve**: On the linear axis the chart now opens with **Good** running down to your target retention, and stops sooner only when a card's many reviews need the width; new **History** / **Forecast** buttons jump to either end.
+
+![A card with 3 reviews on the linear axis: History shortens the window to 4.4 years, Forecast stretches it to 9.7 years with Good ending on the 90% target, and Reset zoom returns to the 8.9-year opening window](assets/forgetting-curve-zoom-history-forecast.gif){ width="700" }
+
+📖 [Log and linear time](Reviewing-Items-in-the-Queue.md#log-and-linear-time)
+
+**Queue Dashboard**: A **Current** / **Previous** switch shows the forgetting curve of the card you just answered.
+
+![The Queue Dashboard during a session, with numbered notes on the Prev. Card column, the Current / Previous switch, the History / Forecast presets and Reset zoom](assets/forgetting-curve-queue-dashboard-previous.png){ width="500" }
+
+📖 [Practiced Queues History & Live Dashboard](History-Queue-Dashboard-and-Mastery-Drill.md#practiced-queues-history-live-dashboard)
+
+### ⚡ Improved - End Review takes you back into the queue
+
+**Editor Review Timer**: **End Review and Back to Queue** now reopens the queue you left, the Global Queue included, instead of opening its document and leaving you to press Practice.
+
+📖 [The Workflow Loop](Reviewing-Items-in-the-Queue.md#the-workflow-loop)
+
+### 🐛 Fixed
+
+**Cooling**: A card coming back in the same session (e.g. after **Forgot**) should no longer be skipped in RemNote's own queues as if it were its own sibling.
+
+📖 [Cooling in RemNote's own queues](Priority-Review-Document.md#cooling-in-remnotes-own-queues)
+
+**Learn**: Fixed `Cmd/Ctrl+L` and **▶** saying "A queue is already open" when none was, after a Review in Editor detour.
+
+📖 [Practise it](Priority-Review-Document.md#practise-it)
+
+**Practiced Queues**: Editor reviews and ad-hoc sessions no longer look clickable in the history; their tooltip now says there is no queue to reopen.
+
+📖 [Practiced Queues History & Live Dashboard](History-Queue-Dashboard-and-Mastery-Drill.md#practiced-queues-history-live-dashboard)
+
+## v1.0.131 - September 28th, 2026
+
+### ⚡ Improved - the Mastery Drill gets past "Time to Take a Break"
+
+**Mastery Drill**: When RemNote hides drill cards because the drill skipped another card of the same Rem, the drill now presses **Keep Practicing** itself and carries on with them, instead of ending at "Time to Take a Break".
+
+📖 [The regular-queue drill](History-Queue-Dashboard-and-Mastery-Drill.md#the-regular-queue-drill)
+
+### 🐛 Fixed
+
+**Create Cloze**: Fixed `Alt+Z` copying cloze hints (e.g. "less/more") into the new cloze Rem as ordinary text; Find Rem's "Text with Pin" is fixed too.
+
+📖 [Create Cloze](IR-Flow--Reading-Extracting-and-Clozing.md#create-cloze-altz-altshiftz)
+
+**Queue**: Fixed an Incremental Rem sometimes coming back right after you pressed Next, when RemNote refreshed the queue while you were reading it.
+
+📖 [Prepared in advance](Prioritization-&-Sorting.md#prepared-in-advance)
+
+## v1.0.130 - September 28th, 2026
+
+### ⚡ Improved - Descriptor cards keep their concept
+
+**Queue Display**: A concept tagged Hide in Queue or Remove from Queue now stays visible on its own descriptor cards, in both the Compact and Beautiful queues.
+
+📖 [Descriptor cards keep their concept](Utilities-Queue-Display.md#descriptor-cards-keep-their-concept)
+
+### 🐛 Fixed
+
+**Queue Display**: Fixed the "Hidden in queue" label overlapping the concept's name on descriptor cards in the Beautiful queue.
+
+📖 [Descriptor cards keep their concept](Utilities-Queue-Display.md#descriptor-cards-keep-their-concept)
+
+**Queue Display**: Fixed Hide Parent, Hide Grandparent, Remove Parent and Remove Grandparent not hiding anything on descriptor cards in the Beautiful queue.
+
+📖 [Beautiful Queue](Utilities-Queue-Display.md#beautiful-queue)
+
+## v1.0.129 - September 28th, 2026
+
+### ✨ New - Cooling in RemNote's own queues
+
+**Cooling**: Cards of a cooling Rem are now skipped in RemNote's own queues too — including **Learn New Cards**, where the clozes of one Rem used to run back to back.
+
+📖 [Cooling in RemNote's own queues](Priority-Review-Document.md#cooling-in-remnotes-own-queues)
+
+### ⚡ Improved - Faster startup
+
+**Priority Queue**: Only the full-KB Priority Queue is refreshed at startup; document queues are refreshed after their own sessions.
+
+📖 [Refresh at startup and after every session](Priority-Review-Document.md#refresh-after-every-session)
+
+## v1.0.128 - September 26th, 2026
+
+### ⚡ Improved - Forgetting Curve log axis starts at 12 hours
+
+**Forgetting Curve**: the log time axis no longer spends up to half its width on the minutes and hours of a card's learning steps; it starts at 12 hours, keeping the one-day review in view.
+
+![The Forgetting Curve on the log axis with five numbered notes: (1) the axis starts at 12 hours, with the first review and its same-day learning steps on the left edge; (2) two brackets of equal width, the first two weeks and the 5.6 years without a review, both a 28-fold stretch of time; (3) the gentle-looking slide from the 90% target to 64% over those years; (4) the two-year forecast past "now" squeezed into a sliver at the right end; (5) the stability step of ×10.61 bought by the review just made](assets/forgetting-curve-log-axis-explained.png){ width="900" }
+
+📖 [Log and linear time](Reviewing-Items-in-the-Queue.md#log-and-linear-time)
+
+### 🐛 Fixed
+
+**AI Transcribe**: Fixed transcription and Pin Source Quote failing with "unknown url type: local" on PDFs that RemNote now passes by their local file path — download the helper again to get the fix.
+
+📖 [AI Transcription setup](AI-Transcription-of-PDF-Highlights.md#setup)
+
+## v1.0.126 - September 26th, 2026
+
+### ✨ New - Logos Bible Software integration (macOS)
+
+![Logos Bible Software](assets/Logos.webp){ width="200" }
+
+**Logos Bible Software**: Added incremental reading of Logos books from inside Logos, through a small helper app — import a book, extract passages and keep a bookmark with keyboard shortcuts pressed in Logos.
+
+- `Ctrl+Opt+N` imports the open book as a top-level Incremental Rem tagged #Logos, once per book.
+- `Ctrl+Opt+X` sends the selection as an extract under the Incremental Rem you are reviewing, with a priority and interval panel over Logos; each extract links back to its passage and moves the book's bookmark.
+- `Ctrl+Opt+B` saves where you stopped; **Open in Logos** (`olg`) returns there, optionally on its own when the book comes up for review.
+
+📖 [Logos Bible Software Integration](Logos-Bible-Software-Integration.md)
+
+## v1.0.125 - September 25th, 2026
+
+### ⚡ Improved - Convert extracted markup turns `--` into dashes
+
+**Convert extracted markup to rich text** now turns `--` and `---` into en and em dashes (– and —), outside formulas.
+
+📖 [Convert extracted markup to rich text](Plugin-Commands-Reference.md#convert-extracted-markup-to-rich-text)
+
+## v1.0.124 - September 24th, 2026
+
+### ⚡ Improved - Convert extracted markup has a shortcut
+
+**Convert extracted markup to rich text** now runs with `Opt+Shift+M` / `Alt+Shift+M` (M for markup), as well as by its quick code `cem`.
+
+📖 [Convert extracted markup to rich text](Plugin-Commands-Reference.md#convert-extracted-markup-to-rich-text)
+
+## v1.0.123 - September 24th, 2026
+
+### ✨ New - a larger highlight absorbs the ones inside it
+
+**AI Transcribe**: highlighting a passage that already holds a smaller highlight and pressing ✨ on the larger one merges the smaller into it, moving its pins, references, inline links, tags, flashcards and bookmarks.
+
+![After AI Transcribe on the larger highlight: one Rem with the clean list, and the pins, references and bookmark of the smaller highlight point to it](assets/highlight-merge-3-after.png){ width="900" }
+
+📖 [A larger highlight over earlier ones](AI-Transcription-of-PDF-Highlights.md#absorb)
+
+### 🐛 Fixed
+
+**AI Transcribe**: Fixed text that is both bold and italic showing literal asterisks instead of the formatting.
+
+📖 [AI Transcription of PDF Highlights](AI-Transcription-of-PDF-Highlights.md)
+
+## v1.0.122 - September 23rd, 2026
+
+### ✨ New - extend a PDF highlight past what the text selection reaches
+
+**AI Transcribe**: when the selection stops short of a passage (formulas set as pictures, OCR gaps in scanned PDFs), draw an area highlight over the rest and press ✨ on it: the area merges into the text highlight and the whole passage is transcribed.
+
+📖 [Passages the text selection can't reach](AI-Transcription-of-PDF-Highlights.md#merge)
+
+## v1.0.121 - September 23rd, 2026
+
+### ✨ New - the Mastery Drill runs in the regular queue
+
+The Mastery Drill now runs in RemNote's own queue, where the card info bar and other plugins' widgets show under each card. The popup is still there: switch back with the new **Where the Drill Runs** setting, or start either one with **Mastery Drill (popup)** and **Mastery Drill (regular queue)**.
+
+RemNote practises whole Rems, so the drill skips the other cards of a drill Rem behind a short **Reveal Delay**. If RemNote then shows "Time to Take a Break", press **Keep Practicing** to get the rest of the drill.
+
+![The Mastery Drill running in the regular queue: the queue titled "Mastery Drill" with 12 cards left, the drill bar above the card with Remove from Drill, Card List and the note that RemNote hid some drill cards, the card info bar with priority and FSRS figures under the cloze, and the Queue Dashboard on the right recording a Mastery Drill session with the card's forgetting curve](assets/native-drill.png){ width="900" }
+
+📖 [Where the Drill Runs](History-Queue-Dashboard-and-Mastery-Drill.md#where-the-drill-runs)
+
+## v1.0.116 - September 22nd, 2026
+
+### ✨ New - forgetting curve for a card
+
+The **Forgetting Curve** replays a card's history into the retrievability FSRS predicts and forecasts what each of the four answer buttons would do to it, over a staircase of the stability every repetition bought. It sits at the top of the Queue Dashboard for the card on screen, and in each card's section of the Flashcard Repetition History.
+
+![The Forgetting Curve on a logarithmic time axis: the retrievability panel with the history line running green above the 90% target and turning blue as it approaches it, four dashed forecast branches past "now", and below it the stability staircase labelled ×1.44, ×1.39, ×1.54, ×3.04 and ×1.04, both panels spanning 3 days to 14.4 years](assets/forgetting-curve-log-scale.png){ width="900" }
+
+The history line is coloured by retrievability on the same scale as the card info bar — green at 100%, red at 70% and below. Time runs logarithmically by default, so a card's first minutes and its later years are both legible; **Linear** shows real elapsed time instead and stops earlier, keeping the plot on the repetitions that have happened. Drag across either panel to zoom, scroll to zoom at the pointer, double-click to reset.
+
+![The Forgetting Curve in the Queue Dashboard being switched from Linear to Log, then the 🔬 button opening the Flashcard Repetition History popup, where the same card carries its own curve](assets/forgetting-curve.gif){ width="700" }
+
+📖 [Forgetting Curve](Reviewing-Items-in-the-Queue.md#forgetting-curve)
+
+## v1.0.115 - September 22nd, 2026
+
+### ✨ New - collapse the plugin panel to a row of icons
+
+The 🌐 globe collapses the Incremental RemNote panel to one row of icons — the Mastery Drill with its card count, shortcuts, settings, the Priority Review Queue Rem and ▶ — and expands it again, remembered per device.
+
+![The collapsed panel: the globe, the Mastery Drill with a count badge, keyboard shortcuts, settings, the Priority Review Queue Rem and Learn, in one row above Tutorials and Settings](assets/panel-hub-collapsed.png){ width="400" }
+
+📖 [The collapsed panel](Getting-Started.md#collapsed-panel)
+
+### ⚡ Improved - ▶ can practise the document you are in
+
+`Shift`- or `Cmd`/`Ctrl`-click **▶** to practise the Priority Queue for the current scope instead of the whole knowledge base, or to open the popup with that scope filled in if it has no queue yet. The scope it will use is the one named under the button.
+
+![The panel with the Priority Queue group, the eye and the blue Learn button, and the scope named on the line below them](assets/panel-hub-expanded.png){ width="400" }
+
+📖 [The Incremental RemNote Panel](Getting-Started.md#the-incremental-plugin-panel)
+
+### 🐛 Fixed - onboarding tips behaved differently per answer, and leaked across knowledge bases
+
+**I Got It** now pauses the tip panel for the same two hours **✕** does — reloading after it no longer hands you a fresh tip — and both the pause and the one-tip-per-session limit are now kept per knowledge base instead of shared by all of them.
+
+📖 [Tips](Getting-Started.md#tips)
+
+### 🐛 Fixed - the sidebar panels wasted space on both sides
+
+The plugin's left-sidebar panels now use the sidebar's full width instead of sitting inside 64px of padding on each side, which cost the most on a narrow sidebar.
+
+![The panel and the Mastery Drill notification below it, both spanning the width of the left sidebar](assets/panel-hub-and-drill-expanded.png){ width="380" }
+
+📖 [The Incremental RemNote Panel](Getting-Started.md#the-incremental-plugin-panel)
+
+## v1.0.114 - September 16th, 2026
+
+### 🐛 Fixed - Card Clusters were split in the Priority Queue
+
+Card Clusters are recognised again since RemNote turned them into a built-in powerup with the code `cc`, so a cluster member brings its due siblings into the Priority Queue, every refresh completes clusters already there, and a cooling member is no longer drained away from its cluster.
+
+📖 [Card Cluster Support](Priority-Review-Document.md#card-cluster-support)
+
+## v1.0.113 - September 16th, 2026
+
+### ✨ New - list the cards in the Mastery Drill
+
+**List Cards** in the Mastery Drill toolbar shows every card in the drill and whether RemNote can still show it, so a card that was deleted or switched off — counted as *Remaining* but never served — can be found and removed.
+
+📖 [Card List](History-Queue-Dashboard-and-Mastery-Drill.md#card-list)
+
+### ⚡ Improved - `#cloze-extract` and `#ignore` styling reaches descendants
+
+The children of a Rem tagged `#cloze-extract` or `#ignore` are now dimmed in the editor like the Rem itself.
+
+📖 [Editor colour coding](Colour-Coding-Reference.md#editor)
+
+### 🐛 Fixed - IncRems crowded flashcards out of the Priority Queue
+
+A Priority Queue now keeps your Flashcard Ratio across the whole document — 22 flashcard Rems and 3 IncRems at a fill target of 25 and "10 cards per rem" — and draws its IncRems again on every Refresh, instead of adding one with every top-up until they outnumbered the flashcards.
+
+📖 [Flashcard and IncRem slots](Priority-Review-Document.md#flashcard-and-increm-slots)
+
+## v1.0.112 - September 16th, 2026
+
+### ⚡ Improved - Priority Queues refresh at startup
+
+With **Refresh the Priority Queues at startup and after each session** on, every Priority Queue document is now also refreshed when RemNote starts, once the caches are loaded, and the ▶ button of the plugin panel waits for it before pulsing.
+
+📖 [Refresh at startup and after every session](Priority-Review-Document.md#refresh-after-every-session)
+
+## v1.0.111 - September 15th, 2026
+
+### ⚡ Improved - Pin Source Quote runs over a multi-Rem selection
+
+Select several Rems and **Pin Source Quote** pins each one's source in turn, asking which view to use only once and reporting at the end what was pinned and what was not found.
+
+📖 [Using Pin Source Quote](Source-Pins.md#pin-source-quote)
+
+## v1.0.110 - September 15th, 2026
+
+### ⚡ Improved - Pin Source Quote has a shortcut
+
+**Pin Source Quote** now runs with `Opt+Shift+Q` / `Alt+Shift+Q`, next to Paste Rem Sources on `Alt+Shift+V`.
+
+📖 [Using Pin Source Quote](Source-Pins.md#pin-source-quote)
+
+### ⚡ Improved - Priority Queue moved to Opt+Shift+L
+
+The **Priority Queue** popup now opens with `Opt+Shift+L` / `Alt+Shift+L`, next to Learn on `Cmd/Ctrl+L`, because `Alt+Shift+R` is RemNote's Restore Last Closed Tab.
+
+📖 [The Priority Queue popup](Priority-Review-Document.md#the-priority-queue-popup)
+
+### 📚 Docs - every RemNote shortcut on one page
+
+A new **RemNote Native Shortcuts** page lists all of RemNote's default shortcuts by function and by key, with the plugin's shortcuts in the same keyboard map so you can see which combinations are free.
+
+📖 [RemNote Native Shortcuts](RemNote-Native-Shortcuts.md)
+
+### 📚 Docs - shortcuts that conflict on Windows
+
+The Keyboard Shortcuts page now lists the three plugin shortcuts that press the same keys as a RemNote command on Windows and Linux.
+
+📖 [Windows Notes](Keyboard-Shortcuts.md#windows-notes)
+
+## v1.0.109 - September 15th, 2026
+
+### ⚡ Improved - the ▶ Learn button pulses when startup is done
+
+The **▶** button of the Incremental RemNote panel now starts pulsing only once the plugin's startup work has finished, so you can tell it is ready without checking the console; hover it to see what is still running.
+
+📖 [When ▶ starts pulsing](Getting-Started.md#when-learn-starts-pulsing)
+
+## v1.0.108 - September 15th, 2026
+
+### 🐛 Fixed - a cloze made with Alt+Z could enter the Priority Queue the same day
+
+A cloze created with **Create Cloze Deletion** (Alt+Z) now cools as a new card straight away, instead of being served by the Priority Queue until RemNote was restarted.
+
+📖 [What counts as a spoiler](Priority-Review-Document.md#what-counts-as-a-spoiler)
+
+## v1.0.107 - September 15th, 2026
+
+### ⚡ Improved - Learn is the plugin's main action
+
+The command that practises the full-KB Priority Queue is now **Learn - Practice Priority Queue (Full Knowledge Base)**, with quick code `learn` and the shortcut `Cmd+L` / `Ctrl+L`, like SuperMemo's Learn button.
+
+📖 [Practise it](Priority-Review-Document.md#practise-it)
+
+### 🐛 Fixed - Next Item in Queue used the Windows key on Windows
+
+**Next Item in Queue** now answers to `Ctrl+Right` on Windows and Linux, as documented, instead of `Win+Right`; on Mac it stays `Cmd+Right`.
+
+📖 [Next](Reviewing-Items-in-the-Queue.md#next)
+
+## v1.0.106 - September 15th, 2026
+
+### 🐛 Fixed - the live Card Shield disagreed with the saved one
+
+The Card Shield shown while you practise now matches the one saved when you leave the queue: cooling Rems are excluded from the first queue after a restart, and the percentile counts cards, not Rems with cards.
+
+📖 [Smart Scope & Priority Shield Integration](Priority-Review-Document.md#smart-scope-priority-shield-integration)
+
+### 🐛 Fixed - "Hidden in queue" overlapped the card in the Beautiful queue variant
+
+On the front of a card in RemNote's Beautiful queue variant, the "Hidden in queue" placeholder left by Hide in Queue, Hide Parent and Hide Grandparent now sits on its own line instead of over the question.
+
+📖 [Hide in Queue](Utilities-Queue-Display.md#hide-in-queue)
+
+## v1.0.105 - September 14th, 2026
+
+### ✨ New - a card you just created waits before its first review
+
+A never-reviewed card stays out of the Priority Queue for a set number of days after you create it, **1** by default — SuperMemo counts creating an item as its first repetition, so a cloze written while reading is not asked while its answer is still in view.
+
+📖 [What counts as a spoiler](Priority-Review-Document.md#what-counts-as-a-spoiler)
+
+### ⚡ Improved - Priority Queue settings have their own group
+
+The refresh and cooling settings moved out of **Queue**, now **Queue Display**, into a new **Priority Queue** group.
+
+📖 [Priority Queue settings](Plugin-Settings-Reference.md#priority-queue)
+
+## v1.0.104 - September 14th, 2026
+
+### ⚡ Improved - a descriptor's backward card cools after its concept was reviewed
+
+That card asks for the concept, so reviewing any card of the concept — forward, backward or a cloze, even across nested descriptors — now keeps it out of the Priority Queue for its cooling window.
+
+📖 [What counts as a spoiler](Priority-Review-Document.md#what-counts-as-a-spoiler)
+
+## v1.0.103 - September 14th, 2026
+
+### 🐛 Fixed - a card held back by a cooling parent could still pin the Priority Shield
+
+A Rem the Priority Queue holds back because its parent or grandparent is due and cooling no longer sets the shield; one whose due ancestor is not cooling still counts.
+
+📖 [Smart Scope & Priority Shield Integration](Priority-Review-Document.md#smart-scope-priority-shield-integration)
+
+### 🐛 Fixed - the Cooling list showed P? instead of priorities
+
+📖 [The Cooling list](Priority-Review-Document.md#the-cooling-list)
+
+## v1.0.102 - September 14th, 2026
+
+### ⚡ Improved - AI Transcribe puts key terms in bold
+
+Transcriptions now bold the passage's key terms and concepts and keep the page's own italics. Already have `prompt.md`? Delete it to get the new instructions.
+
+📖 [Customising the instructions](AI-Transcription-of-PDF-Highlights.md#prompt)
+
+### 🐛 Fixed - bold or italic around a formula showed literal asterisks
+
+📖 [Customising the instructions](AI-Transcription-of-PDF-Highlights.md#prompt)
+
+## v1.0.101 - September 14th, 2026
+
+### ⚡ Improved - Pin Source Quote reads a Rem's front and back
+
+When the Rem has a back, **Pin Source Quote** tries the front, the back and both joined, pins the version that matches best, and places the pin at the end of the back.
+
+📖 [Using Pin Source Quote](Source-Pins.md#pin-source-quote)
+
+### 🐛 Fixed - Pin Source Quote and AI Transcribe could not reach a source without a local copy
+
+They now look for the file in the knowledge base you are using and download it when it is not stored locally.
+
+📖 [Source Pins](Source-Pins.md)
+
+## v1.0.100 - September 14th, 2026
+
+### 🐛 Fixed - the priority badge showed twice in the Beautiful queue
+
+**Queue Toolbar Priority**: Now that RemNote's Beautiful queue shows plugin toolbar widgets, the badge and the *No Inc Rem* countdown are kept out of its top bar and stay in the card's top-right corner.
+
+📖 [In the Beautiful queue variant](Plugin-Widgets-Reference.md#beautiful-queue-variant)
+
+## v1.0.99 - September 14th, 2026
+
+### ⚡ Improved - the Practiced Queues summary refreshes itself at startup
+
+The summary table is recomputed from your cards' own review history each time RemNote starts, reusing the card read the plugin already makes then, so it no longer waits for **Refresh Statistics** to catch up with sessions the queue listeners missed. Full Mode with flashcard prioritisation on only.
+
+📖 [Refresh Statistics](History-Queue-Dashboard-and-Mastery-Drill.md#refresh-statistics-authoritative-summary-recompute)
+
+## v1.0.98 - September 14th, 2026
+
+### ⚡ Improved - refreshing the Priority Queue no longer loads every card
+
+In Full Mode, the drain, cooling and selection now read the card cache, which records when each card was last shown; in Light Mode, a refresh from the popup loads the cards once for all three, and cooling works there too. The automatic refresh after a session no longer runs in Light Mode.
+
+📖 [Refresh after every session](Priority-Review-Document.md#refresh-after-every-session)
+
+## v1.0.97 - September 14th, 2026
+
+### 🐛 Fixed - PDFs and web articles did not fill the card in the Beautiful queue variant
+
+In RemNote's Beautiful queue variant, the reader of a PDF or web IncRem now fills the card down to the answer buttons, instead of stopping at half height above a blank band.
+
+📖 [Reviewing Items in the Queue](Reviewing-Items-in-the-Queue.md)
+
+## v1.0.95 - September 14th, 2026
+
+### 🐛 Fixed - the Priority Queue did not refresh after a session
+
+Leaving the queue now drains what you reviewed from the Priority Queue document and tops it back up, as the **Refresh the Priority Queue after each session** setting promises; it never started, because the plugin looked for the closed queue where RemNote does not report it.
+
+📖 [Refresh after every session](Priority-Review-Document.md#refresh-after-every-session)
+
+## v1.0.94 - September 14th, 2026
+
+### 🐛 Fixed - a card rated Again or Hard inside the Mastery Drill skipped its minimum delay
+
+Rating a card *Again* or *Hard* again — in the drill or in a regular queue — now restarts its minimum delay, instead of leaving it ready to come straight back.
+
+📖 [Minimum Delay](History-Queue-Dashboard-and-Mastery-Drill.md#minimum-delay)
+
+## v1.0.92 - September 13th, 2026
+
+### ✨ New - Pin Source Quote: pin the source of text you already have
+
+**Pin Source Quote** (`psq`) finds the focused Rem's text in the PDF or web article open beside it and pins the passage — reusing the highlight already there, or creating one — in a PDF, a saved web article or a PDF's Text Reader view.
+
+📖 [Source Pins](Source-Pins.md)
+
+### ✨ New - Create IncRem can pin both views of a PDF
+
+With **Create IncRem: Also Pin the Other PDF View** on, extracting from a PDF that also has a Text Reader version pins the passage in both views and marks both highlights as extracted.
+
+📖 [Pinning both views on Create IncRem](Source-Pins.md#create-increm-both-views)
+
+### ⚡ Improved - Pin rings tell a PDF page from an HTML source
+
+Pins to highlights in a saved web article or a PDF's Text Reader view now carry a purple ring; pins to PDF pages stay yellow.
+
+📖 [Reference pin rings](Colour-Coding-Reference.md#reference-pin-rings)
+
+## v1.0.91 - September 12th, 2026
+
+### ✨ New - AI Transcribe for PDF highlights
+
+A **✨** button in the PDF highlight toolbar (and the `ait` command) replaces a highlight's raw text with a clean transcription of the highlighted region — spaces restored, formulas as LaTeX with their equation numbers, key concepts emphasised, list markers kept — using your own Claude account. It needs a small helper running on your computer; the page walks you through the one-time setup.
+
+📖 [AI Transcription of PDF Highlights](AI-Transcription-of-PDF-Highlights.md)
+
+## v1.0.89 - September 12th, 2026
+
+### ⚡ Improved - a session in the Practiced Queues history opens its queue, not its document
+
+Clicking a past session in the history log now takes you straight into the queue on that document — the same route as its Practice button — instead of opening the document in the editor.
+
+📖 [Practiced Queues History & Live Dashboard](History-Queue-Dashboard-and-Mastery-Drill.md#practiced-queues-history-live-dashboard)
+
+### 🐛 Fixed - the paused-document filter lost its controls and its warning in the Priority Queue
+
+**Skip paused documents** and its *always keep priority* are back, now stored on each Priority Queue document, and skipped Rems are listed again in an amber panel with high-priority ones in red, and counted in the toast after the automatic refresh.
+
+📖 [Paused Document Filtering](Priority-Review-Document.md#paused-document-filtering)
+
+### 🐛 Fixed - a child already in the Priority Queue stayed when its parent came due
+
+Every refresh now checks the entries the document already holds: a child whose parent or grandparent has become due is drained, and the ancestor is pulled in to be reviewed first.
+
+📖 [Ancestor Spoiler Protection](Priority-Review-Document.md#ancestor-spoiler-protection)
+
+## v1.0.88 - September 12th, 2026
+
+### ✨ New - the Priority Queue: one persistent review document per scope, refilled in bursts and drained as you review
+
+The timestamped Priority Review Document snapshot is gone. In its place, **one Priority Queue document per scope** (your whole knowledge base, or any document) that the plugin keeps **topped up to a fill target** — 25 items by default — with your highest-priority due flashcards and Incremental Rems, and **drains** of everything you have reviewed. **Refresh** does both, and runs on its own a couple of seconds after you leave the queue, so the document is ready before the next Practice. Small fills are the point: RemNote serves a document's cards in random order, so the only way to make the most important card come *first* is to hold few cards, all of them the top of your ranking.
+
+Everything lives in the new **Priority Queue popup** (`Alt+Shift+R`, quick code `prq`, the document and queue menus, or the panel button — whose group now ends in a **▶** that opens the queue on the full-KB Priority Queue): the scope, what the document holds and what a refresh would drain, the **card shield now and after this document**, the fill target, the actions — Refresh, Drain, Refill, ▶ Practice (which opens the queue on the document directly), Open — and the Cooling list. Nothing runs while a queue is open.
+
+**Cooling** is spoiler protection across sessions. A flashcard Rem whose answer was shown by a recent review — another card of the same Rem, a sibling `Alt+Z` cloze or the parent extract, one of its own clozes, or a descendant's context line — stays out of the Priority Queue for a window that grows with the card's interval (one day for a new card, fifteen for a card with a year or more), and **cannot set the Priority Shield** meanwhile, so a Rem whose sibling you just reviewed no longer pins the shield at its priority however much else you clear. Nothing is stored: the set is recomputed from your card data at every refresh and queue exit. The **Cooling** tab lists every cooling Rem with its reason and return date, and lets you release, extend or exempt it.
+
+The **shield slice** keeps the first positions of each fill (20% by default, configurable, 0 to switch off) out of the randomness lottery, so every fill carries the most important due items whatever your randomness setting draws.
+
+📖 [Priority Queue](Priority-Review-Document.md)
+
+![The Priority Queue popup: scope, status card, fill target and shield slice, and the action buttons](assets/priority-queue-popup.png){ width="640" }
+
+### 📝 Docs - what randomness does, and does not, guarantee
+
+The Sorting Criteria page said randomness left your high-priority core undisturbed. It does not: the lottery marks positions uniformly along the whole list, head included, so at 40% the most important due item is out of the first 25 positions in four draws out of ten. The page now says so, with measurements, and explains why that is brief in the live queue and why the Priority Queue's shield slice exists.
+
+📖 [What it does not guarantee](Prioritization-&-Sorting.md#what-it-does-not-guarantee)
+
+## v1.0.87 - September 11th, 2026
+
+### 🐛 Fixed - the queue priority badge was missing in RemNote's Beautiful queue variant
+
+**Queue Toolbar Priority**: The badge (and the *No Inc Rem* countdown) now shows in the Beautiful variant too, in the card's top-right corner, without shifting the card's layout.
+
+![The Beautiful queue variant with the P15 priority badge in the card's top-right corner, above the breadcrumbs](assets/beautiful-queue.png){ width="900" }
+
+📖 [In the Beautiful queue variant](Plugin-Widgets-Reference.md#beautiful-queue-variant)
+
+## v1.0.83 - September 9th, 2026
+
+### 🐛 Fixed - sub-extracts inherited only one source pin, and none from web highlights
+
+An extract copies its parent's pin back to the original highlight so the way to the source stays short as you shred; it now carries **every** such pin rather than only the first, recognises **web** highlights alongside PDF ones, and looks on both sides of a card instead of the front alone.
+
+📖 [Source pins are inherited](IR-Flow--Reading-Extracting-and-Clozing.md#source-pins)
+
+## v1.0.82 - September 7th, 2026
+
+### ⚡ Improved - Find Rem marks results that hold an image
+
+A 🖼️ now sits before the name of any result carrying an image, so a figure Rem is distinguishable from the prose that discusses it — captions and the sentences citing them are often worded almost identically.
+
+📖 [Spotting figures](Utilities-Finding-and-Navigating.md#spotting-figures)
+
+### 🐛 Fixed - Find Rem could not find `Figure 6.4` when you typed `Fig. 6.4`
+
+The `Figure` = `Fig` = `Fig.` folding was only ever applied to *matching and ranking*, never to what the picker asked RemNote's index for. So the Rem had to be retrieved by the word `fig` alone, which in a knowledge base full of figures returns thousands of results and is truncated long before the one you wanted — the alternate spelling of the **whole query** is now searched for as well.
+
+📖 [Why it finds Rems the normal search can't](Utilities-Finding-and-Navigating.md#why-it-finds-rems-the-normal-search-cant)
+
+## v1.0.81 - September 6th, 2026
+
+### ✨ New - the FSRS Calibration tab now audits your initial stability (w0–w3)
+
+`w0`–`w3` are the stability FSRS assigns from the very first grade a card ever gets, and they are the only parameters not learned by the main training loop — [fsrs-optimizer](https://github.com/open-spaced-repetition/fsrs-optimizer) derives them in a separate pass over one narrow slice of history: each card's first grade paired with the outcome of the first review on a later calendar day. It then prints four bare numbers and tells you nothing about how well-founded they are.
+
+A new **D · Initial stability** panel reproduces that pass over your knowledge base and adds what the optimizer leaves out. Alongside the faithful refit it reports an **unregularised maximum-likelihood estimate with a 95% profile-likelihood interval**, a second fit with the optimizer's outlier removal switched off, and per-grade **coverage** — the share of reps actually observed at or beyond the fitted stability. A verdict badge turns that into a reading: *calibrated*, *S₀ too low / too high*, *thin data*, *extrapolating*, or **unidentified** — the last meaning the likelihood keeps improving all the way to the bound because your reviews never ran long enough to watch that grade be forgotten, so the fitted value is a floor rather than an estimate.
+
+Below it, the vector the optimizer would hand to its training loop, with any **monotonicity repair** spelled out — the rule that forces Again ≤ Hard ≤ Good ≤ Easy overwrites the value backed by fewer reps rather than averaging, which is worth seeing rather than inheriting silently. Then one **empirical forgetting curve per grade**: log-spaced interval buckets with observed retention, a **Wilson 95% interval**, what your current weight predicts, the deviation, and which rows the outlier filter discarded before fitting.
+
+The two places the fit and your scheduler disagree are labelled rather than blended: the refit runs at the optimizer's hard-wired `−0.1542` decay because its initialisation pass never sees `w20`, while the *predicted R* column uses yours; and where same-day learning steps sat between the first grade and the outcome, each grade's header states what share that covers and what FSRS actually predicted across them.
+
+> [!TIP]
+> When this panel disagrees with a number fsrs-optimizer produced, check whether the optimizer's value falls inside the 95% interval before changing anything — very often both sit inside the range the data supports, and the disagreement is about confidence, not about the number. Match the windows too: the optimizer's `revlog_start_date` filters whole *cards*, this tab filters *reps* by the period picker, and the weights the optimizer prints are post-training rather than the initialisation output the panel reproduces.
+
+📖 [FSRS Calibration → Initial stability](Prioritization-&-Sorting.md#initial-stability)
+
+### ⚡ Improved - the calibration grids no longer show five rows of dashes
+
+Grids **A** and **B** listed a predicted-R row every 5 percentage points down to 0%, but a scheduler aiming at 90% almost never lets a card fall below ~60%, so the bottom of both tables was permanently empty. Those rows are now folded into a single **0–60%** row, taking each grid from 13 rows to 9.
+
+The cut is fixed rather than "hide whatever is empty today", so the row layout stays identical when you switch periods and two runs can be read side by side — and any reps that do land in the folded range are shown in the merged row rather than dropped.
+
+📖 [FSRS Calibration](Prioritization-&-Sorting.md#fsrs-calibration)
+
+## v1.0.80 - September 5th, 2026
+
+### ✨ New - hand an Incremental Rem's data to its parent
+
+**Transfer Incremental Data to Parent Rem** (`quick: ttp`) moves the priority, the next-repetition date, the full repetition history and the reading state up one level — for when an extract ended up under the outline heading that should have been the incremental item — so the interval progression carries on instead of restarting, and a **🔀 Transferred from …** marker records where the reviews were actually done.
+
+📖 [Transferring an Incremental Rem to its Parent](Create-Incremental-Rem-from-PDF-Highlights.md#transfer-to-parent)
+
+### ✨ New - the audit now spots Rems whose clozes are switched off
+
+**Card Enablement Audit**: added the `clozes off` and `some clozes off` verdicts, so a Rem silenced by RemNote's *Disable All Cloze Cards* is no longer filed under *not surfaced*. Nothing here can undo it — RemNote does not expose that list to plugins, and switching cards back on does not clear it — so the panel says so and points you at RemNote's own `/Enable All Cloze Cards`, in the Suppressed Cards breakdown and the enablement probe too.
+
+📖 [Card Enablement Audit](Utilities-Cleaning-Up.md#card-enablement-audit) · [Suppressed cards](Prioritization-&-Sorting.md#suppressed-cards)
+
+### ⚡ Improved - the Incremental History sidebar says what kind of item each entry is
+
+Every row now carries an item-type badge — 📄 PDF, 🖍️ PDF Extract, 🌐 Web, ▶️ YouTube, 📝 Rem — the same labels the IncRem List uses.
+
+📖 [Incremental Rem History](Plugin-Widgets-Reference.md#221-incremental-rem-history)
+
+### ♻️ Changed - ✏️ / 🗑 in the repetition history are now offered on reviews only
+
+Event banners (Made Incremental, Dismissed, Priority change, Transferred…) are markers the plugin reads by position, not records of study time, so they are no longer hand-editable.
+
+📖 [Recording and correcting records](Plugin-Widgets-Reference.md#recording-and-correcting-records)
+
+### ♻️ Changed - the quick code for *Clean Priority Review Documents* is now `clean`
+
+It was `cprd`.
+
+📖 [Cleaning a review document](Priority-Review-Document.md#cleaning-a-review-document)
+
+## v1.0.79 - September 5th, 2026
+
+### 🐛 Fixed - cards removed from the Mastery Drill came back in the same session
+
+*Remove from Drill* took the card out of the drill list, and the card still reappeared later in the same session — as did cards taken out by *Edit Later* or by rating them *Good* — because RemNote's embedded queue keeps the card list it was handed when the drill opened: each time it runs out of cards it clears its own bookkeeping and reloads that original list, undoing every removal since. The drill now notices a card that has left the list, skips it the moment it is presented again, and rebuilds the embedded queue from the current list when a whole reloaded batch is stale. Cards inside [Card Clusters](https://help.remnote.com/en/articles/10104223-card-clusters) are a documented exception, now written up on the drill's page: RemNote reports only the cluster anchor to plugins, so sibling ratings mostly never reach the drill and the per-card toolbar actions act on the anchor.
+
+📖 [Mastery Drill](History-Queue-Dashboard-and-Mastery-Drill.md#mastery-drill) · [Card Cluster limitation](History-Queue-Dashboard-and-Mastery-Drill.md#how-it-works)
+
+## v1.0.77 - September 4th, 2026
+
+### ✨ New - every priority change is now on the record
+
+Both priorities keep a history of what they have been, with the gesture behind each change: a flashcard Rem gets a **🎚 Card Priority History** at the bottom of its history popup, and an Incremental Rem files a **🎚 Priority change** marker for the gestures that used to leave no trace at all (`Alt+P`, `Ctrl+Opt+↑/↓`, inline edits). A burst from the same gesture inside a minute collapses into one entry.
+
+📖 [Priority history](Priorities-for-Flashcards.md#priority-history) · [Event Markers](Repetition-History-and-Statistics.md#event-markers)
+
+### ✨ New - `Ctrl+Shift+H` shows flashcard history too, one section per card
+
+The shortcut now opens the card history for any Rem with flashcards — **in the editor as well as the queue** — showing every card of the Rem in a collapsible section named the way RemNote's own panel names it (`Cloze (a [Carena])`, `Forward Card`), with per-card and Rem-wide totals for repetitions, lapses, time and retention. A Rem that is both incremental and a flashcard source gets a button across to the other history.
+
+📖 [Flashcard Repetition History](Plugin-Widgets-Reference.md#211-flashcard-repetition-history)
+
+![Flashcard Repetition History Popup](assets/flashcard-rep-history-2.png){ width="900" }
+
+### ✨ New - record a flashcard review you did away from RemNote's Queue
+
+The card history popup gains **➕ Repetition**: the four grade buttons, each showing the interval FSRS projects it would buy — Again included, so you can see what a lapse costs before pressing it. The repetition is dated now and cannot be backdated, which the panel states; it is the flashcard counterpart of the IncRem popup's ➕ Session. Again's figure is where FSRS *resumes* after any relearning steps your scheduler adds, which is why it differs from the `1 hour` RemNote's own Forgot button shows. Sample use case: while in the Editor, you realize you forgot the answer of a card that has a large interval and is not yet due. Tell it to RemNote, so that it can be rescheduled appropriately.
+
+📖 [Flashcard Repetition History](Plugin-Widgets-Reference.md#211-flashcard-repetition-history)
+
+### ⚡ Improved - Inlinize reads `.1` `.2` `.3` sub-paragraph markers
+
+The IMO/UN drafting style is now recognised as one marker, so the line break lands before the dot instead of leaving a stray `.` at the end of the previous item.
+
+📖 [Inlinize Detected List](Utilities-Text-and-Lists.md#inlinize-detected-list-inl)
+
+### ⚡ Improved - the flashcard history table compares your schedule against FSRS
+
+Each review now shows **two** target dates in tinted column groups — what RemNote **Scheduled**, and the **FSRS Optimum** (the previous review's date plus the stability computed then) — each with its own delay, so you can see at a glance whether a card is being reviewed sooner than the memory model needs or later. Delays are written compactly (`+3d`, `−2w`, `+1.4y`) and the `pluginData` column is gone, which is what makes the whole table fit without scrolling sideways.
+
+📖 [Flashcard Repetition History](Plugin-Widgets-Reference.md#211-flashcard-repetition-history)
+
+### 🐛 Fixed - the retention % in the Practiced Queues log was always grey
+
+Every other surface colours it — the Sessions Summary, the live session card, the Study Dashboard — but the logged session cards printed `(92%)` in plain grey, so a session you had to work for looked the same as one you sailed through. A session that answered no cards at all (`0 / 0`) now shows its placeholder `100%` in grey rather than green, since there is no retention there to be pleased about.
+
+📖 [Retention colours](Colour-Coding-Reference.md#retention)
+
+## v1.0.76 - September 3rd, 2026
+
+### ✨ New - link a flashcard to its source without disturbing the card
+
+**Ctrl/Cmd+Shift+Enter** in the Find Rem picker appends a **pin at the end of the Rem** and leaves your selected text alone — so, mid-queue, you can select part of a card, press `Alt+Shift+F`, and pin the highlight it came from for next time.
+
+📖 [Pin a source at the end of a Rem](Utilities-Finding-and-Navigating.md#pin-a-source-at-the-end-of-a-rem)
+
+### ⚡ Improved - making a Rem incremental leaves one history entry, not two
+
+Setting a priority right after creation (Alt+Shift+X, the highlight toolbar's **Create IncRem**, **Toggle Incremental**) no longer files a *Rescheduled in Editor* event beside the ▶ Made Incremental marker: the priority and interval you choose are written into the marker itself, which now also records the interval on the plain Alt+X path. Rescheduling later still counts as its own event.
+
+📖 [Event Markers](Repetition-History-and-Statistics.md#event-markers)
+
+### ⚡ Improved - Find Rem marks PDF highlights with their own badge
+
+A highlight carries the same `DEFAULT_TYPE` as any plain Rem, so the picker's type badge couldn't tell one apart from your own note of the same sentence — highlights now show an amber **PDF HIGHLIGHT** badge instead.
+
+📖 [Spotting PDF highlights](Utilities-Finding-and-Navigating.md#spotting-pdf-highlights)
+
+## v1.0.75 - September 2nd, 2026
+
+### ✨ New - where you stopped reading an outline, shown next to where you stopped in a PDF
+
+Both surfaces that already reported PDF reading progress now do the same for a [read point](Reviewing-Items-in-the-Editor.md#read-points-for-rem-type-incremental-rems): the **Repetition History** popup gains a footer, and the **Priority Editor** a panel, each showing the clickable path from the Rem down to the bookmarked descendant and the date it was set. The collapsed Priority Editor marks a Rem that has one with a green bookmark.
+
+📖 [Read Points](Reviewing-Items-in-the-Editor.md#jumping-to-the-read-point) · [IncRem Repetition History](Plugin-Widgets-Reference.md#212-increm-repetition-history-aggregated-view)
+
+### ✨ New - Text Case Converter keeps acronyms and Roman numerals uppercase
+
+Title Case no longer flattens an acronym to *(Ab)* or a `Seção II` to *Seção Ii*: maritime, institutional and technical acronyms are built in, Roman numerals are recognised where they read as numbering, capitals you already typed are preserved, and your own terms go in **IE Settings → Other → Title Case Acronyms**.
+
+📖 [Acronyms and initialisms](Utilities-Text-and-Lists.md#acronyms-and-initialisms)
+
+### ⚡ Improved - Priority Shield History opens on the Knowledge Base graphs
+
+The four charts were reordered: Knowledge Base first (Card, then IncRem), then the document scope — the widest view no longer needs a scroll.
+
+📖 [Priority Shield Graph](Plugin-Widgets-Reference.md#44-priority-shield-graph)
+
+### ⚡ Improved - the incremental and dismissed left borders span the whole block
+
+The green and amber markers now run down the Rem *and* its descendants instead of stopping at its first line, so an outline reads as one block at a glance; the document you are currently inside keeps its title-only marker.
+
+📖 [Editor colour coding](Colour-Coding-Reference.md#editor)
+
+## v1.0.74 - September 2nd, 2026
+
+### ✨ New - Priority Review Documents no longer hand you a parent's answer
+
+A due flashcard whose parent or grandparent is also due is held back, and the blocking ancestor takes its place in the document — practise it now, and the descendant is free next time.
+
+📖 [Ancestor Spoiler Protection](Priority-Review-Document.md#ancestor-spoiler-protection)
+
+## v1.0.73 - September 1st, 2026
+
+### ✨ New - Priority Review Queue pinned to your sidebar
+
+The `#Priority Review Queue` tag Rem is pinned to your sidebar the first time a review document is built — once, and never again if you unpin it — so the queue is reachable on mobile, where the plugin panel is not. Review documents are now created under that tag Rem instead of at the top level.
+
+📖 [The Priority Review Queue in your sidebar](Priority-Review-Document.md#the-priority-review-queue-in-your-sidebar)
+
+## v1.0.72 - August 30th, 2026
+
+### ✨ New - `$` and `$$` recognised as LaTeX delimiters
+
+**Convert extracted markup to rich text** now also converts `$…$` and `$$…$$`, for PDFs whose text layer you did not author. A lone `$` is matched conservatively, so prices are left alone.
+
+📖 [Convert extracted markup to rich text](Plugin-Commands-Reference.md#convert-extracted-markup-to-rich-text)
+
+## v1.0.71 - August 30th, 2026
+
+### 🐛 Fixed - queue opened with no plugin widgets
+
+The right sidebar and every plugin widget sometimes failed to appear on queue entry, until you clicked the Practiced Queues tab by hand.
+
+## v1.0.70 - August 30th, 2026
+
+### ✨ New - Card Enablement Audit
+
+A Rem can look exactly like a flashcard and generate nothing. The new **Audit Card Enablement** command takes one anchor Rem, asks every Rem tagged with it, referencing it or descended from it whether it actually produces cards, and switches the broken ones back on in bulk — with a card priority for the ones it enables, and an undo.
+
+The case it was built for is an **Anki import**: hundreds of Rems arrive with the flashcard direction set to `none`. They read as ordinary cards and are never scheduled — and because they own **no card records at all**, no card-driven tool can see them and RemNote's search cannot express the question.
+
+📖 [Card Enablement Audit](Utilities-Cleaning-Up.md#card-enablement-audit)
+
+#### Technical explanation
+
+The walk is Rem-driven rather than card-driven, which is the whole point: a Rem at `direction=none` produces zero rows in `card.getAll()`, so the Suppressed Cards breakdown is structurally blind to it however it is filtered. Verdicts follow `findings/CARD_STATE_REFERENCE.md` and are ordered by what a fix would accomplish — a disabling ancestor outranks the Rem's own direction, since setting a direction under one writes the slot and produces nothing.
+
+Three things make it usable at scale, where the single-Rem debug probe is not: the card table is fetched once and indexed by `remId` instead of once per Rem; ancestor chains are memoised per parent id, so the hundreds of rows of an imported deck resolve one shared chain and get their breadcrumb from the same walk; and plain-string rich text is joined locally rather than paying a `normalize` + `toString` round trip per Rem. Writes are sequential under a suppression lease, and the cards created are counted by reading back afterwards rather than predicted.
+
+### ✨ New - remove card priorities in bulk
+
+The **Batch Card Priority** panel can now take priorities off the same selection it assigns them to. Undoable, with the before-state downloaded as JSON, and the table badge goes with the priority.
+
+It counts only Rems that physically carry the tag — a Rem with no tag still *resolves* an inherited priority, but there is nothing there to remove.
+
+📖 [Removing card priorities in bulk](Priorities-for-Flashcards.md#removing-card-priorities)
+
+### 🐛 Fixed - one "slot which doesn't exist" toast per Rem during a bulk priority removal
+
+Removing priorities from 223 Rems produced 223 toasts. The removals themselves worked.
+
+#### Technical explanation
+
+`clearRawCardPriority` cleared both priority slots unconditionally, the retired visible one included. Its rejection was caught, but RemNote raises the host-level warning before the promise reaches that catch. The read path already skipped the retired slot; this is the same guard on the write side, keyed on retirement rather than migration — a migrated KB whose visible slot is still registered can hold a stale value that must still be cleared. `stripCardPriorityTag` threads the plugin handle through, and the popup realm warms the retired-slot memo once per run instead of asking per Rem.
+
+## v1.0.69 - August 30th, 2026
+
+### ✨ New - All Tips
+
+A fourth button on the sidebar tip opens the whole pile: acknowledged ones first, newest at the top with the date you answered them, then the ones still to come. Each row has its own **Learn More**, and each unanswered one its own **I Got It**. When no tip is on screen the panel shows a **💡 All tips** link instead.
+
+![The sidebar tip with its four buttons: I Got It, Learn More and All Tips, and the ✕ in the corner](assets/panel-hub-expanded-with-tip.png){ width="400" }
+
+📖 [All Tips](Getting-Started.md#all-tips)
+
+### 🐛 Fixed - the same tips kept coming back
+
+Two causes. Tips were drawn at random, so with a few left in the pile the same one recurred; they are now offered in rotation, least recently seen first. And "one tip per session" only held while the sidebar stayed put — RemNote remounts it as you use the app, and each remount drew again.
+
+📖 [Tips](Getting-Started.md#tips)
+
+#### Technical explanation
+
+Acknowledgements were never lost, but lived in synced storage alone — what lost the Card shield history in the storage overhaul. They are now mirrored locally, read as the union of both, and merged before writing, so an un-hydrated `getSynced` can neither resurrect a retired tip nor overwrite a full record with one id. Existing ones are copied to the mirror on the next panel mount. An acknowledgement made before `getCurrentKnowledgeBaseData()` resolved used to land in a `default` bucket no later read consulted; that bucket is now folded into the current knowledge base.
+
+`pickTip` takes a last-shown map (never-shown first, then oldest, random tie-breaks); the drawn tip is held in session storage. Both are local — pacing, not decisions. New **Onboarding Tips State** section in the Debug popup: every store and partition, per-tip presence in each, rotation order, and a reset.
+
+## v1.0.68 - August 29th, 2026
+
+### ✨ New - convert markup left by PDF extraction into real rich text
+
+RemNote's PDF highlight extraction copies the page's text layer **verbatim** — it runs no markdown or LaTeX parser at all. So a highlight over a formula arrives as the literal characters `\[C_{WP} = \frac{A_{WP}}{L_{PP}B}\]`, and a bold heading as `**2.3.1. Efeito** *squat*`.
+
+The new **Convert extracted markup to rich text** command (`cem`) turns that markup into real RemNote nodes: display and inline formulas become KaTeX, `**bold**` and `*italic*` become formatting. Focus a Rem and run it — if the Rem has descendants the whole subtree is converted, so you can point it at a chapter or an entire Highlights document in one go.
+
+This pairs with a PDF whose text layer has been rebuilt to carry markup in *source* form. Highlights over such a PDF land as plain characters, and this command finishes the job after the fact.
+
+Rems with nothing to convert are left untouched and never rewritten, so the command is safe to re-run over material you have already processed.
+
+📖 [Convert extracted markup to rich text](Plugin-Commands-Reference.md#convert-extracted-markup-to-rich-text)
+
+#### Technical explanation
+
+The converter walks a Rem's rich text array and only transforms text nodes — raw strings and `i: 'm'` — passing images, Rem references and existing formulas through untouched, so a caption that already holds an image keeps it. A node's own formatting is preserved on the plain runs surrounding an extracted formula.
+
+Delimiters are `\[…\]` and `\(…\)` rather than `$$…$$` / `$…$` deliberately. RemNote unescapes markdown inside dollar-delimited spans **before** the math parser sees them, which strips the backslash from `\,` `\;` `\{` `\}` `\%` `\\`. The formula still renders, just wrongly — a thin space silently becomes a literal comma — which makes the corruption easy to miss. Backslash-bracket delimiters pass through intact, and RemNote normalises them to `$…$` / `$$…$$` on storage, so the stored form looks identical either way; only the surviving backslashes tell the two apart.
+
+Display formulas are matched before inline ones, since a display formula may itself contain parentheses that would otherwise be read as an inline delimiter.
+
+## v1.0.66 - August 29th, 2026
+
+### ✨ New - hide the front-side table properties of a single card
+
+A table column that generates flashcards can be set to print some of the table's properties on the question side — the usual shape of an Anki import done with *"Import notes with multiple fields into a table"*. The setting is per column, so it applies to every row alike: on most rows that context helps, on one row the property *is* the answer.
+
+The new **Hide Front Extras** powerup hides the table properties shown on the **front** of the card you tag — the back still shows everything. Apply it from the queue or the editor with the **Hide Front Extras (Table Properties)** command (`hfe`). Only the tagged card is affected; the rest of the table is untouched. **No Hierarchy** does not cover this: front extras render outside the ancestor hierarchy it hides, so the two are complementary.
+
+📖 [Hide Front Extras](Utilities-Queue-Display.md#hide-front-extras)
+
+#### Technical explanation
+
+Front extras render as an `.extra-card-detail` block inside the ancestor's `.indented-rem`, as a sibling of the question Rem — which is why No Hierarchy, scoped to the ancestor's own `> .rn-queue-rem`, never touched them. The back-side extras are a separate block outside the hierarchy tree that only enters the DOM once the answer is revealed, so the rule gates on `.rn-queue__content--answer-hidden` and needs no back-side exception.
+
+The powerup is always registered — it has no counterpart in the standalone Hide in Queue plugin, so it can't produce a `Duplicated powerup` collision and stays outside the Hide-in-Queue integration setting.
+
+## v1.0.65 - August 28th, 2026
+
+### 🐛 Fixed - the Card shield graph was plotting a different universe from the shield itself
+
+The Card shield charts recorded **one point per Rem-with-cards** while the queue's shield and the Weighted Shield popup had been working per card since v1.0.51. Same knowledge base, two populations: a library of ~67,600 cards was stored as a universe of ~45,350, with a Weighted Shield several points away from the one on screen and a Relative Priority % to match.
+
+Card shield points are now recorded over the per-card universe, at both Knowledge Base and Document scope. **Expect a one-time step in the Card shield charts on the day you upgrade** — the Universe Size line jumps from the Rem count to the larger card count, and the Weighted Shield and Relative Priority % lines shift with it. The IncRem charts are Rem-based by design and are unaffected.
+
+📖 [Priority Shield Graph](Plugin-Widgets-Reference.md#44-priority-shield-graph)
+
+#### Technical explanation
+
+The per-card transition changed the popup, the session-cache shields and the priority commands, but never `saveKBShield` / `saveDocumentShield` — both kept receiving `CardPriorityInfo[]`. The graph's own help text had been describing that migration as complete since 2026-05-27; it now names v1.0.65 as the point from which stored Card points are per-card.
+
+`expandCardInfosToCards` now feeds both save paths, with a per-card `isPerCardDueOverdue` preserving the "due up to the start of today" threshold the history has always used, so only the universe changes and not the definition of overdue.
+
+## v1.0.64 - August 28th, 2026
+
+### ⚡ Improved - spoiler protection now covers clozes made with `Alt+Z`
+
+Spoiler protection only ever looked at cards on the Incremental Rem itself, so a parent carrying no cards of its own passed straight through the check — and read you the sentence its own `Alt+Z` clozes were about to test.
+
+An Incremental Rem is now also **held back while a due flashcard sits on one of its direct `Alt+Z` cloze children**. Nothing else changes: the hold lifts as soon as those cards are graded, when nothing unspoiled is left to show, or when no flashcards remain.
+
+Deeper descendants, and children you cloze by other means, are still not checked.
+
+📖 [Spoiler Protection](Reviewing-Items-in-the-Queue.md#spoiler-protection)
+
+#### Technical explanation
+
+`Alt+Z` tags every cloze it creates with `cloze-extract`, and that tag is what makes this affordable: the children that can spoil a parent are identifiable from its direct children alone, with no subtree walk. The tag is resolved once per prefetch build, and the child scan is issued concurrently with the verification that path already performs — so the protection still adds no wall time to a callback that has to stay inside RemNote's ~1s deadline.
+
+Membership is read per child with `getTagRems()`, never from the tag's `taggedRem()` member list. That list under-reports built-in powerup membership badly enough to have silently emptied an earlier scan, and it would also drag every cloze extract in the knowledge base across the bridge on every rebuild. **Probe Spoiler State** in the debug widget now prints both sources side by side, so the two can be compared on a real Rem rather than assumed to agree.
+
+## v1.0.63 - August 28th, 2026
+
+### ✨ New - the whole Priority Review workflow is in the sidebar panel
+
+The **Priority Review** button in the [panel](Getting-Started.md#the-incremental-plugin-panel) has gained two neighbours. **👁** opens the **Priority Review Queue** Rem — every review document you have built is tagged with it, so its references are the list of them, and that is where you go to study from one you made earlier. **🧹** runs **Clean Priority Review Documents**. Create, study, clean: the three things you do with review documents, in one control.
+
+![The Incremental RemNote panel: the Priority Review group with its eye and broom actions, and the scope it is about to use named underneath](assets/panel-hub.png){ width="700" }
+
+**⌨** moved up into the header, next to **⚙ ? ✕** — it opens a documentation page like **?** does, so it was never an action. That is what paid for the two new buttons. **Sorting** is now sized to its own word instead of half the row, so **Priority Review** stops being truncated.
+
+#### Technical explanation
+
+The trio is one segmented control — a single outline with dividers instead of three bordered buttons with gaps between them — which is worth ~10px in a column the user can drag down to ~130px, and says the right thing besides. Only the label cell flexes, and it truncates with an ellipsis rather than overflowing its box the way a `nowrap` button does; **👁** and **🧹** stay 22px however narrow the sidebar gets. The eye resolves the tag with `findByName` and toasts instead of failing when it is absent — the tag is created lazily by the first review document, so having none is a state, not an error.
+
+📖 [The Incremental RemNote Panel](Getting-Started.md#the-incremental-plugin-panel)
+
+### ✨ New - cleaning retires a review document once its flashcards are done
+
+**Clean Priority Review Documents** used to keep a document alive for any entry still due, incremental ones included. It now deletes a document once **no flashcard in it is due**, and the still-due `INC` entries go with it.
+
+A review document exists to get flashcards reviewed in priority order, which is the one thing an ordinary queue will not do for you. Incremental Rems are injected into every queue by the sorting criteria whether or not a document points at them — so one down to its incremental entries has nothing left to offer, and keeping it only leaves stale Rem references in your knowledge base. **The Rems themselves are untouched**: only the document's references to them go, and they come up in your queue exactly as before. The review screen counts them in the checkbox line before you delete anything, and the report names them afterwards.
+
+Documents holding **writing of your own** are still never deleted — including, now, notes you wrote under an incremental entry that is staying.
+
+#### Technical explanation
+
+The predicate went from `dueEntries.length === 0 && unknownEntries.length === 0` to `dueFlashcards === 0`. That opened a data-loss path that had to be closed in the same pass: a due entry used to block deletion outright, so nothing ever checked whether one carried notes — and `remove()` on the document takes descendants with it. Due and unjudged `INC` entries are now checked for children and edited text exactly as the stale ones already were, under a new `inc-with-notes` reason.
+
+It also makes the command work on a cold cache. `unknown` status is only ever set on `INC` entries — a flashcard is read straight off the card data — so an empty IncRem cache no longer suppresses document deletion, because the flashcard half of the decision is never unavailable.
+
+📖 [Finished documents are deleted too](Priority-Review-Document.md#finished-documents-are-deleted-too)
+
+## v1.0.61 - August 27th, 2026
+
+### ✨ New - a pin's ring now says where it leads
+
+**Yellow** means the pin leads into a **source document**, **blue** means a figure in your own notes, and a **PDF area highlight** — a clipped figure, which is both — carries both colours. An extract holds a reference to its parent *and* a pin to its highlight, so telling them apart at a glance is the point.
+
+![Three pins in one document, each labelled: a yellow ring on a pin to a PDF text highlight (its green dotted bottom and right edges carrying the linked highlight's 20s priority band), a blue ring on a pin to a Rem holding an image, and a yellow-and-blue ring on a pin to a PDF area highlight](assets/pin-rings-explanation.png){ width="900" }
+
+Adding a figure to an ordinary text highlight keeps its plain **yellow** ring: what marks an area highlight is holding the image and *nothing else*. The scan records it as **`PdfAreaHighlight`**, applied **instead of** `HasImage` rather than alongside it — so filter one tag for your own figures and the other for clippings.
+
+#### Technical explanation
+
+The tempting CSS test — `hasimage` **and** `pdf-highlight` — is wrong for a text highlight someone dropped a figure into, and RemNote has no area-specific powerup (a single `PDFHighlight` covers both kinds, as `data-rem-tags="pdfareahighlight pdf-highlight"` on an area highlight confirms). The real discriminator is that the Rem's text is the image *alone*, which no selector can see, so the scan decides it: a free synchronous check beside the existing one, then one bridge **read** per image-only Rem to confirm it is a clipping.
+
+The two tags are kept mutually exclusive because RemNote collapses two or more tags into a **"N tags" chip** that cannot be hidden without also hiding the user's own tags.
+
+The ring shares its box with the priority-band marker rather than nesting outside it. A reference container carries the *referenced* Rem's tags, so on a banded highlight the band rules set `border-bottom` / `border-right` on this same element with `!important`; the ring simply holds the other two edges, giving one box that is half band colour. An `outline` was tried first and is worse — a second concentric box around an already-marked pin, which on an extracted highlight is pure clutter.
+
+An area highlight's colours are per-edge (`border-color: yellow blue yellow blue`) rather than a gradient: `border-image` paints all four edges from one image, is not overridden by the band's `border-color`, and would therefore erase the band marker — losing the edge-sharing the design rests on.
+
+The rings are **off by default**, behind **Enable Pin Reference Colour Rings** (*Editor Indicators*). Two of the three states depend on tags the scan writes, so a knowledge base that has never run it would otherwise wake up with a marker on every pin. Switching it off also clears the priority-band border that the highlight styling leaks onto pin containers, so "off" means genuinely unmarked.
+
+📖 [Pins that lead to an image are ringed](Utilities-Finding-and-Navigating.md#pins-that-lead-to-an-image-are-ringed)
+
+### 📚 Docs - one page listing every colour the plugin draws
+
+New **[Colour Coding Reference](Colour-Coding-Reference.md)** under *Essential References*: the priority ramp and what its hues mean, the editor's left borders and highlight backgrounds, the pin rings, the PDF reader's provenance line styles, the queue's emphasis boxes, and the analytics bar thresholds — with a closing note on why none of them collide.
+
+## v1.0.58 - August 26th, 2026
+
+### ✨ New - find the cards your queue can never show you
+
+Cards can sit in your knowledge base unable to ever come up: disabled on the Rem, silenced by an ancestor's tag, parked in a paused deck, or left behind when a cloze was deleted. They were counted as ordinary cards, so `%New` and `Done` described a knowledge base larger than the one you can practise, and a paused deck's cards were counted as **due**.
+
+A new **🚫 Suppressed Cards** tab breaks them down by bucket and cause, and lets you re-enable in bulk the ones that were switched off by mistake — each Rem shown as `front → back` with its breadcrumb, an **IncRem** badge where practice is meant to be off, and a **✓ checked** mark that syncs across devices so a long list can be worked through over several sittings.
+
+![The Suppressed Cards tab, with every cause counted per priority bucket](assets/suppressed-cards.png){ width="900" }
+
+The analytics table gained `Unsched` and `Paused` columns, and `Done`, `%New`, `%Stale` and the FSRS averages now divide by `Active` — the cards you can actually practise.
+
+![Card Priority × Memory Analytics](assets/weighted-shield-memory-analytics-2.png){ width="1000" }
+
+📖 [Suppressed cards](Prioritization-&-Sorting.md#suppressed-cards)
+
+### ✨ New - diagnosing and cleaning up card records
+
+**Probe Card Enablement** and a **card ownership probe** in the Debug widget print every signal that decides whether a card can be practised. Two clean-up tools delete cloze card records whose markup no longer exists — one for a single Rem, one sweeping the knowledge base — always keeping cards that carry real graded practice, and always after a backup file has been saved.
+
+📖 [Why can't this card be practised?](Troubleshooting.md#-why-cant-this-card-be-practised)
+
+### 🐛 Fixed - paused decks were counted as due
+
+Pausing a deck does not clear its cards' next repetition dates, so the two card-priority build paths disagreed: the cold path read `rem.getCards()` and excluded them, the warm path read `card.getAll()` and counted them as due. Shield figures therefore depended on whether the cache came up warm or cold. Run **⏸ Scan paused decks** once and both paths exclude them.
+
+#### Technical explanation
+
+Unscheduled cards (`cardsNextRep === null`) now leave the per-card universe in `expandCardInfosToCards`, which by construction updates the Weighted Shield, the standard Priority Shield, the badge `kbPercentile` and the Priority Review Document together. Paused cards are deliberately kept: pausing defers a card without demoting it, and excluding them would shift every other card's percentile on pause and shift it back on unpause. `priority_bands.ts` applies the same rule per Rem — a Rem whose cards are *all* unscheduled drops out, one with any schedulable card still counts once, so the pool stays rem-weighted.
+
+Paused decks are found top-down: a Rem whose cards are all suppressed cannot be found by walking up from every card-owning Rem (~45k of them here), so the scan probes for the Deck powerup with a snapshot prefilter and expands each paused deck with one `getDescendants()` call, caching the result in session and local storage. Built-in powerup membership is not enumerable, hence the scan rather than `taggedRem()`.
+
+Distinguishing a card the user disabled from one whose cloze was deleted needs the markup itself: a cloze card's `type.clozeId` is matched against the `cId` values in the Rem's rich text, since no Rem-level signal separates the two. Table rows report `enablePractice === false` exactly like a deliberate switch-off and are split out with `rem.isTable()` on the Rem and its ancestors.
+
+## v1.0.57 - August 24th, 2026
+
+### ✨ New - clean the reviewed entries out of a Priority Review Document
+
+A Priority Review Document is a snapshot: its entries are chosen from what was due when you built it, and nothing updates them afterwards. Work through it over a few days and it ends up mostly made of items you have already reviewed — still feeding the document's queue, crowding out the priorities it was built to reach.
+
+**Clean Priority Review Documents** (quick code `cprd`) reads every review document in the knowledge base and removes the entries whose Rem no longer has anything due. `FC` entries are judged on the referenced Rem's own cards, `INC` entries on its next repetition date; entries whose Rem has been deleted go too. "Due" means due at any point up to the end of today, so a card sitting in a learning step is not thrown away.
+
+A document left with **nothing due at all** is finished, and is deleted outright — including one that already holds no entries. A checkbox, ticked by default, controls that. Nothing of yours is ever caught by it: an entry kept for the notes under it, or a bullet you added to the document, keeps the document too, and the review screen says so.
+
+Nothing is deleted until you confirm. The review screen lists each document with how many entries are still due, how many have been reviewed and how many it holds, expandable to the entries by name — useful on its own as a readout of what a document is still carrying. Tick which documents to clean. Entries you have written notes under, or typed next to, are never deleted and are listed separately.
+
+📖 [Cleaning a Review Document](Priority-Review-Document.md#cleaning-a-review-document)
+
+#### Technical explanation
+
+Two knowledge-base-wide reads — one `card.getAll()` and the IncRem session cache — answer every entry in every document, so the per-entry cost is a map lookup rather than a round trip; children and targets are fetched per document with `findMany`. Entry kind comes from the `INC`/`FC` tag the builder wrote, resolved with two `taggedRem()` calls, falling back to inspecting the target when a tag has been removed.
+
+The due cutoff is the end of today rather than the builder's `now`. The builder is choosing what to serve at this instant; this is deciding what to throw away, and a card answered *Forgot* an hour ago is ten minutes out — not due by `now`, but returning in the same session. For `INC` entries the two coincide, since `nextRepDate` is a Daily Document date at midnight.
+
+An empty IncRem cache is treated as "cannot judge", not as "nothing is due": `INC` entries are reported as unjudgeable and left alone, since an unbuilt cache and a fully reviewed knowledge base look identical. Cards in paused documents still read as due and are kept. `remove()` deletes descendants, so an entry with children is never a candidate whatever its state — and neither is a document holding one, which is what separates a deletable document from one that merely has nothing due. The plugin's own two children, the metadata block and the graph Rem, are told apart from yours by text with a powerup read as fallback, so they never block a deletion; the graph's data lives on that Rem, so it goes with it. A document on its way out is removed in one call rather than walked entry by entry.
+
+## v1.0.53 - August 21st, 2026
+
+### ✨ New - an Incremental Rem no longer spoils its own flashcard
+
+When a Rem is both an Incremental Rem and a flashcard, the extract used to turn up before the card as often as after it — handing you the answer, so the recall was not a recall and the grade measured nothing.
+
+The Incremental Rem is now **held back while any flashcard on that same Rem is still due**. Grade the card and the extract returns to the running, normally a few items later in the same session. It is a change of order, not of content: a held item is released as soon as its card is graded, or when nothing unspoiled is left to show instead, or when no flashcards remain — so it is never postponed past the end of the session.
+
+Only cards on the Rem itself count; children are not checked. New, never-practiced cards do count, and disabled card directions do not. Normal queue only — *Practice All* and *In Order* are unaffected. Switch it off with **Hold Back Spoiler IncRems** under *Queue*.
+
+📖 [Spoiler Protection](Reviewing-Items-in-the-Queue.md#spoiler-protection)
+
+#### Technical explanation
+
+The check runs in the prefetch buffer, never in `GetNextCard` — that callback has a ~1s deadline after which RemNote silently discards its answer, so it stays free of awaits. The candidate's `rem.getCards()` read is issued concurrently with the IncRem verification that path already performs, so protection adds no wall time.
+
+Spoilers go to a second buffer rather than being filtered out, and are served when the build has walked the entire eligible list without finding an unspoiled candidate — "the buffer is empty" alone would be ambiguous, since an exhausted verification budget looks the same, and falling through on that would leave the protection doing nothing on a busy build. Due-ness uses `(nextRepetitionTime ?? Infinity) <= now`, matching the due counts in the priority shields so the two cannot disagree about what "due" means. Disabled directions are absent from `getCards()` entirely, and new cards carry a real `nextRepetitionTime`; both were measured rather than assumed, and the predicate fails open either way.
+
+## v1.0.52 - August 21st, 2026
+
+### ✨ New - the Study Dashboard has a Graphs tab
+
+The dashboard is now split into two tabs, **Summary & Hierarchy** and **Graphs**. The Context and Period box sits above them, so the scope you pick applies to both.
+
+![The Graphs tab: reviews per day on two scales, and time per day stacked](assets/study-dashboard-graphs.png){ width="800" }
+
+Five charts, all over the same timeline. **Reviews** and **Time** answer *how much*: flashcard reps against IncRem reps, and flashcard time against IncRem time. **Retention**, **Speed** and **Answer breakdown** answer *how well* — the Summary's own `Ret.` and `Speed` columns, plus the Forgot / Hard / Good / Easy split behind them, spread over time instead of collapsed into a single number.
+
+![Retention, Speed and Answer breakdown, with trend lines switched on](assets/study-dashboard-retention-speed-answerbreakdown.png){ width="820" }
+
+**Daily, Weekly, Monthly or Yearly** buckets the period along the x-axis. A year at daily granularity is 366 bars — readable when you want the detail, and one click from the weekly or monthly shape:
+
+![Zooming into a year of data, then switching it between daily, weekly and monthly buckets](assets/study-dashboard-graph-zooming-bucket-sizing.gif){ width="750" }
+
+On the Time chart, **Stacked** (on by default) makes the bar height the bucket's total. Unchecking it puts flashcards and IncRems side by side on the same baseline, which is easier to compare — at the cost of the per-bucket total. **Drag across any chart to zoom** into a range: all five follow, and the totals underneath describe what you can see, not the whole period.
+
+![Toggling Stacked, then dragging to zoom both charts into a shorter range](assets/study-dashboard-graph-time-stacking-zooming.gif){ width="700" }
+
+A **Trend lines** checkbox fits a straight line through retention, speed and each grade, and prints its slope — `Retention: 92% (↑ 0.20 pts/wk)`. The fit is weighted by the reps behind each bucket, so a three-rep week cannot pull it like an eight-hundred-rep one, and weeks you did not study are left out rather than counted as failures.
+
+Every axis fits itself to the values actually on screen, so the bars and lines fill the plot instead of huddling at the bottom. The numbers come from the same histories the Summary counts, so the two tabs always agree.
+
+📖 [Graphs tab](Study-Dashboard.md#graphs-tab)
+
+#### Technical explanation
+
+The dashboard builds a sparse per-day series (`buildTimelineDays`) alongside the Summary, reusing its rep predicates and its response-time cap — the charts cannot drift from the table above them. Rolling those days up into weeks, months or years happens in the chart (`lib/study_timeline.ts`), so switching granularity costs no recompute over the knowledge base and no RPCs; totals hold steady across all four bucket sizes because the roll-up only regroups. Buckets are keyed by calendar identity rather than by timestamp, gaps are filled with zero buckets so the x-axis reads as a timeline, and the span runs first-activity → last-activity rather than edge-to-edge of the period. Past 800 bars the granularity coarsens a step at a time and says so.
+
+Rates never average their buckets: retention, speed and each grade's share are recomputed from the summed reps inside whatever range is visible, and the trend fits are weighted least squares over the same counts. Percentage and rate axes are band-fitted around their own values rather than growing from zero, since a retention that lives between 88% and 95% drawn against 0–100% is a flat line. Zoom state is shared by all five charts, since they are five readings of one timeline.
+
+### ✨ New - one speed unit across the whole plugin
+
+The **Speed** columns in the Study Dashboard's Summary and Hierarchy tables now read in **cards per minute or seconds per card**, and the column heading is the switch — it says which unit is in force and toggles when clicked.
+
+It is the same preference the [Practiced Queues](History-Queue-Dashboard-and-Mastery-Drill.md#practiced-queues-history-live-dashboard) summary table already had, and the one the new Speed chart uses, so changing it anywhere changes it everywhere.
+
+📖 [Speed unit](Study-Dashboard.md#speed-unit)
+
+#### Technical explanation
+
+All three read the device-local `summarySpeedUnit` key rather than keeping their own copies. The dashboard carries it by React context, so a hierarchy row several components deep doesn't have to be handed it as a prop and hundreds of rows don't each open a storage subscription. Colour still comes from cards-per-minute whatever the display unit: the scale runs slow-to-fast, so colouring off a seconds-per-card figure would swap red for green.
+
+### 🐛 Fixed - changing a filter while the dashboard loaded restarted the load
+
+Switching period or context while the Study Dashboard was still loading threw away everything it had read and started again from zero. On a large knowledge base that could be a long wait repeated for every click — and a period change should never have cost a load at all, since the same data answers every period.
+
+📖 [Performance notes](Study-Dashboard.md#performance-notes)
+
+#### Technical explanation
+
+The stale-run guard ran *before* the result was cached, so a superseded run discarded a fully loaded knowledge base and the next run found an empty cache. The two runs also overlapped: the second started its own `loadGlobalData` while the first was still in flight, so the walks competed with each other. The result is now cached before the staleness check — the data belongs to the knowledge base, not to the run that asked for it — and loads go through a one-slot in-flight cache (`lib/shared_load.ts`), so a filter change joins the load already running. A failed load clears the slot rather than leaving every later caller to inherit a rejected promise. Progress reporting hands over to whichever run is on screen, so the bar keeps climbing instead of freezing at a superseded run's last value.
+
+## v1.0.51 - August 18th, 2026
+
+### 🐛 Fixed - a cleared priority could be served a pre-migration number
+
+On a knowledge base migrated to the hidden slot, a Rem whose priority was **cleared** afterwards could still resolve to the number it carried *before* the migration — the plugin fell back to the old slot when the hidden one was empty, and that slot still holds a frozen copy.
+
+Deleting the old `Priority` row never cleared the value behind it, and once the slot is retired that value cannot be removed: a retired slot can be read but not written, and registering it again creates a *new* slot definition that masks the old values rather than exposing them. So the fix is on the reading side — the priority read now settles whether the slot is retired **before** consulting it, instead of consulting it and preferring the hidden value afterwards.
+
+📖 [The old value can linger behind the deleted row](Priorities-for-Flashcards.md#stale-visible-value)
+
+#### Technical explanation
+
+`rawCardPriorityReads` skips the deprecated slot only when the realm knows it is retired, and that flag starts unknown everywhere — so a widget realm, which never writes, consulted the old slot for its entire life. `getCardPriority` now resolves the flag first; it is memoised, so this costs one synced-storage read per realm rather than one per Rem.
+
+The startup check that retires the slot was also counting the wrong thing: it looked for visible property *rows*, which the migration deletes, and so certified a knowledge base "empty" while 45,178 Rems still held a value in that slot. It now counts values as well and refuses to retire while any remain — the state it was creating is the one that cannot be repaired.
+
+### 🐛 Fixed - the debug widget reported an out-of-date priority
+
+The **Card Priority** panel showed the value a Rem had *before* the hidden-slot migration, and then flagged the current one as a stale cache. The number in use — in the Priority popup, the queue and everywhere else — was always the right one.
+
+Deleting a `Priority` row does not clear the value behind it, so a Rem prioritised before the migration still answers the old slot with the number it held back then. The panel read that slot. It now reads the hidden one, shows any leftover separately, and says which state this knowledge base's migration is in. Migration runs from this version on clear the value as well as the row.
+
+📖 [The old value can linger behind the deleted row](Priorities-for-Flashcards.md#stale-visible-value)
+
+#### Technical explanation
+
+Every diagnostic that still probed `cardPriority/priority` now goes through `slot_access` — the raw slot dump and read-path diagnostic report both slots side by side; the KB slot scan asks the hidden slot before calling a leftover the only surviving copy of a value; the imported-priority scan compares against the effective value rather than declaring every orphan recoverable; and the `updatedAt` probe writes the slot actually in use, which on a migrated knowledge base also stops it recreating the very property row the migration deleted.
+
+## v1.0.50 - August 17th, 2026
+
+### ✨ New - clear out the empty Rems an Anki import leaves behind
+
+**Delete Empty Extra Card Detail Rems** (`quick: decd`) finds Rems tagged **Extra Card Detail** that hold nothing at all, and deletes them once you confirm the count.
+
+They come from Anki imports: the *Extra* field is HTML, so an importer that maps it onto Extra Card Detail creates a child Rem for every paragraph break — and the empty ones show up in the queue as **Unnamed**. RemNote's own search cannot find them, because search indexes text and these have none.
+
+Rems that are also kept: **tables** (a row or cell that is not itself typed as a portal), **documents**, and any Rem carrying **another built-in powerup** — divider, embedded website, search portal, code block, uploaded file, table of contents. All of those render something while holding no text at all.
+
+**A manifest is written before the first deletion** — every Rem id and the id and text of the Rem it sat under, saved to this device *and* offered as a JSON file — and the run refuses to proceed if neither can be written. Deleting thousands of Rems was the one destructive operation in the plugin without that guard; the card-priority migration has always had it.
+
+![Two empty Extra Card Detail Rems, boxed in red, between real ECD content under a flashcard](assets/empty-ecd-rems.png){ width="800" }
+
+The scan writes nothing. It reports how many Extra Card Detail Rems it checked, how many are safe to delete, how many it kept and why, and a sample of what will go listed by the Rem each blank sits under. Only then is the delete button offered.
+
+The bar for "empty" is high, because this one deletes. **Blank text is not the same as empty** — a **portal** has no text of its own, since it is a window onto other Rems, and its contents are not its children either, so neither a text test nor a child test notices it. Candidates must therefore be plain Rems: not portals, Concepts, Descriptors, slots or properties. On top of that: no text or back text (an image, reference, LaTeX or annotation counts as content, cosmetic formatting on nothing does not), no children, nothing displayed portal-style, no tag beyond Extra Card Detail, nothing referencing it, no cards, no source, no alias. Anything that fails a check is kept and counted with its reason.
+
+📖 [Delete Empty Extra Card Detail Rems](Utilities-Cleaning-Up.md#delete-empty-extra-card-detail-rems)
+
+#### Technical explanation
+
+**Membership is tested per Rem, not read from a list.** Asking the powerup for its members with `taggedRem()` was the obvious approach and is wrong: on a knowledge base whose Anki imports hold thousands of Extra Card Detail Rems it returned **three**, while `hasPowerup('x')` on those same Rems returned true. This is a known RemNote limitation already recorded twice in this plugin — built-in powerup membership is not enumerable, which is why PDF Highlights are reached by harvesting links instead (`priority_bands.ts`) and why the key audit probes all Rems rather than trusting a tag list (`synced_key_audit.ts`). `getTagRems()` is no substitute either: it comes back empty for Rems that demonstrably carry ECD, while returning ids for a Rem carrying *plugin* powerups.
+
+So the scope is walked and each Rem asked directly — which is affordable only because of the order the phases run in. Text and back text come off the synchronous snapshot, so the blank test filters the whole knowledge base for free and reduces a 400k-Rem walk to the few worth a round trip. Only those are asked `hasPowerup`, and only the blank ECD ones pay for the five verification reads (tags, referencing Rems, cards, sources, aliases). Reads are issued at 16 in flight, because they overlap freely on a bridge measured at ~1,800-2,000 calls/s. The deletes stay strictly sequential, on the finding recorded in v1.0.49: RemNote applies writes one at a time, so overlapping them multiplies latency and leaves throughput flat. Deletion runs under a renewable suppression lease, so the plugin's own `GlobalRemChanged` listener does not process events for writes it just made, and a closed popup expires the lease instead of leaving it stuck.
+
+The review screen reports the whole funnel — Rems walked → blank → blank *and* ECD → deletable — because a scan that finds nothing needs to say which stage it narrowed at. Reporting only the final count is what let the `taggedRem()` bug read as "your knowledge base is clean".
+
+`Enter` is inert on the review screen. It ran the scan on the previous one, and inheriting that keystroke into an irreversible delete is the failure the two-stage flow exists to prevent.
+
+## v1.0.49 - August 17th, 2026
+
+### ✨ New - clear the HasImage tag in bulk
+
+**Remove `HasImage` Tags** (`quick: rmimg`) takes the image tag off every Rem that carries it — in the focused Rem's subtree, or across the whole knowledge base. A whole-KB scan can mark tens of thousands of Rems, and RemNote has no way to remove a tag in bulk, so there was no way back.
+
+Nothing is lost: the tag is derived from the images themselves, so **Tag Rems With Images** rebuilds it exactly. Re-running the scan *is* the undo, which is why the command needs none of its own.
+
+📖 [Clearing the tag](Utilities-Finding-and-Navigating.md#clearing-the-tag)
+
+### ⚡ Improved - Tag Rems With Images is about three times faster
+
+A first whole-KB run on a large knowledge base took **90 minutes**; the same run now takes about **30**. A re-scan, which has almost nothing left to write, takes **10 seconds**.
+
+The documentation now states what a run actually costs, because the shape of it is not obvious: reading every Rem is fast (10 seconds for 413,000 of them) and **writing the tags is the whole cost**. A run's length is set by how many tags it must write, not how many Rems it reads — so the first whole-KB pass is slow once, and every one after it is quick.
+
+📖 [How long it takes](Utilities-Finding-and-Navigating.md#how-long-it-takes-the-first-whole-kb-run-is-slow)
+
+#### Technical explanation
+
+The scan never suppressed the plugin's own `GlobalRemChanged` listener, so every tag write fired an event straight back into it — a `findOne`, session reads, and a debounced tail per write, all of it pointless for a write the plugin had just made itself. Every other bulk operation here already suppressed it. Doing the same took the measured cost from **232ms to 74ms per write** on a 413k-Rem knowledge base.
+
+Suppression is a **renewable lease** rather than the plain `true` the other callers use, because this scan runs in a popup the user is invited to close, and a torn-down iframe never reaches its `finally` — a stuck `true` would silently disable the listener for the rest of the session. `plugin_operation_active` now accepts either shape: a boolean, or a deadline that expires on its own (`lib/operation_suppression.ts`). Both of the listener's check sites read it through one helper, at the same cost as before — one session read.
+
+The scan is also split into a walk that decides and a pass that writes, which is what lets progress count **writes** — the only slow part — instead of Rems inspected.
+
+Two other things were measured and rejected, recorded here so they are not retried blind. **Yielding to the event loop less often** (every 5,000 Rems rather than 200) was kept, but it is worth ~10 seconds of a 90-minute run, not more. **Overlapping writes** did nothing at all: at 16 in flight, per-write latency rose from 74ms to ~1,180ms — almost exactly 16× — while throughput stayed at 13/s. RemNote applies tag writes strictly one at a time, so concurrent requests only queue behind each other. There is no bulk tag API in the plugin SDK, so ~74ms per tag is the floor.
+
+## v1.0.48 - August 17th, 2026
+
+### 📝 Changed - the plugin is now called Incremental RemNote
+
+*Incremental Everything* is **Incremental RemNote** from this release on. Shorter, easier to say, and it names what it is — which matters most to someone meeting the plugin for the first time in RemNote's plugin library.
+
+Nothing about your knowledge base moves: the plugin id, every powerup, every tag, every setting and all your history stay exactly as they are, and updating requires nothing from you. What you will notice is in the interface — the settings command is now **Incremental RemNote: Settings**, and the sidebar panel is titled **Incremental RemNote** rather than *Incremental Plugin*.
+
+The settings command's quick code is now **`is`** (it was `ies`). Shorter, and it no longer spells out initials of a name the plugin no longer has.
+
+**This manual has moved with the name**, to **[hugomarins.github.io/incremental-remnote](https://hugomarins.github.io/incremental-remnote/)**. The old address no longer resolves — a GitHub Pages address is built from the repository name, and there is no way to keep both — so **update your bookmarks**. The links inside the plugin (the **?** beside every setting, the panel's documentation button, and RemNote's own plugin page from this version on) all point at the new address already. If you are on an earlier version, its plugin-page links still point at the old one and will not resolve until you update.
+
+### 📝 Changed - card priorities are stored in a hidden slot
+
+A card priority used to live in a **visible** slot, which meant RemNote drew a `Priority — 31` row under every prioritised Rem. It now lives in a **hidden** slot, and that row is gone. The numbers, the sources, inheritance, the Card Shield, percentiles, the badges and [Priority Review Documents](Priority-Review-Document.md) all work exactly as before.
+
+Three reasons to move it:
+
+* **It fits how RemNote stores slots now.** Since the v1.27 storage overhaul a hidden slot holds its value directly, while a visible one still materialises it as a child Rem under the tagged Rem. Fewer moving parts for a value the plugin writes on tens of thousands of Rems, and one less structure that can be left behind, duplicated or detached.
+* **Less clutter, less intrusion.** A priority is bookkeeping the plugin does for you. It does not need a row in your outline, and on a knowledge base where most flashcards carry one, those rows were the plugin's largest footprint in your notes.
+* **It stops RemNote blanking out table cells.** A flashcard that lives in a table cell had its priority row drawn *in place of the cell's own content*, so the cell looked empty or wrong — in **simple and advanced tables alike**, any column whose cells carry flashcards. The cause is the child Rem: RemNote's cell renderer sees it, switches the cell into list mode, draws the child and never draws the cell's value at all. A hidden slot leaves nothing there to mistake for cell content. (Reported to RemNote separately; this makes the plugin stop triggering it.)
+
+### The migration
+
+Existing knowledge bases are moved over by a migration the plugin offers on startup, and which **Migrate Card Priorities to Hidden Slot…** runs on demand:
+
+* **Every priority is backed up first** — to your device and to a JSON file you keep. If no backup can be written, the migration refuses to run.
+* Each value is **read back from the hidden slot before its old row is deleted**, so a write that did not land keeps its row and its value.
+* **Interrupting it is safe.** A crash or a restart leaves the finished Rems finished and the rest untouched; run it again to complete it, and the original backup is reused rather than overwritten.
+* Reversible with **Undo Card Priority Hidden-Slot Migration…**.
+
+Once a knowledge base is verified to hold nothing in the old slot, the plugin **stops registering that slot at all** — which is what removes the leftover empty `Priority` row, since RemNote draws a row for every slot a plugin registers, values or not.
+
+The one thing you lose: priorities can no longer be typed straight into the outline, because there is no row to type into. Use the Priority widget (`Alt+P`), Quick Priority or the batch tools.
+
+#### Technical explanation
+
+The existing `priority` slot could not simply be re-registered `hidden`: RemNote applies slot options when the slot definition Rem is **created** and does not mutate an existing one — measured directly, a registration with `hidden: true` ran while `getPowerupSlotByCode` kept resolving the slot natively, which it only does for visible slots. So the value moves to a new code, `priorityValue`, whose definition Rem exists in no knowledge base yet and is therefore created hidden everywhere.
+
+`lib/card_priority/slot_access.ts` is now the only place the value is read or written. Reads take the hidden slot first and fall back to the visible one, folded into callers’ existing `Promise.all` so the extra call costs no wall-clock time; writes go to the hidden slot always and to the visible one **only while a knowledge base is un-migrated**, which is what keeps hand edits of the old row working right up to the moment the rows are removed.
+
+Two flags, per knowledge base, in synced storage so a phone cannot recreate what a desktop migration deleted. `migratedAt` is the **write** gate, set by any completed run including a partial one — withholding it would have the next priority write recreate a child on every Rem the run did clean. `completedAt` is the **registration** gate and is strictly stricter, because an unregistered slot stops resolving through `getPowerupProperty`: retiring one that still held a value would turn that value into an unreadable one rather than a cosmetic row. Only proof of emptiness sets it — a run with no failed writes, no rows kept back and no errors, or an exhaustive scan finding none. Sampled scans are treated as evidence in the positive direction only, and the sample is strided across `taggedRem()` rather than taken from the front, since that is the order the migration itself walks.
+
+Per Rem: write hidden → read it back → only then delete the row. Rows are identified by the rem **reference to their slot definition inside their own text** (`refIdsIn(child.text)`, the signal `lib/raw_slot_scan.ts` classifies on) — not by `getTagRems()`, which post-overhaul reports nothing on a property Rem. All matching rows are removed, not the first, since several property Rems can carry the same slot; a row with children of its own is left alone rather than taking that subtree with it. `lib/card_priority_snapshot.ts` — built for an earlier, abandoned attempt at this migration — is the backup, now capturing both slots and comparing *effective* values, so moving every value without changing one is not reported as a knowledge base of losses.
+
+📖 [Where a priority is stored](Priorities-for-Flashcards.md#hidden-slot)
+
+## v1.0.46 - August 15th, 2026
+
+### 🐛 Fixed - Incremental Rem badges in tables and highlights were coloured on the wrong scale
+
+Priority band badges are meant to be coloured by where a priority *ranks*, like every other badge in the plugin. For Incremental Rems they were not: the colour came from the absolute number instead, so a `50s` badge on an Incremental Rem read green while the Priority Editor drew the same Rem's `P54` in cyan. Table badges, the Highlights side-panel pills and the PDF marker tint were all affected. Flashcard badges were always correct.
+
+The bands themselves were right throughout — only the colour was — so nothing needs rebuilding: the fix applies on the next start.
+
+#### Technical explanation
+
+The band colours are baked into a stylesheet at registration time, and `registerCSS` is index-only, so the mapping is a snapshot taken when the stylesheets are registered during activation. The IncRem cache takes ~29s to load on a 5.6k-Rem knowledge base and nothing re-registered afterwards, so the percentile pool was empty every time and `bandColorPercentile` fell back to the band midpoint. Only the card scale looked right, because the card-priority cache build already bumped `priorityBandColorsReloadKey`. `loadIncrementalRemCache` now bumps it too, once per session on the cold→warm transition. Percentile sampling also reads the slim IncRem projection rather than dragging the multi-megabyte full cache across the bridge.
+
+A degraded scale is invisible in the UI — a fallback colour looks exactly like a ranked one — so this now warns in the console when a pool is too small to rank, and the new **Toggle Priority Band Colour Logging** command dumps the full band → percentile → colour table.
+
+📖 [Priorities in Tables](Prioritization-&-Sorting.md#priorities-in-tables)
+
+## v1.0.45 - August 14th, 2026
+
+### ✨ New - an Incremental Plugin panel in the sidebar
+
+The plugin now has one fixed place to reach it from: an **Incremental Plugin** panel at the bottom of the left sidebar. In its header, **⚙** opens the settings, **?** opens the documentation, and **✕** hides the panel for the session — it is back on the next start, and the **Show Incremental Plugin Panel** command brings it back sooner. Below it, three buttons: **⌨** for the shortcuts page, **Sorting** for the sorting criteria, and **Priority Review** for the Priority Review Document creator — already scoped to the document you have open, with that scope named under the button.
+
+Under the shortcuts it shows **one tip per session**. **I Got It** retires a tip for good, **✕** puts it back in the pile for later, and **Learn More** opens the page that explains the feature. Either answer ends the tip for that session — the panel will not chain into a second one. When every tip has been retired the tip area goes away and the shortcuts stay.
+
+#### Technical explanation
+
+`widgets/plugin_hub.tsx` in `SidebarEnd`, ungated — it is the entry point, so it cannot be behind a setting the user has not found yet. The tip pile lives in `lib/onboarding_tips.ts`: acknowledgements are stored KB-partitioned in synced storage (a tip retired in one knowledge base is not pre-retired in the next), while the tip's ✕ snooze is *local* (two hours, on this device only) and the panel's ✕ is *session* — closing the panel is "not now, I need the room", so it resets on the next start, the same contract the Mastery Drill notification has always had. The tip is drawn once per mount rather than on a tracker, so a synced-storage change cannot reshuffle it under the cursor — and answering it does not draw another, since a panel that quizzes you on acknowledgement is a panel you stop answering. The Priority Review button resolves scope exactly as the document-menu item does — focused Rem, then the focused pane's open document, then the first open pane — and a missing scope is not an error, since the creator still offers the whole knowledge base.
+
+Everything is sized for a column the user can drag down to ~130px: 11px type, short labels, and tip bodies capped at ~90 characters by the type's own contract, since a longer one wraps to five lines and the panel starts to squat.
+
+📖 [The Incremental Plugin Panel](Getting-Started.md#the-incremental-plugin-panel)
+
+### ✨ New - all the settings are in one window now
+
+The last five settings that stayed in RemNote's own plugin panel — **Enable Flashcard Prioritisation**, **Performance Mode**, the two **Always Use Light Mode** switches and **Enable Hide-in-Queue Powerups and Commands** — have moved into the plugin's settings popup with everything else, and are editable there. The plugin's section of **Settings → Plugins → Incremental Everything** is now empty.
+
+They were kept back on the theory that RemNote's own panel is where you would look first if the plugin ever felt heavy. There was no heaviness to chase, so the split bought nothing and cost a second place to look.
+
+Your values carry over on the first load, and anything you had already changed in the popup is left alone. The five settings appear in RemNote's panel for that one session, with a note saying so, and are gone after the next reload.
+
+#### Technical explanation
+
+`SEED_VERSION` goes to 6 and the `native` tier is deleted outright — one `SettingTier`-shaped branch each in `readRawSetting`, `setIESetting`, the registration filter and four places in the popup. The bump no longer re-reads everything: up to v5 a version bump forced a full re-read from RemNote's panel, which was safe only while the panel was younger than the blob. Now that the popup is where people edit, and a value equal to its default is stored as an *absent* key, a blanket re-read would resurrect pre-migration panel values and silently undo later edits. `ADOPTED_AT_VERSION` names the ids each version takes over, and only those are read across. Registration follows the same list, so a knowledge base moving from v5 to v6 sees five entries in RemNote's panel for one session rather than all thirty-four a second time.
+
+📖 [Where the settings are](Plugin-Settings-Reference.md#where-the-settings-are)
+
+### 📝 Changed - the FSRS settings say plainly that they schedule nothing
+
+The FSRS group in the settings popup now carries a warning above its three settings: they are **display and statistics only**. Nothing there can move a due date — scheduling is RemNote's, at **Settings → Schedulers** — and the values exist so the plugin's readouts describe your real scheduler. Set them to *match* what you use there; changing them here alone only makes the figures wrong. *FSRS Global Weights* and *Requested Retention* say the same in their own descriptions, being the two most easily mistaken for scheduler knobs.
+
+📖 [FSRS settings](Plugin-Settings-Reference.md#fsrs)
+
+### 🐛 Fixed - a renamed setting could lose its value during the migration
+
+The migration drops blob keys that are no longer settings, and it did that *before* running the renames — so a setting whose id had changed had its old key deleted a step before the rename needed to read it, and the value fell back to the default. Only *Skip Mastery Drill* → *Enable Mastery Drill* was ever affected. The renames now run first.
+
+📖 [Where the settings are](Plugin-Settings-Reference.md#where-the-settings-are)
+
+## v1.0.44 - August 14th, 2026
+
+### ✨ New - the CardPriority cleanup no longer has to be all-or-nothing
+
+**Remove All CardPriority Tags** is now **Remove CardPriority Tags…** and asks which tags to remove:
+
+- **Inherited & default only (recommended)** — the tags the plugin wrote by itself. Manual priorities, the `incremental` anchors left by dismissed Incremental Rems, tags with an unreadable source, and your shield history are all kept. **Reversible:** *Update all inherited Card Priorities* rebuilds them exactly.
+- **Everything** — the old behaviour, now behind a chain of warnings that state how many manual priorities are about to be destroyed, and offer the reversible scope one dialog before the last.
+
+Both scopes count what they found before touching anything, and name the knowledge base they are about to modify.
+
+#### Technical explanation
+
+One scan classifies every tag by its `prioritySource` into derived (`inherited`/`default`), intentional (`manual`/`incremental`) and unknown. The derived scope removes only the first bucket — an unrecognised source could be a manual priority whose source slot was lost, so a non-destructive pass will not gamble on it. KB scoping is explicit in two layers: the powerup comes from `getPowerupByCode`, so foreign CardPriority powerups left by cross-KB imports are never enumerated, and every tagged id is re-resolved through `rem.findOne` before it is written to. The partial scope also prunes only the removed rows from the session cache and the persisted copy, instead of emptying both — an empty cache would read as "this KB has no priorities" and hide the manual ones it just preserved.
+
+📖 [Remove CardPriority Tags…](Plugin-Commands-Reference.md#remove-cardpriority-tags)
+
+### ✨ New - turning flashcard prioritisation off now offers to clean up after itself
+
+Switching **Enable Flashcard Prioritisation** off stops the machinery, but the tags it already wrote stayed on your Rems with no hint of how to get rid of them. On the next reload the plugin now counts them and offers the reversible cleanup, in one dialog; declining explains how to run it later. Offered **once per switch-off**, and never on Light Mode devices — the cleanup is a KB-wide write, so it waits for a Full Mode session.
+
+#### Technical explanation
+
+Native-tier settings have no change event, so the gate's value is recorded per knowledge base in synced storage and compared on activation. The new value is written *before* the dialog opens, so declining or crashing cannot turn the offer into a nag, and a first sighting only establishes the baseline (an opt-out is indistinguishable from a fresh install otherwise). The check is fired from `onActivate` without being awaited.
+
+📖 [Switching it back off](Priorities-for-Flashcards.md#switching-it-off)
+
+## v1.0.43 - August 14th, 2026
+
+### ✨ New - filter a document down to just the Rems that hold an image
+
+RemNote's search indexes text, so images are invisible to it. The new **Tag Rems With Images** command (`quick: img`) tags every Rem holding an image with **`HasImage`** — then `Cmd/Ctrl+Shift+F` → `HasImage` collapses the document to its figures, and a **Search Portal** on the same tag collects them across documents.
+
+![The Tag Rems With Images popup: the first button names the Rem it would scan, the second offers the whole knowledge base](assets/tag-rems-with-images-popup.png){ width="700" }
+
+- **Two scopes:** the focused Rem (or open document), named on the button, or the whole knowledge base.
+- **Front *and* back text**, so an image on the back of a flashcard counts.
+- **Self-correcting:** a re-run clears the tag from Rems whose image is gone.
+- **Keyboard-driven:** `↑`/`↓` choose, `Enter` runs, `Esc` cancels. The `HasImage` chip is hidden from the editor tag bar.
+
+![Running the command on a chapter, then filtering by HasImage so the document collapses to only the Rems holding a figure](assets/filtering-rems-with-images.gif)
+
+#### Technical explanation
+
+An image is a rich-text element with `i: 'i'`, so detection is a plain scan of `text` and `backText`. Tag membership is read **once** via the powerup's `taggedRem()` rather than a `hasPowerup` per Rem — that shape is a bridge round trip for every Rem in the document — and only Rems whose state changes are written to. The walk yields every 200 Rems so the progress line repaints.
+
+`HasImage` is a slotless powerup, not a plain tag Rem: RemNote's Filter lists powerups alongside tags, and an applied-powerup pill carries a stable `data-test`, which is what lets its chip be hidden without also hiding the user's own tags on the same Rem.
+
+📖 [Filter a Document by Images](Utilities-Finding-and-Navigating.md#filter-a-document-by-images)
+
+### ✨ New - a pin that leads to an image is ringed
+
+A **pin whose target holds an image** gets a blue ring after the scan mentioned above, so you can tell which links lead to a figure without following them. It follows the tag, so it needs the scan to have run — and clears itself when a re-scan finds the image gone.
+
+![A pin to a Rem holding an image, ringed in blue, next to a pin carrying the orange priority-band marker](assets/pin-with-image-ringed.png){ width="800" }
+
+#### Technical explanation
+
+`data-rem-tags` on a reference container describes the **referenced** Rem, not the host — so `[data-rem-reference-pin="true"][data-rem-tags~="hasimage"]` reads as "this pin points at a Rem holding an image". The pin attribute alone would ring every pin in the knowledge base and therefore say nothing.
+
+Colours come from RemNote's `--rn-clr-border-accent` / `--rn-clr-border-selected` tokens, so the ring follows light and dark mode without a `.dark` branch.
+
+📖 [Pins that lead to an image are ringed](Utilities-Finding-and-Navigating.md#pins-that-lead-to-an-image-are-ringed)
+
+### 📚 Docs - the Utilities page is grouped, and its table of contents is complete again
+
+[Utilities](Utilities.md) now sorts its commands into five groups — **Text & Lists**, **Outline & Headings**, **Finding & Navigating**, **Queue Display Utilities** and **Under the Hood** — and the sidebar lists all of them. It had been showing only the first section's subsections, hiding two thirds of the page. Two stale changelog links were repaired in the same pass.
+
+📖 [Utilities](Utilities.md)
+
+## v1.0.42 - August 13th, 2026
+
+### ✨ New - the card info bar now shows the next stability, and tells the truth about intervals if you don't review at 90% retention
+
+The FSRS strip under each flashcard reads `D: 4.04 · S: 2.5y (1.3y passed) → 4.2y · R: 93.7%`: the arrow is the **stability a Good rating would leave the card with**, previously buried in the SInc tooltip. You can now see where the card is heading without hovering anything.
+
+The second half matters if you have moved your scheduler off the FSRS default. Stability *is* the interval only at **90% requested retention**; at 95% RemNote schedules a card at roughly 0.40× its stability, at 85% roughly 1.91×. The plugin had no way of knowing, so its U-Factor — the ratio of your next interval to the interval you just cleared — was quietly reporting the 90% figure to everyone.
+
+A new **Requested Retention** setting (**IE Settings → FSRS**, default `90`%) fixes that. Set it to whatever RemNote uses and:
+
+- The interval that next stability really converts to is printed next to it: `S: 2.5y (1.3y passed) → 4.2y (int. 1.7y)`.
+- The **U-Factor** divides by that real interval. Off the default it prints both: `U-Factor: 3.11× (3.30×)` — yours first, the 90% textbook figure in parentheses.
+- Hovering **D · S · R** spells out the conversion for the current card, and the U-Factor tooltip carries both figures for Hard / Good / Easy.
+- **D, S and R are untouched.** They describe your memory, not your scheduling target.
+
+#### Technical explanation
+
+Inverting the forgetting curve for the time at which R equals the requested retention gives `t = S / FACTOR × (R^(1/DECAY) − 1)`, so the interval-to-stability ratio depends only on the retention — `intervalFactorForRetention` in `lib/fsrs.ts` returns it, and is exactly `1` at 0.9 by construction (that identity is what "interval ≡ stability" means). `computeFSRSState` takes the retention as a third, defaulted argument and now returns `nextS`, `nextInterval`, `intervalFactor` and both U-Factors, so callers that do not care about scheduling (the queue-session recorder, the repetition history popup) keep the old behaviour untouched. The retention is stored as a percentage because that is how the setting reads, and divided down at the single point of use.
+
+📖 [Requested Retention](Reviewing-Items-in-the-Queue.md#requested-retention)
+
+## v1.0.41 - August 13th, 2026
+
+### ✨ New - Weighted Shield popup: how much more likely is one priority to be drawn than another?
+
+The **Weighted Shield Breakdown** tab ends with a new **🎲 Queue Selection Odds** panel. Set two items — say one at the 15th percentile and one at the 35th — and it tells you, in one number, how much more often the queue draws the first: `1.58× · Item A is more likely to be drawn`, plus the head-to-head split (`61.2% / 38.8%`) if only those two competed for a slot.
+
+Either side can be entered as a **relative percentile** or as an **absolute priority**, and the panel always shows both — type `35` as an absolute priority and it reports the percentile that priority actually reaches in the chosen universe, converted through the very same sorted population the bucket tables above are built from. The universe dropdown covers every combination the popup has data for: Incremental Rems or Cards, Knowledge Base or Document Scope — and your selection is remembered on your device, so the panel reopens where you left it.
+
+Under each side sits a **real sample item** at that priority — the capped text of an actual Rem — so the comparison isn't two abstract numbers. A front/back Rem shows both sides as `front → back`, the same arrow format the priority popups use, and clozed spans are marked `{{ }}` — in either universe, since a Rem can be an Incremental Rem and a flashcard at the same time. Click a sample to open the Rem, or press 🎲 to draw another one at the same priority.
+
+The odds are not a new metric: an item's lottery tickets are the Weighted-Shield weight `W = e^(−k × p/100)`, so the ratio is `e^(k × Δp/100)` and depends only on the *gap* between the two percentiles. The panel reads your synced `weightSelectionK` and your randomness setting for the selected item type and prints both in the header, so the figures reflect your configuration rather than the defaults.
+
+![The Queue Selection Odds panel comparing a card at absolute priority 15 (16.9th percentile) with one at 35 (47.9th): 2.04×, head-to-head 67.1% / 32.9%, with a real sample item under each side](assets/queue-selection-odds.png){ width="900" }
+
+#### Technical explanation
+
+The percentile ⇄ absolute-priority conversion reuses `breakdown.sortedItems` — the priority-ascending snapshot already shipped to the popup for the threshold slider — so no extra data crosses the plugin bridge and the two panels can never disagree about a percentile. Sample items are the only thing that needs Rem ids: those are read lazily from the session caches (`all-incremental-rem-slim`, `all-card-priority-info-key`) the first time a universe is selected, indexed by priority once, and re-sampled locally on every 🎲. Document-scoped pools intersect with the queue's cached scope ids; when the popup was opened from the editor and no cached scope exists, sampling falls back to the KB pool and the sample carries a hover caveat saying so.
+
+📖 [Queue Selection Odds](Prioritization-&-Sorting.md#queue-selection-odds)
+
+### ✨ New - `Ctrl+Shift+J` in the queue now works on the Rem you have open in the previewer
+
+Reading an item in the queue and spotting another Incremental Rem you want to work on — in the previewer (`P`), in the sidebar, anywhere — used to be awkward: `Ctrl+Shift+J` ignored what you had selected and acted on the queue item instead, silently. It now targets your **selection**, the same way `Ctrl+D` already did, and opens the [Execute Repetition popup](Reviewing-Items-in-the-Editor.md#opened-from-the-queue-previewer) for it. The previewer *is* an editor surface, so it gets the editor flow: you set the review time and interval, and nothing is written until you confirm.
+
+The interesting part is the clock. While an Incremental Rem turn is running in the queue, the plugin is timing it — so minutes you spend on a Rem in the previewer were, until now, silently credited to the item on screen:
+
+- **Confirm Review** records the review on the previewed Rem and **deducts those minutes** from the running turn. You stay in the queue, and whatever ends that turn later (Next, Dismiss, Reschedule) records only the remainder. Do it for three Rems in a row and all three deductions apply.
+- **⏱️ Start Timer** navigates away, abandoning the turn — so it now asks first, naming the item you are leaving and how long it has been on screen. The repetition is recorded either way (that reading was real); you choose whether the item is **rescheduled** or **left due today**, the latter being the default and behaving exactly like dragging **Next** down. A **Carry to this Rem** field moves any minutes you actually spent in the previewer out of that recording and **back-dates the new timer** by the same amount, so they land on the Rem they belong to.
+
+The same holds when the review in progress is an **Editor Review Timer** session rather than a queue turn: `Ctrl+Shift+J` on another Rem deducts what you record from the running timer, and starting a timer for the new Rem asks what to do with the one you are taking it from. Two fixes ride along there — the Rem taking over the timer no longer inherits the abandoned review's accumulated minutes, and that abandoned review now gets its repetition recorded instead of vanishing. The queue's **Review in Editor** handoff is unaffected: it carries your queue reading time forward by back-dating the timer's start, and that carry still works exactly as before.
+
+With nothing selected — and for the **Review in Editor** button — the command still acts on the queue item exactly as before.
+
+#### Technical explanation
+
+Both queue commands now resolve their target through one helper (`lib/queue_target.ts`), so selection-wins-over-queue-item is decided in a single place rather than twice with different rules. It also reports whether the queue is genuinely on the target's Incremental turn: no card from the SDK (Plugin queue items have none) **and** `currentIncRemKey` pointing at that rem.
+
+Time accounting rides on the existing `incremReviewStartTimeKey` baseline instead of a parallel timer: a deduction moves the baseline **forward** by the recorded span (clamped to what has actually elapsed), so every consumer of the turn's duration sees the corrected figure without knowing about any of this. The Editor Review Timer needs its own arithmetic because its clock is a *pair* (`accumulated + (now − start)`, frozen at `paused-at`): `deductFromEditorTimerClock` normalises instead — the remaining time becomes the whole accumulated value and the segment restarts, so a running and a paused timer both read back `elapsed − deducted`. Leaving the turn goes through `finishQueueIncRemTurn`, which records the repetition — via the normal scheduler for *Reschedule*, or with a today timestamp for *Leave it due* — and then clears the baseline, so the rem you jump to can never inherit it. The confirmation renders as an overlay inside the Execute Repetition popup, like the Scheduling Conflict dialog: a nested popup would close its parent.
+
+📖 [Opened from the queue previewer](Reviewing-Items-in-the-Editor.md#opened-from-the-queue-previewer) · [Review in Editor](Reviewing-Items-in-the-Queue.md#review-in-editor)
+
+### ✨ Improved - lifecycle markers in the Repetition History now show the time of day
+
+The history rows for repetitions have always shown the wall-clock time under the date. The **event banners** — ▶ Made Incremental, ⏸ Dismissed, 📅 Rescheduled in Editor, ✏️ Manual Date Reset — showed only the date, even though the exact timestamp was already stored.
+
+That made a day with several lifecycle events unreadable: made incremental → dismissed → made incremental again → dismissed, all stacked as "Aug 13, 2026" with no way to tell the order apart from their position. Each banner now carries its time next to the date, after a separator dot: `⏸ Dismissed — Aug 13, 2026 · 09:44`.
+
+📖 [Event Markers](Repetition-History-and-Statistics.md#event-markers)
+
+### 📚 Docs - the Keyboard Shortcuts page now also lists every binding by key
+
+The [Keyboard Shortcuts](Keyboard-Shortcuts.md) page listed shortcuts only **by function** — fine when you know the task you want, useless when you half-remember a key or want to know which combinations are still free before assigning your own. It now carries a second index, **[Shortcuts by Key](Keyboard-Shortcuts.md#shortcuts-by-key)**, grouped the way a keyboard map is: single keys, function keys, `Shift+`, `Ctrl+`, `Opt+`, `Ctrl+Shift+`, `Opt+Shift+`, `Ctrl+Opt+`, `Cmd/Ctrl+`. A closing table lists the commands that ship deliberately **unbound**, with their quick codes.
+
+Four shortcuts were missing from the page altogether and are now documented under a new **Sources & Reading** group: **`Opt+O`** (Open Hovered Source in Popup), **`Opt+Shift+O`** (Open Hovered Source in Floating Window), **`Ctrl+Shift+F1`** (Copy Rem Sources) and **`Opt+Shift+V`** (Paste Rem Sources).
+
+A new **Keys Inside Plugin Popups** section covers the keys that only exist while a widget is open, and had never been written down in one place: `Enter` / `Esc` / `Tab` in the priority and reschedule popups, the four `Enter` variants of the Find Rem picker (reference, pin, text + pin, open in pane), and `Esc` to close the floating source window without closing the queue.
+
+#### Corrections
+
+Three bindings were documented wrongly elsewhere and have been fixed: Change Priority is **`Opt+P`**, not `Ctrl+P` ([Reviewing Items in the Queue](Reviewing-Items-in-the-Queue.md#change-priority)); the Quick Priority shortcuts are **`Ctrl+Opt+↑/↓`**, not `Ctrl+Shift+↑/↓` ([Prioritization & Sorting](Prioritization-&-Sorting.md#quick-priority-shortcuts)); and the [Priority Step Size](Plugin-Settings-Reference.md#priority) they move by defaults to **5**, not 10.
+
+📖 [Keyboard Shortcuts → Shortcuts by Key](Keyboard-Shortcuts.md#shortcuts-by-key)
+
+### 🐛 Fixed - `Ctrl+D` on a Rem you were not reviewing recorded a repetition that never happened
+
+Dismissing an Incremental Rem with `Ctrl+D` **while the queue was showing something else** — a Rem opened in the previewer (`P`) during a flashcard turn, or any Rem you had selected — wrote a **`rep` entry** into its history before dismissing it, complete with a review duration. Nothing had been reviewed. Worse, the duration was borrowed: it was the time elapsed since the *last Incremental Rem the queue had injected*, so a Rem you made incremental and dismissed within a minute could be credited with half an hour of reading.
+
+Those minutes then counted as real everywhere history is read — total time on the item, the [Aggregated History](Plugin-Widgets-Reference.md#212-increm-repetition-history-aggregated-view) totals of every ancestor, and the [Study Dashboard](Study-Dashboard.md).
+
+`Ctrl+D` now records a repetition **only when the queue was actually on that Rem's Incremental turn** — exactly the case the **Dismiss** button covers. Used on any other Rem it is a pure lifecycle change: history is transferred to the Dismissed state and the power-up removed, like `Ctrl+D` in the editor. Since nothing on screen moves in that case, a toast now names the Rem that was dismissed.
+
+For the same reason, `Ctrl+D` no longer removes the **current card** from the queue when that card is a flashcard: the card was still due and being reviewed, and dropping it silently ate a scheduled repetition.
+
+`Ctrl+Shift+J` could borrow the same clock, and worse: pressed during a flashcard turn whose Rem happened to be incremental, it executed a repetition on that Rem with the stale duration *and* advanced its interval, leaving a corrupted chain in an item that stays in rotation. That path is gone — see the previewer targeting above; when no Incremental review is in progress, the reading clock is cleared before anything is recorded.
+
+Phantom entries already written can be removed with the 🗑 button on the row — see [Recording and correcting records](Plugin-Widgets-Reference.md#recording-and-correcting-records).
+
+#### Technical explanation
+
+The queue branch of the command built its `rep` entry unconditionally, reading `incremReviewStartTimeKey` for the duration. That session key is stamped when `GetNextCard` injects an Incremental Rem and is **never cleared afterwards**, so on a flashcard turn it still holds the previous IncRem's start time. The command's existing `isTargetingQueueContext` flag was not a guard against this — it is only true when the target *is* the current queue item, and it is also true when the current item is a flashcard whose Rem happens to be incremental, or when there is no selection at all.
+
+The command now derives an explicit `isActiveIncRemTurn`: the SDK reports no current card (Plugin queue items have none) **and** `currentIncRemKey` equals the Rem being dismissed. Both halves are required — on a flashcard turn `currentIncRemKey` still points at the previously injected IncRem, so it can never be trusted on its own. That flag gates both the `rep` entry and the `removeCurrentCardFromQueue` advance.
+
+📖 [Dismiss](Reviewing-Items-in-the-Queue.md#dismiss)
+
+## v1.0.40 - August 12th, 2026
+
+### 🐛 Fixed - Dismissing a Rem with no flashcards yet threw its priority away
+
+Dismissing an Incremental Rem is supposed to leave its priority behind on the Rem, so that flashcards made from that material later inherit it. It only did so if the Rem — or a descendant within three levels — already owned a flashcard at that moment. Everything else was dismissed silently untagged, and its priority went with the `Incremental` powerup.
+
+That hit precisely the wrong Rems. A PDF section you read, extracted from, and dismissed typically has no cards *of its own* — only extracted Incremental Rem children. Set it to 16, dismiss it, and it kept nothing; the cards you cloze out of those extracts afterwards inherited from whatever distant ancestor happened to carry a priority, often a much lower one.
+
+The flashcard search is gone. Dismiss now always writes the priority onto the Rem's `cardPriority` tag, in Light Mode and Full Mode alike. A priority you set **manually** on that Rem is still never overwritten.
+
+This applies to Dismiss wherever it appears: the queue's answer buttons, the [Editor Review Timer](Reviewing-Items-in-the-Editor.md#the-workflow)'s **✓ Dismiss**, and the *Dismiss Incremental Rem* command.
+
+#### Technical explanation
+
+`handleCardPriorityInheritance` ran a two-tier check in Full Mode: `getCards()` on the Rem, then a batched `getCards()` sweep over `getDescendantsToDepth(rem, 3)`. Light Mode already skipped all of it and tagged directly, so the two modes disagreed about what a dismissal means — and the "thorough" branch was the one losing data. Both tiers are removed; the function is now a `manual`-source guard plus a single `setCardPriority(..., 'incremental')`, which also drops a subtree walk from every Dismiss.
+
+The depth-3 limit made this worse than it looks: cards deeper than great-grandchildren were invisible to the check, so even Rems that *did* have flashcards below them could go untagged.
+
+Nothing changes for the inheritance **cascade** over descendants, which still tags only nodes that actually own flashcards — that restriction exists to prevent [rogue CardPriority tags](Troubleshooting.md#rogue-cardpriority-tags-sanitization) on tag slots and property values, and is unrelated to anchoring the dismissed Rem itself.
+
+📖 [Priority Sources](Priorities-for-Flashcards.md#priority-sources) · [Dismiss is the same in both modes](Full-Mode-x-Light-Mode.md#counter-example-dismiss-is-the-same-in-both-modes)
+
+### 🎨 Changed - Queue Dashboard: the Sessions Summary Speed column can now be read in seconds per card
+
+The **Speed** column of the Sessions Summary table was fixed to cards per minute, while the History Log below it showed both readings. Its header now carries a small unit button — click it to switch the whole column between **cpm** and **s/card**.
+
+The chosen unit is remembered on your device and survives restarts, so the table always opens the way you last left it. It is not synced: each device keeps its own preference.
+
+The column is now colour-coded on the same red → green gradient the live session card and the History Log already used. The colour follows the underlying pace, not the printed number, so a given pace looks the same in either unit — 1.5 cpm and 40 s/card are both fully red, 4 cpm and 15 s/card both fully green.
+
+The table's large figures also read more easily: card counts, Incremental Rem counts and hour totals now carry thousands separators — `269,461` rather than `269461`, `15,024h 49m` rather than `15024h 49m`.
+
+![The Sessions Summary table in s/card mode, with the unit button in the Speed header](assets/queue-dashboard-summary.png){ width="800" }
+
+📖 [Speed units in the Sessions Summary](History-Queue-Dashboard-and-Mastery-Drill.md#speed-units-in-the-sessions-summary) · [Speed colour coding](History-Queue-Dashboard-and-Mastery-Drill.md#speed-colour-coding)
+
+### ✨ New - Queue Dashboard: speed colours calibrated from your own history
+
+Until now, "red" meant 1.5 cards per minute and "green" 4, for everyone. Those numbers say little if your cards are long extracts or one-word clozes. A new **Queue Dashboard** section in the IE Settings popup places both ends of the gradient, in either of two ways.
+
+**Calibrated from your card history** is the new default. The plugin measures your average seconds-per-card over a window you choose — *Ever*, *last year*, *last month* or *last week* — and puts the gradient around it: your average sits mid-gradient, a margin of *N* seconds faster is fully green, the same margin slower is fully red. With a 24 s/card average and the default 10 s margin, that is green at 14 s/card and red at 34. The colours then tell you how this session compares with how you normally work, rather than with a universal figure.
+
+**Fixed limits** is the alternative, and keeps the old behaviour with the two cards-per-minute values now editable. Their defaults are exactly what the dashboard used before, so choosing this mode and leaving the numbers alone restores precisely what you had.
+
+While calibrated mode is selected, the settings section itself shows the average it is working from — in both **cpm** and **s/card**, with the number of repetitions behind it and the green and red points your margin produces — and a **Recalibrate** button beside it.
+
+![The new Queue Dashboard settings section, in calibrated mode](assets/settings-queue-dashboard.png){ width="900" }
+
+Only real repetitions count — *Again*, *Hard*, *Good*, *Easy* — each capped by the **Flashcard Response Time Limit**, so a card left on screen while you stepped away cannot skew the average.
+
+In calibrated mode the Sessions Summary gains a caption stating the scale actually in force — the measured average, how many repetitions it came from, and the resulting green and red points — with a **Recalibrate** link for an immediate re-measurement.
+
+#### Technical explanation
+
+Measuring the average means reading the repetition history of every card in the knowledge base — far too heavy to do on each render. The result is cached **on your device** (never synced: it is derived data any device can rebuild, and the window is a personal reading preference) and re-measured only when the cache is missing, came from another knowledge base, was measured for a different period, or is more than **seven days** old. A module-level guard means two dashboards opening at once still walk the cards only once.
+
+Nothing waits on it. The dashboard paints immediately with whatever is available — the fixed limits, or a still-valid cached calibration — and repaints if a background measurement produces something better. A window with no reviews in it says so and stays on the fixed limits, rather than colouring everything from an average of zero. Since the mode is on by default, that amounts to one history walk the first time the dashboard (or the Queue Dashboard settings section) is opened, then none for a week.
+
+📖 [Choosing your own limits](History-Queue-Dashboard-and-Mastery-Drill.md#choosing-your-own-limits) · [Queue Dashboard settings](Plugin-Settings-Reference.md#queue-dashboard)
 
 ## v1.0.39 - August 12th, 2026
 
@@ -313,7 +1906,7 @@ All three have been reported to the RemNote team with the supporting evidence, a
 
 ### 📚 New: the User's Manual has moved to a dedicated documentation site
 
-The documentation has left the GitHub Wiki and now lives at **[hugomarins.github.io/incremental-everything](https://hugomarins.github.io/incremental-everything/)**.
+The documentation has left the GitHub Wiki and now lives at **[hugomarins.github.io/incremental-remnote](https://hugomarins.github.io/incremental-remnote/)**.
 
 The Wiki had outgrown itself: 28 pages with no real search, a flat sidebar that gave no sense of where you were, and an appearance fixed by GitHub. The new site is built with **MkDocs Material** and fixes exactly those things:
 
@@ -487,11 +2080,11 @@ The shared ancestor-breadcrumb builder — used by the row tooltips in the **[In
 
 ### ✨ Improved: Find Rem treats "Figure", "Fig" and "Fig." as the same word
 
-The **[Find Rem — Reference or Open](Utilities.md#find-rem-reference-or-open)** picker now matches figure abbreviations interchangeably. Typing **`fig 4.3`** lists a Rem named **`Figure 4.3`** — and typing **`figure 4.3`** finds one named **`Fig. 4.3`** or **`Fig 4.3`**. Any capitalisation works, and a trailing dot is optional.
+The **[Find Rem — Reference or Open](Utilities-Finding-and-Navigating.md#find-rem-reference-or-open)** picker now matches figure abbreviations interchangeably. Typing **`fig 4.3`** lists a Rem named **`Figure 4.3`** — and typing **`figure 4.3`** finds one named **`Fig. 4.3`** or **`Fig 4.3`**. Any capitalisation works, and a trailing dot is optional.
 
 This rides on the same folded-text matching that already made the picker accent-insensitive: a standalone `fig`/`fig.` word is canonicalised to `figure` in both your query and each Rem's name (and alias) before they're compared, so the two spellings score identically — an exact match still floats to the top with its `EXACT` badge. The backend search is also seeded with the alternate spelling, so the Rem is retrieved regardless of which form is stored versus typed. Only the whole word is affected — `figs`, `configure`, and the like are left alone.
 
-📖 See [Utilities → Find Rem — Reference or Open](Utilities.md#accent-insensitive-selection-aware).
+📖 See [Utilities → Find Rem — Reference or Open](Utilities-Finding-and-Navigating.md#accent-insensitive-selection-aware).
 
 ## v1.0.20 - July 22nd, 2026
 
@@ -500,6 +2093,7 @@ This rides on the same folded-text matching that already made the picker accent-
 Deleting a flashcard, Incremental Rem, or Dismissed Rem normally throws away its **repetition history** — every review and every second of study time — so tools like the **Study Dashboard** quietly lose that record (your total time spent drops). The new **Preserve history & remove** command (`quick: phr`) lets you clear out stale/incorrect content **without** that loss.
 
 Run it from the **editor** (on the focused rem) or from the **queue** (on the rem/card under review) and it will:
+
 - **Consolidate all repetition history in the rem's subtree** — flashcards, Incremental powerups, and Dismissed powerups — onto the rem itself, stored on its **Dismissed** powerup so the Study Dashboard keeps counting the time.
 - **Convert flashcard reviews** into history entries (tagged as imported), preserving the review time (capped like the Dashboard's flashcard cap) and the grade. Reviews with no response time are skipped. For **cloze** cards, the preserved name wraps the clozed span in `{{…}}` (e.g. `flashcard {{inside}} that rem`) so multiple clozes from the same rem stay distinguishable.
 - **Delete the descendants and remove the flashcards**, then **scrub the rem's own content** to a neutral `🪦 Preserved history — content removed` tombstone and hide it from the editor and queue — so the stale text no longer pollutes your documents or search.
@@ -617,7 +2211,7 @@ Now nothing is lost:
 
 If a break already ate an image or pin: **`Restore List Rem`** recovers it — the pre-break snapshot always stored the complete original text, so nothing already broken is truly lost.
 
-📖 See [Utilities → Break Inline List Into Children](Utilities.md#break-inline-list-into-children-brl).
+📖 See [Utilities → Break Inline List Into Children](Utilities-Text-and-Lists.md#break-inline-list-into-children-brl).
 
 ## v1.0.12 - July 15th, 2026
 
@@ -647,7 +2241,7 @@ Saving the priority/interval popup fired a full priority-inheritance cascade eve
 
 ### ✨ New: detect & break flattened PDF-highlight lists into an outline
 
-A PDF highlight often captures a whole enumerated list as **one rem**, flattened onto a single line with the numbers left inline and the line breaks dropped (`… evitá-las: 1 Aumentar… 2 Deixar… 3 O Oficial…`). [Bulletize Inline Selected Text](Utilities.md#bulletize-inline-selected-text) can only re-bullet lines that *already* exist — here there are none. Three new commands rebuild the structure in a reviewable, undoable flow:
+A PDF highlight often captures a whole enumerated list as **one rem**, flattened onto a single line with the numbers left inline and the line breaks dropped (`… evitá-las: 1 Aumentar… 2 Deixar… 3 O Oficial…`). [Bulletize Inline Selected Text](Utilities-Text-and-Lists.md#bulletize-inline-selected-text) can only re-bullet lines that *already* exist — here there are none. Three new commands rebuild the structure in a reviewable, undoable flow:
 
 - **`Inlinize Detected List`** (`quick: inl`) — detects the list and inserts a line break + `• ` before each item, so it becomes soft-wrapped bulleted lines in the **same rem**. **Enumerated** items keep their number (`1 Aumentar` → `• 1 Aumentar`); **already-bulleted** lists (`•`, `-`, `*` run together on one line) have their marker normalized to `• `. This is your review checkpoint — eyeball the split and `Ctrl+Z` if the heuristic got it wrong before anything destructive happens.
 - **`Break Inline List Into Children`** (`quick: brl`) — turns each `• ` line into a **child rem**, with the caput/title staying on the parent. If the rem carries a **pin back to a PDF highlight** (from the Create IncRem toolbar *or* from pasting the highlight straight into notes), the pin is **moved onto the caput** instead of clinging to the last item, so the source link rides the title and every child stays clean. It **snapshots** the original text + created child IDs first, so the split is fully reversible. Refuses rems that have **back text** (flashcards) to avoid scrambling a card.
@@ -657,7 +2251,7 @@ A PDF highlight often captures a whole enumerated list as **one rem**, flattened
 
 Unlike Bulletize (which works on a text selection), all three commands act on the **focused rem** — no selection needed. Known v1 limits: the chain must start at `1`/`a`/`i`, and a gap in the numbering stops the chain (safe over clever). No default shortcut is bound (quick codes only) to avoid conflicts.
 
-📖 See [Utilities → Inlinize & Break Lists](Utilities.md#inlinize-break-lists-from-pdf-highlights).
+📖 See [Utilities → Inlinize & Break Lists](Utilities-Text-and-Lists.md#inlinize-break-lists-from-pdf-highlights).
 
 ### 🐛 Fixed: red priority badge on inheritance-only card rems
 
@@ -695,7 +2289,7 @@ When a Rem reads from a **PDF with a page range** set, the **[IncRem Repetition 
 
 ### ✨ New: "Text with Pin" insertion in the Find Rem picker (`Opt/Alt+Enter`)
 
-The **[Find Rem](Utilities.md#find-rem-reference-or-open)** picker gains a third insertion mode alongside *reference* (`Enter`) and *pin* (`Ctrl/Cmd+Enter`): press **`Opt+Enter` / `Alt+Enter`** (or **`Opt/Alt+click`** a result) to insert the Rem's **text followed by a pin** — the same result as RemNote's paste dialog option **"Text with Pin"**, but in one keystroke and without copying first.
+The **[Find Rem](Utilities-Finding-and-Navigating.md#find-rem-reference-or-open)** picker gains a third insertion mode alongside *reference* (`Enter`) and *pin* (`Ctrl/Cmd+Enter`): press **`Opt+Enter` / `Alt+Enter`** (or **`Opt/Alt+click`** a result) to insert the Rem's **text followed by a pin** — the same result as RemNote's paste dialog option **"Text with Pin"**, but in one keystroke and without copying first.
 
 It brings across the source's **full rich text**, not a plain label:
 
@@ -717,7 +2311,7 @@ The correction happens before the box is shown, so there's no visible jump. (Rem
 
 ### ♻️ Changed: "Bulletize Inline Selected Text" default shortcut rebound to `Shift+F8`
 
-The default binding for **[Bulletize Inline Selected Text](Utilities.md#bulletize-inline-selected-text)** changed from `Ctrl+Opt+Shift+8` to **`Shift+F8`** — a recent RemNote build uses `Ctrl+Opt+Shift+8` to apply the **blue highlight** to inline text, so the old binding collided with it. `Shift+F8` sidesteps every conflict (`Opt+8` types `•`, `Opt+Shift+8` types `°`, `Ctrl+Opt+Shift+8` is RemNote's blue highlight) and is identical across macOS/Windows/Linux. If you rebound the command manually, your custom binding is unaffected.
+The default binding for **[Bulletize Inline Selected Text](Utilities-Text-and-Lists.md#bulletize-inline-selected-text)** changed from `Ctrl+Opt+Shift+8` to **`Shift+F8`** — a recent RemNote build uses `Ctrl+Opt+Shift+8` to apply the **blue highlight** to inline text, so the old binding collided with it. `Shift+F8` sidesteps every conflict (`Opt+8` types `•`, `Opt+Shift+8` types `°`, `Ctrl+Opt+Shift+8` is RemNote's blue highlight) and is identical across macOS/Windows/Linux. If you rebound the command manually, your custom binding is unaffected.
 
 ---
 
@@ -807,7 +2401,7 @@ The read-only outline view (**[ExtractViewer](PDF-Incremental-Reading-Workflow.m
 
 ### 🐛 Fixed: "Find Rem" no longer suggests the Rem you're editing
 
-The **[Find Rem](Utilities.md#find-rem-reference-or-open)** picker now excludes the **source Rem** it was triggered from — a Rem can't reference itself, so it's no longer offered as a result.
+The **[Find Rem](Utilities-Finding-and-Navigating.md#find-rem-reference-or-open)** picker now excludes the **source Rem** it was triggered from — a Rem can't reference itself, so it's no longer offered as a result.
 
 ---
 
@@ -815,7 +2409,7 @@ The **[Find Rem](Utilities.md#find-rem-reference-or-open)** picker now excludes 
 
 ### ✨ New: "Find Rem — Reference or Open" now matches Rems by their aliases
 
-The **[Find Rem](Utilities.md#find-rem-reference-or-open)** picker (`Opt+Shift+F` / `Alt+Shift+F`, quick code `fir`) now finds Rems by their **aliases** — the alternate names you add via *Edit or Add Alias* (RemNote's built-in **Aliases** powerup) — just like RemNote's native `[[` search does. Previously the picker only matched a Rem's *primary* name, so a Rem named **Via navegável** with an alias **vias navegáveis** wouldn't appear when you typed the alias.
+The **[Find Rem](Utilities-Finding-and-Navigating.md#find-rem-reference-or-open)** picker (`Opt+Shift+F` / `Alt+Shift+F`, quick code `fir`) now finds Rems by their **aliases** — the alternate names you add via *Edit or Add Alias* (RemNote's built-in **Aliases** powerup) — just like RemNote's native `[[` search does. Previously the picker only matched a Rem's *primary* name, so a Rem named **Via navegável** with an alias **vias navegáveis** wouldn't appear when you typed the alias.
 
 As a reminder, the picker's core purpose is to surface Rems that RemNote's own `[[` reference search can't find (names made entirely of high-frequency words get out-ranked off the candidate list):
 
@@ -831,7 +2425,7 @@ The picker's existing **cloze-aware** insertion (a reference dropped inside a cl
 
 ![Find Rem — cloze-aware reference insertion (reference stays inside the cloze)](assets/find-rem-cloze-aware-insertion.gif)
 
-📖 See **[Find by alias](Utilities.md#find-by-alias)** and **[Cloze-aware insertion](Utilities.md#cloze-aware-insertion)** in Utilities.
+📖 See **[Find by alias](Utilities-Finding-and-Navigating.md#find-by-alias)** and **[Cloze-aware insertion](Utilities-Finding-and-Navigating.md#cloze-aware-insertion)** in Utilities.
 
 ---
 
@@ -862,7 +2456,7 @@ The **[Toggle Ignore Tag](Plugin-Commands-Reference.md#other-utilities)** comman
 
 ### ♻️ Changed: "Bulletize Inline Selected Text" default shortcut rebound (macOS degree-symbol conflict)
 
-The default binding for **[Bulletize Inline Selected Text](Utilities.md#bulletize-inline-selected-text)** changed from `Opt+Shift+8` to **`Ctrl+Opt+Shift+8`** (`Ctrl+Alt+Shift+8` on Windows/Linux). On macOS `Opt+Shift+8` types the degree symbol (`°`), so the old binding conflicted with typing it. If you rebound the command manually, your custom binding is unaffected.
+The default binding for **[Bulletize Inline Selected Text](Utilities-Text-and-Lists.md#bulletize-inline-selected-text)** changed from `Opt+Shift+8` to **`Ctrl+Opt+Shift+8`** (`Ctrl+Alt+Shift+8` on Windows/Linux). On macOS `Opt+Shift+8` types the degree symbol (`°`), so the old binding conflicted with typing it. If you rebound the command manually, your custom binding is unaffected.
 
 ---
 
@@ -889,7 +2483,7 @@ The Bookmark popup (PDF/HTML) and the new Read Points popup now display the **na
 
 ### ✨ New: "Apply Heading Levels by Hierarchy (Table of Contents)" + Promote/Demote
 
-A new command — **Apply Heading Levels by Hierarchy (Table of Contents)** (quick code `htoc`) — turns a ready-made outline into a properly-leveled table of contents in one shot: select the rems and it assigns heading levels (H1–H6) **by each rem's depth in the hierarchy**, to a level range you choose (e.g. H1–H3 or H2–H4). It **never moves rems** — only their heading level changes — and reuses the same full-range H1–H6 detection/application as [Restructure Outline by Headings](Utilities.md#restructure-outline-by-headings) and [Set Next Heading Level](Utilities.md#set-next-heading-level).
+A new command — **Apply Heading Levels by Hierarchy (Table of Contents)** (quick code `htoc`) — turns a ready-made outline into a properly-leveled table of contents in one shot: select the rems and it assigns heading levels (H1–H6) **by each rem's depth in the hierarchy**, to a level range you choose (e.g. H1–H3 or H2–H4). It **never moves rems** — only their heading level changes — and reuses the same full-range H1–H6 detection/application as [Restructure Outline by Headings](Utilities-Outline-and-Headings.md#restructure-outline-by-headings) and [Set Next Heading Level](Utilities-Outline-and-Headings.md#set-next-heading-level).
 
 - **Selection → forest → depth.** The selection is reduced to its topmost rems (forest roots = the top level); everything beneath is leveled by depth. Selecting a parent *and* its descendants together is fine — descendants aren't double-counted.
 - **Choose the range.** A **Top level** and **Deepest level** picker in the preview controls the mapping; rems nested deeper than the range **keep their current level** (left unchanged, never force-stripped).
@@ -897,7 +2491,7 @@ A new command — **Apply Heading Levels by Hierarchy (Table of Contents)** (qui
 - **Undoable.** After Apply, a **Heading Levels Applied** banner appears in the sidebar with an **Undo Heading Changes** button (restoring prior levels, including back to plain paragraphs). Also available as the `Revert Last Heading Level Change` command (`rlh`). It uses its own snapshot slot, separate from the restructure undo banner.
 - **Promote / Demote.** Two companion commands — **Demote Heading Level** (`hdmt`, `H2 → H3`) and **Promote Heading Level** (`hpmt`, `H2 → H1`) — shift every heading in the **selected subtree** by one level (clamped H1–H6; non-heading rems untouched), through the same preview + undo. They walk the whole selected subtree, since RemNote's outline selection reports only its top-level rems.
 
-📖 See **[Apply Heading Levels by Hierarchy](Utilities.md#apply-heading-levels-by-hierarchy-table-of-contents)** in Utilities and the **[command reference](Plugin-Commands-Reference.md)**.
+📖 See **[Apply Heading Levels by Hierarchy](Utilities-Outline-and-Headings.md#apply-heading-levels-by-hierarchy-table-of-contents)** in Utilities and the **[command reference](Plugin-Commands-Reference.md)**.
 
 ---
 
@@ -907,12 +2501,12 @@ A new command — **Apply Heading Levels by Hierarchy (Table of Contents)** (qui
 
 A new command — **Set Next Heading Level** (quick code `hn`) — styles the selected rem(s) as **one heading level deeper than their parent**, so adding content under an existing heading keeps the outline hierarchy consistent without manually picking H1…H6. Under an `H3` parent the selected rem becomes `H4`; under `H4` it becomes `H5`, clamped at `H6`.
 
-- **Full H1–H6 support.** It reuses the same heading detection/application as [Restructure Outline by Headings](Utilities.md#restructure-outline-by-headings), so it handles H4/H5/H6 too (which RemNote stores in the Header powerup's `Size` slot rather than the H1–H3 font-size API).
+- **Full H1–H6 support.** It reuses the same heading detection/application as [Restructure Outline by Headings](Utilities-Outline-and-Headings.md#restructure-outline-by-headings), so it handles H4/H5/H6 too (which RemNote stores in the Header powerup's `Size` slot rather than the H1–H3 font-size API).
 - **Grandparent fallback.** If the immediate parent isn't a heading but the **grandparent** is `Hn`, a confirmation dialog offers to set the **parent** to `H(n+1)` and the **selected rem** to `H(n+2)` (e.g. grandparent `H2` → parent `H3`, rem `H4`) — Cancel leaves both unchanged.
 - **Multi-rem.** Select several rems and each is styled relative to its own parent; all grandparent-fallback cases are covered by a **single** confirmation, and a parent shared by several selected siblings is promoted only once. Rems with no ancestor heading are skipped, reported in a summary toast.
 - Omnibar-friendly (`Cmd+/` → `hn`), preserving the multi-rem selection.
 
-📖 See **[Set Next Heading Level](Utilities.md#set-next-heading-level)** in Utilities and the **[command reference](Plugin-Commands-Reference.md)**.
+📖 See **[Set Next Heading Level](Utilities-Outline-and-Headings.md#set-next-heading-level)** in Utilities and the **[command reference](Plugin-Commands-Reference.md)**.
 
 ---
 
@@ -956,7 +2550,7 @@ Two new commands open the **PDF or web article behind a reference pin without le
 - **Auto-scroll + manual button.** For highlights, the embedded reader scrolls to the highlighted passage once it mounts (retried while the PDF engine initializes); a **🔖 Scroll to Highlight** button in the header re-centers on it after you scroll around.
 - **Two variants for two flows.** The **modal** (`Opt+O`) is ideal for a single focused "open → read → close → rate" glance. The **floating** window (`Opt+Shift+O`) opens on the right (~48% width) and **stays beside the card** so you can peek back and forth: it doesn't close when you click into the PDF (you can highlight/select there), **auto-closes when you advance the card**, and **Esc closes it without closing the queue** (it "steals" the Esc key while open).
 
-📖 See **[Open Source in Popup](Utilities.md#open-source-in-popup)** in Utilities, the Source Popup widgets ([modal](Plugin-Widgets-Reference.md#65-source-popup-modal-queue-safe-pdfhtml-viewer) · [floating](Plugin-Widgets-Reference.md#66-source-popup-floating-non-blocking)), and the **[command reference](Plugin-Commands-Reference.md)**.
+📖 See **[Open Source in Popup](Utilities-Finding-and-Navigating.md#open-source-in-popup)** in Utilities, the Source Popup widgets ([modal](Plugin-Widgets-Reference.md#65-source-popup-modal-queue-safe-pdfhtml-viewer) · [floating](Plugin-Widgets-Reference.md#66-source-popup-floating-non-blocking)), and the **[command reference](Plugin-Commands-Reference.md)**.
 
 ---
 
@@ -975,7 +2569,7 @@ A new command — **Find Rem (insert reference / open in pane)** (`Opt+Shift+F` 
 
 ![Find Rem — surfacing a Rem that RemNote's own `[[` reference search can't find](assets/find-rem-finds-rems-normal-search-cannot.gif)
 
-📖 See **[Find Rem — Reference or Open](Utilities.md#find-rem-reference-or-open)** in Utilities.
+📖 See **[Find Rem — Reference or Open](Utilities-Finding-and-Navigating.md#find-rem-reference-or-open)** in Utilities.
 
 ### ✨ New: "Search / Linkage Diagnostics" (Debug Widget)
 
@@ -997,7 +2591,7 @@ A new command — **Bulletize Inline Selected Text** (`Opt+Shift+8` / `Alt+Shift
 
 ![Bulletize Inline Selected Text demo](assets/bulletize-text.gif)
 
-📖 See **[Bulletize Inline Selected Text](Utilities.md#bulletize-inline-selected-text)** in Utilities.
+📖 See **[Bulletize Inline Selected Text](Utilities-Text-and-Lists.md#bulletize-inline-selected-text)** in Utilities.
 
 ---
 
@@ -1010,6 +2604,7 @@ Fixed the source of "rogue" `CardPriority` powerups — tags that appeared on re
 **Root cause (now fixed).** The inheritance cascade (`recalculateTreeInheritance`) walked **every** descendant of a rem whose priority changed and stamped `CardPriority` on all of them — slots and list items included — because the priority lookup never returns "no priority" (it synthesizes an `inherited`/`default` value). It now **only touches descendants that genuinely own flashcards**, using the authoritative global card index (`plugin.card.getAll()`) as the source of truth. Tagless descendants still inherit dynamically, so nothing is lost; non-flashcard nodes are simply never tagged again.
 
 **Authoritative detection.** Both the global command and the per-rem Debug button now share one card-index + source-based classifier (the previous heuristic matched internal slot-definition references and missed almost everything). A `CardPriority` tag on a rem with **no cards** is classified by its **source**:
+
 - `inherited` / `default` / empty → **rogue** (a cascade artifact) — offered for bulk removal.
 - `manual` / `incremental` → **legitimate inheritance anchor** — **preserved and never offered for deletion**. (`incremental` anchors are left behind when a dismissed IncRem hands its priority to descendants; they rank second only to `manual`.) To remove one deliberately, use the per-rem **Clear Card Priority** control.
 
@@ -1159,6 +2754,7 @@ The "Total Time" stat shown on the [PDF Control panel](PDF-Incremental-Reading-W
 **Root cause:** `addPageToHistory` had an auto-compute path that, whenever no explicit `sessionDurationOverride` was passed, read `incremReviewStartTimeKey` from session storage and recorded `Date.now() − startTime` as the entry's `sessionDuration`. This anchor was set when the queue picked an IncRem and only cleared on manual reschedule — it was never advanced. Any bookmark / highlight / "Make Incremental from Highlight" event firing during the same review session would re-read the same anchor and write an increasingly large duration, so a chapter with N intermediate highlights ended up with N inflated cumulative durations stacked on top of the legitimate end-session duration.
 
 **Fix:**
+
 - `addPageToHistory` no longer auto-computes a duration. It records `sessionDuration` **only** when an explicit override is passed by a session-boundary caller.
 - The queue **Next** button (`answer_buttons.tsx`) now computes `reviewTimeSeconds` at the call site from `incremReviewStartTimeKey` and passes it as the override — mirroring how the [Editor Review Timer](Reviewing-Items-in-the-Editor.md) already worked.
 - All other callers (highlight-toolbar "Toggle Incremental", "Save Bookmark" in the bookmark popup, "Make Incremental from Highlight", manual PDF Control page saves, Priority Editor page saves) no longer accidentally write a duration.
@@ -1189,7 +2785,7 @@ A new [**Open Weighted Shield Popup**](Plugin-Commands-Reference.md#special-oper
 
 ### ✨ New: Restructure Outline by Headings (`roh`)
 
-A new [**Restructure Outline by Headings**](Utilities.md#restructure-outline-by-headings) command (`quick: roh`) re-nests a flat or mis-pasted document so paragraphs and lower-level headings sit under their preceding higher-level heading. Built for the common case of pasting structured web content into RemNote — which often arrives as a flat list of siblings, or with `H2`s mis-indented under paragraphs instead of their parent `H1`.
+A new [**Restructure Outline by Headings**](Utilities-Outline-and-Headings.md#restructure-outline-by-headings) command (`quick: roh`) re-nests a flat or mis-pasted document so paragraphs and lower-level headings sit under their preceding higher-level heading. Built for the common case of pasting structured web content into RemNote — which often arrives as a flat list of siblings, or with `H2`s mis-indented under paragraphs instead of their parent `H1`.
 
 ![Restructure Outline by Headings demo](assets/restructure-outline-by-headings.png)
 
@@ -1200,7 +2796,7 @@ A new [**Restructure Outline by Headings**](Utilities.md#restructure-outline-by-
 
 ### ✨ Improvement: Text Case Converter Now Works on Multi-Rem Selections
 
-[**Text Case Converter**](Utilities.md#text-case-converter) (`Shift+F3`) previously only cycled the text **within a single rem**. It now also detects when one or more **whole rems** are selected in the outline and applies the next case (Title → UPPER → lower) to every selected rem's text — including the **back text** of concept/descriptor rems. The cycle stage is detected from the combined text of the batch so all rems advance together, while Title Case is still computed per rem so each one's first/last-word rule is respected.
+[**Text Case Converter**](Utilities-Text-and-Lists.md#text-case-converter) (`Shift+F3`) previously only cycled the text **within a single rem**. It now also detects when one or more **whole rems** are selected in the outline and applies the next case (Title → UPPER → lower) to every selected rem's text — including the **back text** of concept/descriptor rems. The cycle stage is detected from the combined text of the batch so all rems advance together, while Title Case is still computed per rem so each one's first/last-word rule is respected.
 
 ### ✨ Improvement: Multi-Rem Commands Now Work via `Cmd+/` Omnibar
 
@@ -1212,7 +2808,7 @@ RemNote blurs the editor when the `Cmd+/` Omnibar opens, which caused plugin com
 - **Text Case Converter**
 - **Restructure Outline by Headings**
 
-See [Utilities → Omnibar Selection Recovery](Utilities.md#omnibar-selection-recovery) for the technical details.
+See [Utilities → Omnibar Selection Recovery](Utilities-Under-the-Hood.md#omnibar-selection-recovery) for the technical details.
 
 ---
 
@@ -1228,7 +2824,7 @@ Adds/removes an `#ignore` tag on the focused editor Rem. Ignored rems are visual
 
 ### ✨ Improvement: Isolated Card View Setting Expanded to Cover Highlights
 
-The previous **Show regular Rems in isolated view (Queue)** boolean has been replaced by a dropdown — [**Use Isolated Card View in Queue for**](Plugin-Settings-Reference.md#queue) — letting you pick which item types open in the [Isolated Card Viewer](Plugin-Widgets-Reference.md) by default in the queue:
+The previous **Show regular Rems in isolated view (Queue)** boolean has been replaced by a dropdown — [**Use Isolated Card View in Queue for**](Plugin-Settings-Reference.md#queue-display) — letting you pick which item types open in the [Isolated Card Viewer](Plugin-Widgets-Reference.md) by default in the queue:
 
 - **Highlights (PDF/HTML)** *(default)* — only highlights open in the card view; regular Rems open in their full document context.
 - **Regular Rems** — only regular Rems open in the card view; highlights open in the PDF/HTML reader.
@@ -1270,6 +2866,7 @@ A new popup, opened via the **`Open Study Dashboard`** command (quick code `sdb`
 - **Hierarchy table:** lists every top-level rem with activity in the period, sorted by total time descending, expandable into the full ancestor tree. Each row shows Total Time, Cards (reps + time), Inc. Rems (reps + time, summed across Incremental and Dismissed histories), Retention, and Speed. Structural-only ancestor nodes (italic) keep the tree connected when Comprehensive expansion pulls rems from outside the document.
 
 **Performance design:**
+
 - Bulk-fetches `taggedRem()` for *Incremental*, *Dismissed*, and *cardPriority*, plus a single `card.getAll()`. Because *cardPriority* covers ~all card-bearing rems in a healthy KB, ancestor chain walks need almost no per-rem `findOne` calls.
 - The loaded data is cached per session: changing the **period** re-aggregates in memory only (instant) — only changing the **context** or **scope** triggers a reload.
 - In Global mode, every top-level rem's subtree is pre-built at load time, so expanding any top-level row is instant.
@@ -1338,12 +2935,14 @@ The Sorting Criteria popup now has a **Presets** panel at the top. Type a name a
 Added **Debug PDF** and **Repair PDF** buttons to the `/debug` widget for diagnosing and fixing broken PDF highlight pins.
 
 **The Problem:** After manual reorganization, a knowledge-base restore, or a merge, PDF highlight pins can stop navigating to the correct page. The root causes are two independent structural issues that can occur together or separately:
+
 - Page nodes (`PDFPageNumber`) sitting under the PDF root or a broken `Highlights` container instead of the canonical one (which carries the `PDF Highlight Section` tag applied only by RemNote's PDF engine).
 - The `PdfId` slot on `PDFHighlight` rems pointing to a stale or wrong rem ID — the actual cause of pin navigation failure even when the tree looks correct.
 
 **Debug PDF** scans every descendant of the focused PDF rem and prints an annotated tree to the browser console, showing powerups, tags, and the `PdfId` value for every highlight so both issues are immediately visible.
 
 **Repair PDF** runs three independent checks and lists all detected issues before asking for confirmation:
+
 - Moves misplaced page nodes (from the PDF root or broken containers) into the canonical `Highlights` container.
 - Fixes every `PdfId` slot that points to the wrong rem.
 - Adds the `Document` powerup to the PDF root if missing.
@@ -1379,6 +2978,7 @@ Added a powerful new diagnostic command, **"Sanitize Rogue CardPriority Tags"**,
 **The Issue:** Over time, automated background processes could accidentally tag internal property slots (like `History` or `Created`, or property slots from other plugins) with the `cardPriority` powerup, leading to inflated processing times and cluttered databases.
 
 **The Solution:** A robust, two-tier sanitization workflow:
+
 - **Tier 1 (Guaranteed Rogue):** Safely auto-detects and batch-removes tags from our plugin's own structural slots using precise SDK definition ID matching.
 - **Tier 2 (Suspicious):** Surfaces third-party property nodes that have `CardPriority` but 0 flashcards for a manual, one-by-one review, ensuring no data loss for legitimate external flashcard integrations.
 - **Targeted Sanitization:** You can now also sanitize a specific Rem locally using the `/debug` widget, which will surface a "Sanitize" button if rogue tags are detected on its properties.
@@ -1396,6 +2996,7 @@ Fixed an issue where the background batch processor could crash with a `richText
 Inc Rems can now have **multiple PDF sources** and you can switch between them on the fly in every surface that touches a PDF. Previously, a multi-PDF IncRem had to single out one PDF via the `#preferthispdf` tag, and IncRems without that tag fell through to the ExtractViewer — bypassing the Reader entirely. Multi-PDF Inc Rems are now first-class citizens, with a unified **active-PDF pin** persisted per Inc Rem.
 
 **Where the switcher appears:**
+
 - **Reader (in the queue)** — a PDF dropdown next to the 📝 Document Notes icon. Switching pins the chosen PDF as active for this Inc Rem; the queue re-renders Reader against the new PDF immediately.
 - **Editor Review Timer widget** — a small PDF dropdown next to the page controls. Switching mid-session re-targets the 🔖 Scroll button, the Page Controls, and any subsequent reading-time writes to the new PDF.
 - **Execute Repetition popup** (`Ctrl+Shift+J` in the editor) — a PDF dropdown above the Page Controls picks which PDF "Start Timer" will open and scroll to.
@@ -1403,11 +3004,13 @@ Inc Rems can now have **multiple PDF sources** and you can switch between them o
 - **Editor Toolbar (rem sidebar)** — same dropdown + **📌 Set as active** button inside the PDF Range section. Switching changes which PDF's range, current position, history, and scroll button are shown; the explicit button pins.
 
 **Resolution model (applied uniformly everywhere):**
+
 1. **Explicit pin** stored under `active_pdf_for_<remId>` (auto-cleared if the referenced PDF is no longer a source).
 2. **`#preferthispdf` tag** — used when no pin is set; if multiple PDFs carry the tag, the first preferred wins gracefully (no more blocking toast).
 3. **First PDF source** — final fallback.
 
 **Behavior changes worth knowing:**
+
 - A multi-PDF Inc Rem with no `#preferthispdf` tag now opens the **first PDF in the Reader** instead of falling back to the ExtractViewer. From there the new switcher lets you pick a different one and pin it. The `#extractviewer` tag remains the explicit way to opt into the ExtractViewer.
 - The "PDF Control Panel" document-menu item now respects the IncRem it was triggered from. Previously, when many Inc Rems shared the same PDF (e.g. book chapters under one textbook), the menu sometimes silently routed to the parent PDF document.
 - View vs. pin: **active-reading surfaces** (Reader, Timer, Execute Repetition popup) pin on switch — switching means "I'm reading this one now." **Management surfaces** (PDF Control Panel, Priority Editor) split view from pin so you can inspect any PDF's data without committing to a pin.
@@ -1465,7 +3068,7 @@ Incremental Everything can now register the powerups and commands originally dis
 - The incorporated 5 are gated by a new setting, **Enable Hide-in-Queue powerups and commands** (default: **off**). Enable it only after uninstalling the standalone plugin — the powerup codes are identical and RemNote throws a fatal `Duplicated powerup` error if both register the same code.
 - **Remove Parent** and **Remove Grandparent** are always registered regardless of the setting, since the cloze and extract creators depend on them.
 
-See the new [Queue Display Utilities](Utilities.md#queue-display-utilities) section of the Utilities wiki page for full documentation.
+See the new [Queue Display Utilities](Utilities-Queue-Display.md) section of the Utilities wiki page for full documentation.
 
 ### ✨ Improved: Priority Review Document Creator — Keyboard Navigation
 
@@ -1489,6 +3092,7 @@ The **Practiced Queues History** Summary Table now has a **Refresh Statistics** 
 **Why this matters:** the live listener can drop sessions when the queue is interrupted without a `QueueExit` event (tab closed, page navigated, plugin reloaded), and can over- or under-count IncRem time depending on engagement-tracking edge cases. The authoritative walk avoids these pitfalls — its numbers match what RemNote uses internally for its own statistics.
 
 **How it works:**
+
 - Click **Refresh Statistics** in the Summary header. A progress bar shows chunked progress (cards → IncRems → Dismissed) and the recompute is cancellable.
 - After the first compute, the Summary is sourced from authoritative aggregates; live listener data continues to fill any gap days *after* the recompute timestamp (so today's ongoing session keeps updating the totals).
 - Listener data is **never deleted** — both `practicedQueuesHistory` (raw recent sessions) and `practicedQueuesDailyAggregates` (rolled-over older buckets) remain intact and continue to power the per-session History log.
@@ -1506,6 +3110,7 @@ If the queue was interrupted without a `QueueExit` event (tab closed, page reloa
 The startup card-priority cache build has been rewritten around the same patterns the authoritative aggregator uses. For a knowledge base with ~50K cards, Phase 1 now completes in seconds instead of minutes.
 
 **What changed:**
+
 - **Eliminated per-rem `findOne` and `hasPowerup` calls.** The build now consumes the `PluginRem` objects returned by `taggedRem()` directly — every rem in that list has the powerup by definition, so the per-rem lookup and powerup check are redundant.
 - **Eliminated per-rem `rem.getCards()` calls.** A single `plugin.card.getAll()` at the top of the build buckets every card by remId into an in-memory `Map<RemId, Card[]>`, and `getCardPriority` now accepts a `preloadedCards` option to skip the per-rem round-trip entirely.
 - **Parallelized the three powerup slot reads** (`priority`, `prioritySource`, `lastUpdated`) inside `getCardPriority` via a single `Promise.all` instead of three sequential awaits.
@@ -1525,6 +3130,7 @@ The **📝 Document Notes** sidebar now works when reviewing **PDF Highlight** o
 **The problem:** Previously, when the sidebar opened during a highlight review, it displayed the highlight extract Rem itself — which typically has no children or notes. The sidebar appeared empty because `currentIncRemKey` pointed to the extract Rem, not the parent reading IncRem.
 
 **How it works now:**
+
 - The queue now publishes the **host document ID** (the PDF/HTML source Rem) as a new session signal (`currentHostDocumentIdKey`).
 - When the sidebar detects a highlight type, it uses `findAllRemsForPDF` / `findAllRemsForHTML` to discover all Incremental Rems that read the same source document.
 - **Single IncRem:** Auto-selects and shows the `DocumentViewer` for that IncRem immediately — no extra click needed.
@@ -1569,6 +3175,7 @@ Both cloze commands now **automatically assign a Card Priority** to every new cl
   - `#cloze-extract`-tagged **children** of the parent (clozes already extracted from it as siblings of the new one), plus
   - cards the **parent rem owns itself** — native cloze markers inside its text and front/back-direction cards if it is a flashcard.
   The first cloze from a plain (non-flashcard) extract sees count = 0, so it inherits the parent's priority exactly. A cloze made from a Concept/Descriptor extract or from a rem that already contains native clozes starts higher up the count.
+
 - **`stepSize`** — from the [Priority Step Size](Plugin-Settings-Reference.md#priority) setting (default: 10).
 - Decrements are **capped at 10** regardless of how many cards/clozes already exist, so even the 15th cloze receives at most 10 extra steps of priority.
 
@@ -1592,6 +3199,7 @@ Both cloze commands now **automatically assign a Card Priority** to every new cl
 ### ✨ New: Document Notes Sidebar for PDF/HTML IncRems
 
 When reviewing PDF or HTML Incremental Rems in the queue, you can now easily view and take notes on the underlying document directly in the right sidebar.
+
 - Click the **📝 Document Notes** icon in the PDF/HTML reader top bar.
 - The associated document opens in the right sidebar, allowing you to view it side-by-side and jot down notes without disrupting your reading flow.
 - The sidebar tab dynamically synchronizes with your queue, showing the document only when you are reviewing an applicable IncRem, and gracefully handling transitions to standard flashcards.
@@ -1607,6 +3215,7 @@ When reviewing PDF or HTML Incremental Rems in the queue, you can now easily vie
 ### ✨ Improvement: Sorting Criteria is now Knowledge-Base Dependent
 
 The **Sorting Criteria** widget settings (Flashcard Ratio, Incremental Rem Randomness, and Flashcard Randomness) are now scoped to your current Knowledge Base.
+
 - If you use multiple Knowledge Bases, you can now have completely different sorting parameters for each one.
 - The active Knowledge Base name is now clearly displayed at the top of the Sorting Criteria popup so you always know which settings you are editing.
 - Your previous global settings have been preserved and act as a seamless fallback if you haven't set KB-specific criteria yet.
@@ -1625,7 +3234,7 @@ IncRem time in the **Practiced Queues** dashboard is now tracked reliably from e
 - **Removed the `QueueItemType.Plugin` heuristic.** The old code inferred that the current queue item was an IncRem by checking `QueueItemType.Plugin`. This was fragile and would silently miss editor-side reviews. It has been replaced by explicit signals from the review components.
 - **Editor-only sessions.** If you review an IncRem directly from the editor (not from a queue), the plugin now opens a dedicated **"Editor Review"** session. That session auto-saves and closes after **60 minutes of inactivity**, keeping your history clean without any manual step.
 - **Queue → editor deduplication.** When you click *Review in Editor* from the queue, the time is counted once — it carries over into the same session rather than starting a separate engagement. The queue and editor timer together record a single continuous block.
-- **New setting — Auto focus Queue Dashboard** (default `false`): when enabled, the Practiced Queues dashboard opens automatically in the Right Sidebar every time you enter a queue (except in mobile devices). See [Plugin Settings Reference](Plugin-Settings-Reference.md#queue) for details.
+- **New setting — Auto focus Queue Dashboard** (default `false`): when enabled, the Practiced Queues dashboard opens automatically in the Right Sidebar every time you enter a queue (except in mobile devices). See [Plugin Settings Reference](Plugin-Settings-Reference.md#queue-display) for details.
 
 ## v0.2.192 - May 1st, 2026
 
@@ -1644,6 +3253,7 @@ The fix mirrors the UCP pattern: the deferred process now computes via `calculat
 When changing the priority of an ancestor with many descendants, the Background inheritance cascade repeatedly flushed the card priority cache — triggering unnecessary refetches of PDF/HTML host data (source lookup, page range, history, stats) in every open Priority Editor widget.
 
 The fix splits data fetching into three independent hooks:
+
 - **Host identity** (`useRunAsync` on `remId`) — resolves the PDF/HTML source once; never reruns on priority changes.
 - **Range / history / stats** (separate `useTrackerPlugin` on `remId + hostId`) — subscribes only to its own synced storage keys; reruns when the user saves a range or bookmark, not during cascades.
 - **Priority data** (existing tracker) — reacts to cache flushes as before, but no longer drags along host lookups.
@@ -2091,6 +3701,7 @@ We've introduced a major enhancement to the text-processing workflow, bringing f
 #### 📝 Extract Selection (`Opt+X` / `Opt+Shift+X`)
 
 You can now extract specific sub-sections of text into new Incremental Rems with a single keystroke. When you select text and trigger the extract command:
+
 - **Automatic Highlighting:** The source text in your document is automatically formatted with a **blue highlight** to mark its extraction.
 - **Reference Pin:** A clickable **Rem Reference Pin** is inserted immediately after the highlighted text, pointing directly to the new extract.
 - **Smart Formatting:** The new extract Rem contains your selected text plus a **back-reference pin** to its parent, and is initialized as an Incremental Rem. The **parent Rem** is automatically tagged with `#remove-from-queue`.
@@ -2102,6 +3713,7 @@ You can now extract specific sub-sections of text into new Incremental Rems with
 #### ✂️ Create Cloze Deletion (`Opt+Z`)
 
 A new dedicated command to quickly generate **Cloze Deletions** on any selected text. 
+
 - **Workflow-Native:** Mimics the standard SuperMemo shortcut for fast card creation during incremental reading.
 - **Instant Validation:** Includes built-in checks to prevent the creation of "ghost" cards from empty selections, with helpful toast notifications.
 
@@ -2176,6 +3788,7 @@ A dedicated date filter bar has been added below the existing status/type/priori
 | **is between** | Within a date range (shows a second input) |
 
 Each field accepts three input formats:
+
 - **MM/DD/YYYY** — a specific date
 - **MM/DD** — that month and day in the current year
 - **N** (plain integer) — N days ago from today (e.g. `30` = 30 days ago)
@@ -2185,6 +3798,7 @@ A **calendar button** (📅) next to each input opens the native date picker. Ty
 #### New Sort Options
 
 Two new options have been added to the sort dropdown:
+
 - **Created At** — sort by the date the Rem was first made Incremental
 - **Last Review Date** — sort by the most recent review session
 
@@ -2227,7 +3841,7 @@ A brand-new **Weighted Shield** metric has been introduced to give you a macro-l
 *   **Global Graph Toggle:** The [Prioritization-&-Sorting#priority-shield-history](Prioritization-&-Sorting.md#priority-shield-history) widget now features a global checkbox at the top to toggle the Weighted Shield line across all charts simultaneously.
 *   **Settings Integration:** The display of the Weighted Shield in the queue can be toggled on/off in the plugin settings.
 
-📖 **Learn more:** See the [Prioritization-&-Sorting#weighted-shield](Prioritization-&-Sorting.md#weighted-shield) documentation and the updated [Plugin-Settings-Reference#queue-display](Plugin-Settings-Reference.md#queue) for more details.
+📖 **Learn more:** See the [Prioritization-&-Sorting#weighted-shield](Prioritization-&-Sorting.md#weighted-shield) documentation and the updated [Plugin-Settings-Reference#queue-display](Plugin-Settings-Reference.md#queue-display) for more details.
 
 ![Weighted Shield](assets/shield-weighted-card.png){ width="1000" }
 
@@ -2317,6 +3931,7 @@ Two new commands designed to speed up the **PDF split workflow** — the techniq
 5. Open **PDF Control Panel** on any of them to assign page ranges per chapter.
 
 **Details:**
+
 - **Idempotent paste:** sources already present on a target rem are silently skipped. Running paste twice is safe.
 - **Multi-source support:** all sources from the template rem are copied together, including rems tagged with `#preferthispdf`.
 - **Session-scoped clipboard:** the copied source IDs live in session storage and are cleared when you close the tab — no cross-session contamination.
@@ -2331,6 +3946,7 @@ Two new commands designed to speed up the **PDF split workflow** — the techniq
 The **All Rems Using This PDF** section of the PDF Control Panel now displays a **containment tree** instead of a flat sorted list.
 
 **How it works:**
+
 - Rems are sorted by page range start. If a rem's range is **fully contained** within another rem's range (e.g., a sub-section inside a chapter), it is shown **indented** below the parent, conveying the logical hierarchy.
 - Depth-based indentation (16 px per level) makes nesting immediately visible.
 - Rems without a page range float below the tree at depth 0.
@@ -2338,6 +3954,7 @@ The **All Rems Using This PDF** section of the PDF Control Panel now displays a 
 **Overlap detection:** If two sibling rems (same parent, same depth) have page ranges that genuinely overlap, an inline **⚠ overlap** badge appears on both. Adjacent chapters that share exactly one boundary page (e.g., one ending on page 265, the next starting on page 265) are **not** flagged — this is the normal chapter-split pattern.
 
 **Coverage badge on parent rows:** When a rem has children in the tree (sub-rems with finite page ranges), its row shows an inline **X/Ypp** coverage badge with a small fill bar:
+
 - Blue fill = pages covered by direct children
 - Gray track = uncovered pages still available
 - Tooltip shows the exact count and percentage: e.g. `"25 of 30 pages covered by sub-rems (83%)"`
@@ -2351,10 +3968,12 @@ This makes it easy to see at a glance how much of a chapter has been split into 
 The **Priority Editor** sidebar widget (visible to the right of every Incremental Rem in the editor) now includes a **📄 PDF Range** section for rems that have a PDF source.
 
 **Collapsed view:**
+
 - If the rem has a range set, a small `📄 p.X–Y` pill is shown below the priority badges.
 - If the rem is mapped to a PDF but has no range yet, a dim `📄 —` indicator marks it as "needs assignment".
 
 **Expanded view (click to open the panel):**
+
 - A dedicated **📄 PDF Range** card shows the PDF name, current range badge, and quick action buttons.
 - **📄 Range** — opens an inline Start / End page editor:
   - `Tab` cycles between Start and End fields; `Enter` saves.
@@ -2377,6 +3996,7 @@ This lets you set and adjust a rem's page range, record where you left off, and 
 When a rem had **multiple PDF sources**, the **PDF Control Panel** command always opened with the *first* PDF it encountered — ignoring the `#preferthispdf` tag that the queue and reader already honoured. This meant the control panel and the queue could be working with different PDFs on the same rem.
 
 **Fix:** A new shared helper `findPreferredPDFInRem()` was extracted into `pdfUtils.ts` and centralises the preference logic:
+
 - **Single source** → open it directly (no tag scan, fastest path).
 - **Multiple sources, one tagged `#preferthispdf`** → open that one.
 - **Multiple sources, multiple tagged** → show a conflict warning toast; do not open.
@@ -2432,6 +4052,7 @@ Fixed a major performance regression where opening or searching any rem triggere
 3. **`incremental_rem/index.ts`** — `initIncrementalRem` bumps `incRemCacheReloadKey` with `Date.now()` after adding the incremental powerup, so the tracker still reloads when a new IncRem is genuinely created.
 
 **Behavior after fix:**
+
 - Searching or opening any rem → `incRemCacheReloadKey` unchanged → **no reload**
 - New IncRem created → key bumped → tracker re-runs → **cache reloads correctly**
 - Plugin startup → tracker runs once (key read for the first time) → **initial load**
@@ -2549,6 +4170,7 @@ To prevent accidentally reviewing large numbers of items that aren't actually du
 ### 📄 Multiple PDF Sources: `#preferthispdf` Support
 
 You can now use multiple PDF sources on a single Incremental Rem while retaining the ability to open one of them directly in the native Reader view!
+
 *   **The behavior:** By default, if an Incremental Rem has multiple sources, it opens in the `ExtractViewer` to allow you to review all your context. 
 *   **The solution:** But if you tag **exactly one** of those PDF sources with `#preferthispdf` (or `#prefer this pdf`), the plugin will intelligently identify it as your primary PDF and open the Incremental Rem directly into the Reader view for that specific document.
 *   **Safety fallback:** If you accidentally tag multiple PDF sources with it, the plugin will display a warning toast and safely fall back to the ExtractViewer.
@@ -2578,6 +4200,7 @@ We've extended the robust background event suppression system across all of the 
 ### 🌳 Automatic Inheritance Cascade
 
 The automatic background inheritance cascade has been extended to three additional workflows:
+
 *   Saving a priority in the **Reschedule** widget (`Ctrl+J`)
 *   Saving a priority in the **Priority & Interval** widget (used during advanced IncRem creation)
 *   Standard Incremental Rem creation (e.g., manually toggling a folder or using `Alt+X`)
@@ -2652,6 +4275,7 @@ Each rem row now shows a compact ancestry breadcrumb (up to 5 levels) in small g
 **Priority & Source Column**
 
 A new **Priority** column shows the current card priority with colour-coded badges:
+
 - 🟡 **Yellow** = manually set
 - 🟢 **Green** = synced from an Incremental Rem
 - ⬜ **Grey/outlined** = inherited (shown but visually subdued)
@@ -2801,6 +4425,7 @@ When you create a new Incremental Rem — via **Extract with Priority** (`Opt+Sh
 We have overhauled the Randomness sliders in the **Sorting Criteria** widget to operate on a **cubic exponential curve**, modeled closely after the behavior seen in *SuperMemo*. 
 
 **What changed:**
+
 *   **The Problem:** Previously, the slider was linear. 50% on the slider meant exactly 50% of the maximum allowable randomness. This made fine-tuning very low amounts of randomness (the desired state for most users who want the preservation of strict priorities with a tiny bit of serendipity) difficult, as it was cramped into the far left edge.
 *   **The Solution:** The slider now uses an exponential scale under the hood. 
     *   **0% to 50%** of the slider is dedicated specifically to fine-tuning **Low-to-Moderate randomness** (up to ~12.5% items swapped). 
@@ -2900,7 +4525,7 @@ We have overhauled the Randomness sliders in the **Sorting Criteria** widget to 
     *   **Parallelized Data Fetching:** Descendant data is now aggressively fetched concurrently in background chunks rather than one-by-one.
 *   **Open Rem Navigation:** Added a subtle `↗` link icon to the far right of every row in the hierarchy tree. While clicking anywhere on the row safely expands/collapses the branch, clicking this icon instantly teleports you to that specific Rem in the editor and closes the widget out of your way.
 
-📖 **Full documentation:** See the [Getting-Started#2-aggregated-history-view](Getting-Started.md#2-aggregated-history-view) section in the Getting Started guide.
+📖 **Full documentation:** See [Aggregated History View](Repetition-History-and-Statistics.md#2-aggregated-history-view).
 
 ---
 ## v0.2.126 - March 5th, 2026
@@ -3077,6 +4702,7 @@ Fixed a race condition where programmatic SRS updates (via `updateSRSDataForRem`
 ### 📖 New Wiki Page: [IncRem-List-and-Main-View](IncRem-List-and-Main-View.md)
 
 Added comprehensive documentation for the IncRem List and All Inc Rems widgets, covering:
+
 *   Two entry points (scoped list vs. KB-wide main view)
 *   Table features, filtering, sorting, inline priority editing
 *   Review in Editor flow with state preservation
@@ -3117,6 +4743,7 @@ The `getNextCard` callback tried to compute the document scope on-the-fly by cal
 Additionally, the `isInScope` filter treated a null scope as "nothing in scope" rather than "everything in scope," and the queue counter CSS was only registered when the scope cache was present (which it never was during the race window).
 
 **The Fix:**
+
 * **Removed on-the-fly scope building** from `getNextCard`. When the scope cache isn't ready, IncRems are now injected from the full Knowledge Base. Once `QueueEnter` finishes in the background, subsequent calls use the proper document scope.
 * **Fixed scope filter logic** so that a null scope means "all IncRems are in scope" instead of "no IncRems are in scope."
 * **Queue counter now always registers**, regardless of whether the scope cache has been set.
@@ -3130,6 +4757,7 @@ The widget hides itself whenever an Incremental Rem is active by checking the `i
 
 **The Fix:**
 Added multiple safety nets to proactively reset the `incremental-queue-active` flag outside of the fragile React lifecycle:
+
 * **Mid-session reset:** The `getNextCard` callback now explicitly forces the flag to `false` every time it decides to serve a regular flashcard. 
 * **Session boundaries:** The flag is also forcibly cleared in the `QueueEnter` event handler, `QueueExit` event handler, and the general `resetQueueSession` function.
 
@@ -3168,6 +4796,7 @@ The **Card Priority Display** widget (shown below flashcards in the queue) now s
 **Card Stats at a Glance:**
 
 The info bar now displays:
+
 *   **Reps & Time:** Total number of reviews and cumulative time spent on the card.
 *   **FSRS DSR:** Difficulty (D), Stability (S), and Retrievability (R) — the three core metrics of the [FSRS algorithm](https://github.com/open-spaced-repetition/fsrs4anki/wiki/The-Algorithm) — computed in real time from the card's full repetition history.
 
@@ -3176,6 +4805,7 @@ The info bar now displays:
 **Flashcard Repetition History Popup:**
 
 Clicking the 🔬 button opens a detailed **Repetition History** popup, modeled after RemNote's built-in Practice History. It shows every review with:
+
 *   **Rating** (color-coded: Again, Hard, Good, Easy)
 *   **Target Date** vs. **Practice Date** — when it was *scheduled* vs. when you actually reviewed
 *   **Delay** — how early or late you reviewed ("On Target Day", "2 days late", "3 months late", etc.)
@@ -3192,6 +4822,7 @@ The plugin includes a pure TypeScript implementation of the **FSRS v6.1.1** algo
 > ⚠️ **Limitation:** The plugin cannot detect which custom scheduler is assigned to a specific card. Only the **global FSRS weights** configured in the plugin settings will be used for all cards. If you use different custom schedulers for different documents / folders, the computed values may not exactly match RemNote's internal calculations for cards using non-global schedulers.
 
 **New Plugin Settings:**
+
 *   **Display FSRS DSR Stats** (boolean): Toggle the DSR line on/off.
 *   **FSRS Global Weights** (string): Paste your FSRS weights here (comma-separated, 19 or 21 values). To find your weights: go to RemNote Settings → Spaced Repetition → your scheduler → copy the weights array. If left empty, the official FSRS v6.1.1 default weights are used.
 
@@ -3216,6 +4847,7 @@ Added two new keyboard commands for faster navigation when reviewing Incremental
 ![Queue Shortcuts](assets/queue-shortcuts.png){ width="900" }
 
 **Technical details:**
+
 *   Both commands replicate the exact behavior of the corresponding answer buttons, including card priority inheritance, review time tracking, PDF page history, and SRS interval calculations.
 *   `handleCardPriorityInheritance` was extracted into a shared module (`src/lib/card_priority/card_priority_inheritance.ts`) for reuse by both the Done button and the Dismiss command.
 
@@ -3230,6 +4862,7 @@ Fixed a stubborn issue where the Card Priority metric shown below flashcards was
 When changing an item's priority in the popup widget, the cache system would optimistically update the priority buffer in the background. However, due to RemNote's internal plugin architecture, popup widgets execute inside completely isolated compartments (Iframes). The exact millisecond the popup successfully closed, the browser would forcefully terminate the widget's isolated JavaScript engine—frequently severing the background cache processing mid-flight and dropping the update before it reached your visual queue.
 
 **The Solution:**
+
 * **Cross-Iframe Optimistic Bridge:** Completely re-architected the memory transfer logic so that the priority slider now forcibly injects your cache updates explicitly into the global Shared Session Storage *before* permitting the popup to close.
 * **Array-Based Concurrency Tracking:** Updated the background persistent worker (which survives popup closures) to track concurrent manual updates using specific IDs instead of generic toggle switches, flawlessly guaranteeing that no background sync noise can swallow your manual adjustments.
 * **Light Mode Stability:** Solidified the distinction between heavy database re-sorts and purely aesthetic updates, ensuring the UI remains instantaneous and responsive even on mobile devices.
@@ -3239,6 +4872,7 @@ When changing an item's priority in the popup widget, the cache system would opt
 Resolved all remaining React IDE compilation errors and type warnings across the priority components.
 
 **The Fixes:**
+
 * **Ambiguous Imports:** Deleted duplicate, broken import scopes for `IncrementalRem` that caused the TS compiler to reject perfectly valid objects as "incompatible interfaces".
 * **Zod Type Inference Bleed:** Explicitly type-casted generic Map and Filter arrays (like `applySortingCriteria`) to prevent the TS compiler from defaulting to loose `any` or `Partial` schemas that eagerly forgot `remId` and `priority` properties existed on their items.
 * **Dictionary Keys:** Pushed the newly-created `incremental` key into the `PrioritySource` reducer dictionaries to clear out invalid `NaN` additions.
@@ -3263,6 +4897,7 @@ The Queue Viewer component now proactively monitors its own powerup status. The 
 ### 🔄 Workflow: "Review & Open" & Timer Integration
 
 The **"Review & Open"** button has been significantly upgraded to form a seamless loop with the **Editor Review Timer**:
+
 *   Clicking **"Review & Open"** now not only opens the Rem in the editor, but immediately **starts the Editor Review Timer**.
 *   Clicking **"End Review"** on the Timer properly stops tracking, records your repetition, and **automatically routes you back to the queue document** you originated from.
 *   *Note*: To resume the queue, you must manually press `Cmd+Shift+P` (or click Practice) once back at the document.
@@ -3412,6 +5047,7 @@ The IncRem List (both scoped and KB-wide) now has better sorting, filtering, and
 We've made the advanced "Sorting Criteria" and "Priority Shield" features much easier to access, whether you're in the queue or the editor.
 
 **What's new:**
+
 *   **New Commands:**
     *   **"Open Sorting Criteria":** Quickly open the sorting settings widget from anywhere via the Command Palette.
     *   **"Open Priority Shield Graph":** access your priority stats instantly.
@@ -3427,6 +5063,7 @@ We've made the advanced "Sorting Criteria" and "Priority Shield" features much e
 We've decluttered the flashcard queue by hiding several internal metadata slots that were previously visible.
 
 **What's new:**
+
 *   **Hidden Slots:** The following slots are now hidden from the queue view:
     *   **Last Updated** (from Card Priority)
     *   **Created** (Original Incremental Date)
@@ -3442,6 +5079,7 @@ This ensures a cleaner review experience without distraction from technical meta
 Fixed an issue where the priority badge in the **Flashcard Priority Display** widget would appear gray instead of color-coded when using the plugin in a web browser (Light Mode).
 
 **What was fixed:**
+
 *   **Forced Absolute Coloring:** In environments where full relative percentile data isn't available (like the web browser), the badge now correctly uses the absolute priority score (0-100) to determine its color (Red-Yellow-Green-Blue), restoring visual feedback.
 
 ## v0.2.93 - February 4th, 2026
@@ -3451,6 +5089,7 @@ Fixed an issue where the priority badge in the **Flashcard Priority Display** wi
 A powerful new view that gives you a high-level overview of your progress stats for entire trees of content.
 
 **What's new:**
+
 *   **Tree-View Hierarchy**: Displays a hierarchical tree of your Incremental Rems and their stats, sorted exactly as they appear in your document.
 *   **Aggregated Metrics**: Shows total repetitions, time spent, and item counts for both your current selection AND all its descendants.
 *   **Smart Routing**: The `Ctrl+Shift+H` command now intelligently opens the **Single History** view for individual items or the **Aggregated View** for folders with incremental descendants.
@@ -3469,6 +5108,7 @@ A powerful new view that gives you a high-level overview of your progress stats 
 We've improved how **Priority Shield** history is stored and displayed to support multiple Knowledge Bases (KBs).
 
 **What's new:**
+
 *   **Data Isolation:** History data is now strictly separated by Knowledge Base. Your Main KB stats won't mix with your test or secondary KBs.
 *   **Smart Migration:** Existing history data is intelligently migrated to your Primary KB partition to preserve your long-term progress.
 *   **Isolated Graphs:** The Priority Shield Graph now only displays data relevant to the specific Knowledge Base you are currently viewing.
@@ -3480,6 +5120,7 @@ We've improved how **Priority Shield** history is stored and displayed to suppor
 Fixed an issue where completing an Incremental Rem (using the "Done" button) failed to record the final session's history and, in some cases, failed to add the Dismissed powerup entirely.
 
 **What was fixed:**
+
 *   **Recording Final Repetition:** The plugin now correctly calculates the review time and records a standard **Repetition** event for the session you just completed.
 *   **Guaranteeing Dismissal:** By ensuring history is never empty (thanks to the recorded repetition), the transfer to the **Dismissed** state now works reliably for all items, even those with no prior history.
 *   **History Sequence:** This results in a clean history log: `... -> [Last Repetition] -> [Dismissed Marker]`.
@@ -3491,6 +5132,7 @@ Fixed an issue where completing an Incremental Rem (using the "Done" button) fai
 We've improved how priority is handled when an Incremental Rem (which also has flashcards) is completed in the queue.
 
 **What's new:**
+
 *   **Intelligent Syncing:** When you finish reviewing an Incremental Rem (by clicking **"Done"**), its priority is now automatically synced to the `Card Priority` powerup.
 *   **"Sticky" Priority Source:** This synced priority is marked with a new source type: **`incremental`**. This acts like a "manual" priority, meaning it sticks! It won't be overwritten by default or inherited values from parent Rems, ensuring your specific prioritization is preserved.
 *   **Consistent Visibility:** The **Card Priority Widget** (displayed under flashcards) now correctly appears for these items when they come up as regular flashcards, showing you the priority you set during your incremental review.
@@ -3504,6 +5146,7 @@ This ensures a seamless transition of priority data from your incremental readin
 Significantly improved the calculation and display of the **Priority Shield** to address cases where large blocks of items have the same priority.
 
 **What's new:**
+
 *   **Volume-based Percentile (Dynamic Progress):** Instead of calculating the percentile based on rank alone (which caused the shield to stay stuck at 0% for large blocks of tied priorities), the shield now calculates progress **by volume**. As you review cards within a priority group (e.g., Priority 10), the percentile will now increase smoothly (e.g., `10.5%` → `12.1%` → `15.2%`), giving you a true sense of progress.
 *   **Increased Precision:** The shield now displays **1 decimal place** (e.g., `45.2%`) for granular tracking.
 *   **Performance Optimization:** The calculation logic was rewritten to use `O(N)` linear scans instead of `O(N log N)` sorting. It also uses efficient `Set` lookups during reviews. This means **zero lag** even when reviewing large documents with thousands of cards.
@@ -3517,6 +5160,7 @@ Significantly improved the calculation and display of the **Priority Shield** to
 Fixed an issue where the **Repetition History widget** was not displaying the priority value for "Rescheduled in Editor" events.
 
 **What was fixed:**
+
 - **Recording the correct priority**: The reschedule function now records the **new priority** set by the user during the reschedule action, instead of the old priority value.
 - **Displaying priority in event markers**: Both "Rescheduled in Editor" (📅) and "Manual Date Reset" (✏️) event markers now display the priority value (e.g., `— Pri: 5`).
 
@@ -3541,6 +5185,7 @@ When you're done reviewing an Incremental Rem, you can now **preserve its comple
 4. **Re-activating**: If you make a previously-dismissed Rem incremental again, the old history is **restored and merged** with the new session. A "Made Incremental" marker is added to distinguish learning sessions.
 
 **Settings:**
+
 - **Show Yellow Left Border for Dismissed Rems**: Toggle the visual indicator (default: on)
 - **Hide Dismissed Tag in Editor**: Hide the Dismissed tag to reduce clutter (default: on)
 
@@ -3549,6 +5194,7 @@ When you're done reviewing an Incremental Rem, you can now **preserve its comple
 The Repetition History widget now records and displays the **priority value at the time of each repetition**.
 
 **What's new:**
+
 - Each repetition entry now includes a **"Pri." column** showing the priority when reviewed
 - The **"Made Incremental"** event marker shows the initial priority set
 - All history entries (Next button, Reschedule, Editor Review) now record priority
@@ -3570,9 +5216,10 @@ The plugin now **differentiates reschedule and repetition events** based on thei
 | `executeRepetition` | [Execute Repetition command](Reviewing-Items-in-the-Editor.md#1-execute-repetition-command) | ✅ Yes |
 
 **Why this matters:**
+
 - **Review actions** ([Next](Reviewing-Items-in-the-Queue.md#next), [Reschedule in queue](Reviewing-Items-in-the-Queue.md#reschedule), [Execute Repetition command](Reviewing-Items-in-the-Editor.md#1-execute-repetition-command) in editor) count for interval calculation because you engaged with and reviewed the content
 - **Administrative adjustments** (Ctrl+J in editor, manual date edits) don't count — they change the schedule without confirming a review took place
-- The **[Repetition History widget](Getting-Started.md#repetition-history-statistics)** displays visual indicators for each event type (📅 for queue reschedules, ⌨️ for editor command reviews, colored markers for administrative events)
+- The **[Repetition History widget](Repetition-History-and-Statistics.md)** displays visual indicators for each event type (📅 for queue reschedules, ⌨️ for editor command reviews, colored markers for administrative events)
 
 See [Reviewing Items in the Queue#reschedule-event-types](Reviewing-Items-in-the-Queue.md#technical-note-reschedule-event-types) for the complete event type reference.
 
@@ -3585,6 +5232,7 @@ See [Reviewing Items in the Queue#reschedule-event-types](Reviewing-Items-in-the
 Fixed an issue where the spaced repetition interval was calculated using only **past** repetitions, excluding the current one being recorded. This caused the next interval to be shorter than expected.
 
 **What changed:**
+
 - Previously: After completing your 2nd rep, the interval was `1.5^1 = 2 days` (supposing your multiplier is the default 1.5)
 - Now: After completing your 2nd rep, the interval is `1.5^2 = 3 days`
 
@@ -3610,16 +5258,19 @@ This aligns the scheduling behavior with the expected exponential growth from th
 Added a new **Repetition History** popup that provides detailed insights into your review history for any Incremental Rem.
 
 **How to access:**
+
 - In the **Queue**: Click the 📊 icon in the Answer Buttons info bar
 - **Keyboard shortcut**: `Ctrl+Shift+H` (works in both Queue and Editor)
 
 **What it shows:**
+
 - **Rem name** in the header for context
 - **Summary stats**: Total reps, total time spent, and age since first review
 - **Next scheduled date** with days late/early indicator
 - **Full history table**: Date, time spent, scheduled interval, and status for each repetition
 
 **Answer Buttons improvements:**
+
 - Info bar now displays **"X Reps, Y min"** stats inline before the history icon
 - Centralized layout with `|` separators between Priority, Shield, and History sections
 
@@ -3813,6 +5464,7 @@ See also: [Using the RemNote Clipper](https://help.remnote.com/en/articles/60308
 
 #### Problem
 `rem.getCards()` intermittently returns empty array `[]` for valid flashcard rems due to SDK bug, causing:
+
 - Priority popup showing "neither Incremental Rem nor flashcards" incorrectly
 - Potential missed cards in Priority Review Document creation
 - Incorrect flashcard counts in Reader/ExtractViewer metadata
@@ -3832,6 +5484,7 @@ Replace all `rem.getCards()` calls with reliable alternatives:
 ### Enhance parent selector filtering and improve highlight IncRem creation UX
 
 **Description:**
+
 * **Refined Powerup Filtering:** Significantly expanded `powerupSlotFilter.ts` to filter out internal RemNote metadata and structural Rems that should not be used as parents. This includes:
     * Search Portals and queries (e.g., "Automatic Backlink Search Portal").
     * PDF/Reader state Rems (e.g., "Pages", "Highlights", "Last Zoom Workspace Point", "ShouldOpenInTextReader").
@@ -3852,12 +5505,14 @@ Replace all `rem.getCards()` calls with reliable alternatives:
 The Parent Selector popup (used when creating Incremental Rems from PDF highlights) has been significantly improved with **hierarchical tree navigation** and **inline child creation**.
 
 **Hierarchical Tree Navigation:**
+
 - Nodes can now be **expanded to reveal children**, allowing you to navigate deep into your note structure
 - Use `→` to expand a node, `←` to collapse (or jump to parent)
 - The tree **remembers your last destination** and auto-expands to it on next use
 - Incremental Rems are shown first, sorted by priority
 
 **Inline Child Creation:**
+
 - Press `+` or `n` on any selected node to create a child
 - Type the name and press `Enter` — the new Rem appears immediately in the tree
 - Press `Enter` again to select it as your destination
@@ -3901,6 +5556,7 @@ This eliminates the friction of closing the popup, navigating to the editor to c
 A new gesture has been added to the "Next" button for faster scheduling when reviewing Incremental Rems:
 
 **How to use:**
+
 - **Normal click** → Schedules the next repetition using the standard SRS multiplier (same as before)
 - **Click and slide UP** → Schedules for **tomorrow** 
 - **Click and slide DOWN** → Schedules for **today** (later in the same day)
@@ -3930,6 +5586,7 @@ A new option has been added to the PDF highlight popup menu that streamlines the
 5. The plugin creates a new Incremental Rem under your chosen parent, containing the highlight text plus a pinned reference back to the original highlight
 
 **What happens automatically:**
+
 - The new Rem inherits the Incremental tag and gets scheduled for review
 - The original highlight is "consumed" — its Incremental tag is removed (if existing) and its color resets to yellow
 - The new Rem maintains a link to the source highlight for easy navigation back to the PDF context
@@ -3937,6 +5594,7 @@ A new option has been added to the PDF highlight popup menu that streamlines the
 **When to use:**
 
 This is ideal for workflows where you want to:
+
 - Extract key ideas from PDFs into your main note structure rather than leaving them as orphan highlights (it will be **much easier to process this extract, cloze keywords, create flashcards**, etc)
 - Organize extracts under topic-specific Incremental Rems (e.g., placing all extracts about "Navigation Systems" under a dedicated parent)
 - Build a hierarchical structure where child extracts inherit context and priority from their parent
@@ -4093,6 +5751,7 @@ This is ideal for workflows where you want to:
 
 ### ✨ PDF Control Panel improvements 
 (thanks to [@randygrok](https://github.com/randygrok) )
+
 - Modernized PDF Control Panel UI
 - Added menu item in PDF viewer (Document Menu) for direct access to control panel (3-dot icon at the top-right of Documents)
 - Replaced hardcoded colors with RemNote CSS variables for theme consistency
@@ -4164,6 +5823,7 @@ This is ideal for workflows where you want to:
 
 #### Available Colors
 Users can choose from 5 highlight colors:
+
 - 🔴 Red
 - 🟠 Orange
 - 🟢 Green
@@ -4188,6 +5848,7 @@ You can now review Incremental Rems without entering the queue! Use the new comm
 #### Key Features:
 
 **Manual Review Mode:**
+
 - Focus on any IncRem and trigger the command
 - Enter how long you spent reviewing (in minutes)
 - Adjust the next review interval (the initially suggested one is that you would get if reviewing in the queue) and priority
@@ -4197,6 +5858,7 @@ You can now review Incremental Rems without entering the queue! Use the new comm
 
 
 **Timer Mode:**
+
 - Click "Start Timer" to track your review time automatically
 - A timer appears above your document while you work
 - Click "End Review" when finished to save everything with precise timing
@@ -4274,11 +5936,13 @@ Change `isMobileDeviceKey` from **synced storage** to **session storage** (`plug
 **Why This Works**
 
 **Session Storage**
+
 - **Device-specific**: Each device maintains its own value
 - **No sync**: Data stays on the current device only
 - **Perfect for device detection**: Mobile stays mobile, desktop stays desktop
 
 **Synced Storage** (kept for `lastDetectedOSKey`)
+
 - **Cross-device**: Values sync across all devices
 - **Good for**: User preferences, history tracking
 - **Not good for**: Device-specific hardware characteristics
@@ -4294,6 +5958,7 @@ Change `isMobileDeviceKey` from **synced storage** to **session storage** (`plug
 **Note on lastDetectedOSKey**
 
 The `lastDetectedOSKey` intentionally remains in **synced storage** because:
+
 - It tracks OS history across devices for comparison
 - Used for the "switched from mobile to desktop" detection message
 - Doesn't affect the actual mode determination, only informational toasts
@@ -4317,6 +5982,7 @@ When removing the Incremental tag from a Rem, descendant flashcards could lose t
 #### Implementation Details
 
 **Key Features:**
+
 1. **Smart Detection**: Only adds cardPriority tag when actually needed (Rem or descendants up to the 3rd level have flashcards)
 2. **Early Termination**: Stops searching as soon as any flashcard is found for optimal performance
 3. **Batch Processing**: Processes descendants in batches of 50 for better performance
@@ -4326,27 +5992,32 @@ When removing the Incremental tag from a Rem, descendant flashcards could lose t
 **Function: `handleCardPriorityInheritance`**
 
 This function:
+
 1. First checks if the Rem already has a cardPriority set (avoids redundant work)
 2. Checks if the Rem itself has flashcards (immediate return if found)
 3. Processes descendants in batches with early termination
 4. Sets cardPriority with source='manual' using the IncRem's priority value
 
 **Performance impact:**
+
 - **Synchronous execution**: Despite the effort to reduce impact of performance, the new function can block the UI for a few seconds after pressing the Done button, while the check for flashcards in the descendants takes place.
 
 **Benefits:**
+
 1. **Minimal UI clutter**: Only adds cardPriority tags when necessary
 2. **Inheritance Preservation**: Ensures flashcard priorities are maintained
 3. **Backward Compatible**: Works with existing priority system
 
 **Console Logging:**
 The implementation includes console logging for debugging:
+
 - `[Done Button] Set card priority X for Rem with direct flashcards` - when Rem has its own cards
 - `[Done Button] Set card priority X for Rem with descendant flashcards` - when descendants have cards
 - `[Done Button] No flashcards found in Rem or descendants, skipping card priority` - when no cards found
 - `[Done Button] Error in handleCardPriorityInheritance:` - if any error occurs
 
 **Files Modified:**
+
 - `answer_buttons.tsx`: Added the smart card priority inheritance logic to the Done button
 - `pdfUtils.ts`: Now getDescendantsToDepth function is exported.
 
@@ -4398,6 +6069,7 @@ The Full performance mode can be resource-intensive and potentially cause crashe
 ### Toast Examples
 
 When you open the plugin, you'll see messages like:
+
 - 📱 `"iOS detected: using Light Mode (Full Mode disabled on mobile for stability)"`
 - 💻 `"macOS detected: running in Full Mode"`
 - ⚠️ `"Android detected: Full Mode can crash mobile. Consider enabling 'Always use Light Mode on mobile' in settings"`
@@ -4405,6 +6077,7 @@ When you open the plugin, you'll see messages like:
 ### Technical Details
 
 The plugin now tracks your device type and automatically adjusts which features run:
+
 - **Light Mode**: Essential features only, fast and stable
 - **Full Mode Override**: When on mobile with auto-switch enabled, intensive features like priority shields and relative percentiles are disabled for performance
 
@@ -4451,12 +6124,14 @@ Enhanced the Priority Shield system to display the total universe size (count of
 
 #### **Better Context for Priority Changes**
 Users can now distinguish:
+
 - **Genuine Progress**: Priority shield improving due to processing high-priority items
 - **Progress hidden by the Universe Shrinkage of IncRems**: Percentiles remain low due to processed IncRems (and therefore untagged) being removed from the IncRem queue
 - **Queue Growth**: Understanding how new content affects relative priorities
 
 #### **Workflow Insights**
 The universe size line reveals:
+
 - **Processing Efficiency of IncRems**: Decreasing universe = successful completion and untagging of IncRems
 - **Content Inflow Rate**: Increasing universe = new material being added
 - **Optimal Queue Size**: Helps users find their sustainable learning capacity
@@ -4485,12 +6160,14 @@ The universe size line reveals:
 ### 📈 Visual Examples
 
 The graph now shows three synchronized metrics:
+
 - **Solid lines**: Absolute and Relative Priority (existing metrics)
 - **Dashed line**: Universe Size (new metric)
 ![image](assets/uploaded/9b27e119-0b55-4cc4-a5ab-36149f63ff50.png){ width="800" }
 
 
 Example insights from the new visualization:
+
 - "Priority dropped from 10% to 5%, but universe size halved" → Good progress, not regression
 - "Priority stable at 4%, universe growing" → Need to increase review volume or reduce inflow
 - "Universe size stable, priority improving" → Workflow is optimally balanced
@@ -4498,6 +6175,7 @@ Example insights from the new visualization:
 ### 🎓 User Guidance
 
 New description added to help users understand:
+
 - **Universe Size Changes**: How item removal/addition affects percentiles
 - **Priority Shield Interpretation**: Context-aware understanding of shield values
 - **Workflow Optimization**: Using universe size trends to adjust learning strategies
@@ -4636,6 +6314,7 @@ Track your progress on high-priority flashcard reviews:
 #### Performance Considerations
 
 ⚠️ **Important**: This feature adds significant computational overhead:
+
 - Initial cache building: may take more than 2 min on plugin load (depending on KB size) [in the Desktop App, for a KB with 41k rems with cards, it took 2 min 15 sec]
 - Queue entry calculations: May be up to 25 seconds for large documents
 - Memory usage: Maintains cache of all flashcard Rems with priorities
@@ -4689,6 +6368,7 @@ Create custom review sessions that combine flashcards and Incremental Reading it
 
 ##### Smart Scope Detection
 Priority Review Documents maintain awareness of their original source:
+
 - **Rem Reference in Title**: Document titles contain actual rem references to their source scope
 - **Dual Scope System**: 
   - Item selection uses Priority Review Document contents
@@ -4697,6 +6377,7 @@ Priority Review Documents maintain awareness of their original source:
 
 ##### Accurate Priority Calculations
 When reviewing through a Priority Review Document:
+
 - **Priority Widget**: Displays relative priorities against original document, not the filtered review document
 - **Priority Shields**: Calculate highest missed priorities from original scope
 - **Scope Indicator**: Visual indicator in the Priority popup shows "Scope: [Original Document] (Original Document)"
@@ -4704,6 +6385,7 @@ When reviewing through a Priority Review Document:
 
 ##### Comprehensive Scope Calculation
 Reviews include all relevant content from the source:
+
 - Document descendants
 - Portal contents  
 - Table Views 
@@ -4757,6 +6439,7 @@ When you study a document, the queue now includes (IncRems only for regular RemN
 **Before:** Studying a literature note would only show IncRems (+ flashcards in Priority Review Documents) from that note's children.
 
 **After:** Studying a literature note now includes IncRems (+ flashcards in Priority Review Documents):
+
 - From the note itself and its children
 - From source papers referenced in the note  
 - From notes that reference this literature note
@@ -4764,6 +6447,7 @@ When you study a document, the queue now includes (IncRems only for regular RemN
 - From the document's folder queue
 
 This creates a much more **contextually complete** study session, especially useful for:
+
 - 📚 Literature review documents with many source citations
 - 🗂️ Index documents that aggregate content via portals
 - 🔗 Hub notes with extensive backlinks
@@ -4772,6 +6456,7 @@ This creates a much more **contextually complete** study session, especially use
 #### Technical Implementation
 
 The comprehensive scope uses RemNote SDK methods:
+
 - `scopeRem.getDescendants()` - Hierarchical children
 - `scopeRem.allRemInDocumentOrPortal()` - Portal/table context
 - `scopeRem.allRemInFolderQueue()` - Folder queue rems
@@ -4783,6 +6468,7 @@ All sources are deduplicated and stored in `currentScopeRemIdsKey` session stora
 #### User Experience
 
 No configuration needed - the comprehensive scope is **automatic**! When you:
+
 - Enter a document queue → Scope is calculated and cached
 - View priority in queue → Uses fast cached scope
 - Check priority shield → Reflects comprehensive scope
@@ -4812,6 +6498,7 @@ None. This release is fully backward compatible with existing Incremental Rem pr
 ### 📝 Migration Notes
 
 If upgrading from v0.1.x:
+
 - Existing IncRem priorities are preserved
 - Flashcards start with inherited priorities from their ancestors, or default priority (the one specified in your plugin settings, default: 50), until manually set
 - Cache will build automatically on first plugin load (may take more than 2 min for large KB)
@@ -4862,6 +6549,7 @@ This version introduces a powerful new widget for managing the priorities of mul
 
 - **15-minute timer:** When activated, incremental rems are disabled for exactly 15 minutes
 _ **Auto-cleanup:** The timer automatically clears itself when expired
+
 - **Visual feedback:** Toast notifications inform the user when the timer is activated/cancelled
 - **Manual cancel option:** Users can cancel the timer early via a command
 - **Queue refresh:** The queue automatically updates when the timer is set or expires

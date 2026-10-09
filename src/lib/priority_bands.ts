@@ -19,9 +19,11 @@ import { BuiltInPowerupCodes, PluginRem, RNPlugin } from '@remnote/plugin-sdk';
 import {
   allCardPriorityInfoKey,
   allIncrementalRemKey,
+  allIncrementalRemSlimKey,
   dismissedHistorySlotCode,
   dismissedPowerupCode,
   powerupCode,
+  priorityBandVerboseLogsKey,
   prioritySlotCode,
 } from './consts';
 // Import from card_priority/types, a leaf module of plain constants, NOT from
@@ -29,7 +31,8 @@ import {
 // would form a cycle — and breaking that cycle with a dynamic import() is not an
 // option: any chunk it emits is evaluated by the RemNote index sandbox as a
 // classic script and dies on `import.meta` (see the note atop register/tracker.ts).
-import { CARD_PRIORITY_CODE, PRIORITY_SLOT } from './card_priority/types';
+import { CARD_PRIORITY_CODE } from './card_priority/types';
+import { getRawCardPriorityString } from './card_priority/slot_access';
 
 export const BAND_COUNT = 10;
 
@@ -113,7 +116,7 @@ async function readBadgePriority(
   const raw = isInc
     ? await rem.getPowerupProperty(powerupCode, prioritySlotCode)
     : hasCardPowerup
-    ? await rem.getPowerupProperty(CARD_PRIORITY_CODE, PRIORITY_SLOT)
+    ? await getRawCardPriorityString(rem)
     : null;
 
   if (!raw) return { priority: null, isInc };
@@ -546,7 +549,7 @@ async function linkedRemPriority(rem: PluginRem): Promise<LinkedPriority | null>
     if (!isNaN(value)) return { value, live: true };
   }
   if (hasCard) {
-    const raw = await rem.getPowerupProperty(CARD_PRIORITY_CODE, PRIORITY_SLOT);
+    const raw = await getRawCardPriorityString(rem);
     const value = raw ? parseInt(raw, 10) : NaN;
     if (!isNaN(value)) return { value, live: true };
   }
@@ -780,27 +783,107 @@ function percentilesFor(values: number[]): number[] | null {
 export async function computeBandPercentiles(plugin: RNPlugin): Promise<BandPercentiles> {
   const incPriorities: number[] = [];
   const cardPriorities: number[] = [];
+  const t0 = Date.now();
   try {
-    const [incRems, cardInfos] = await Promise.all([
-      plugin.storage.getSession<Array<{ priority?: number }>>(allIncrementalRemKey),
+    // The SLIM projection, not the full cache: only `priority` is read here, and
+    // the full cache is multi-megabyte to drag across the bridge. Both are
+    // written together by writeIncRemCaches, so the slim key is never the staler
+    // of the two; the fallback covers a realm holding only the full key.
+    const [incSlim, cardInfos] = await Promise.all([
+      plugin.storage.getSession<Array<{ priority?: number }>>(allIncrementalRemSlimKey),
       plugin.storage.getSession<Array<{ priority?: number }>>(allCardPriorityInfoKey),
     ]);
+    const incRems =
+      incSlim?.length
+        ? incSlim
+        : await plugin.storage.getSession<Array<{ priority?: number }>>(allIncrementalRemKey);
     for (const item of incRems || []) {
       if (typeof item?.priority === 'number' && !isNaN(item.priority)) {
         incPriorities.push(item.priority);
       }
     }
     for (const item of cardInfos || []) {
-      if (typeof item?.priority === 'number' && !isNaN(item.priority)) {
-        cardPriorities.push(item.priority);
+      if (typeof item?.priority !== 'number' || isNaN(item.priority)) continue;
+      // A rem whose cards are ALL unscheduled owns nothing the user intends to
+      // practise, so it takes no part in the ranking that colours the bands —
+      // same population rule as expandCardInfosToCards. Rems with at least one
+      // schedulable card (paused decks included) still count once, so this
+      // keeps the pool rem-weighted rather than quietly switching it to
+      // card-weighted, which would shift every band colour.
+      const nextReps = (item as { cardsNextRep?: (number | null)[] }).cardsNextRep;
+      if (nextReps && nextReps.length > 0 && nextReps.every((n) => n === null || n === undefined)) {
+        continue;
       }
+      cardPriorities.push(item.priority);
     }
   } catch (err) {
     console.error('[PriorityBands] percentile sampling failed', err);
     return { inc: null, card: null };
   }
 
-  return { inc: percentilesFor(incPriorities), card: percentilesFor(cardPriorities) };
+  const result = { inc: percentilesFor(incPriorities), card: percentilesFor(cardPriorities) };
+  const describe = (p: number[] | null, n: number) =>
+    `${p ? 'RELATIVE' : 'ABSOLUTE FALLBACK'} (${n} samples)`;
+
+  if (await bandVerboseLogsEnabled(plugin)) {
+    console.log(
+      `[PriorityBands] computeBandPercentiles: inc pool=${describe(result.inc, incPriorities.length)}, ` +
+        `card pool=${describe(result.card, cardPriorities.length)}, ` +
+        `min sample=${MIN_PERCENTILE_SAMPLE}, sampled in ${Date.now() - t0}ms`
+    );
+  } else if (!result.inc || !result.card) {
+    // Not gated: a pool too small to rank means the badges built from it fall
+    // back to the absolute midpoint scale and quietly disagree with the Priority
+    // Editor — the exact failure this instrumentation was added for, and one
+    // nothing in the UI reveals. One line, and only when actually degraded.
+    // Expected while a cache is still loading, or with its feature switched off.
+    console.warn(
+      `[PriorityBands] band colours degraded to the absolute scale — ` +
+        `inc pool ${describe(result.inc, incPriorities.length)}, ` +
+        `card pool ${describe(result.card, cardPriorities.length)}`
+    );
+  }
+  return result;
+}
+
+/**
+ * Whether the verbose band-colour instrumentation is switched on for this
+ * device. See {@link priorityBandVerboseLogsKey}.
+ */
+export async function bandVerboseLogsEnabled(plugin: RNPlugin): Promise<boolean> {
+  return (await plugin.storage.getLocal<boolean>(priorityBandVerboseLogsKey)) === true;
+}
+
+/**
+ * Dumps the band → percentile → colour mapping a stylesheet is about to bake in.
+ *
+ * Instrumentation only, and off unless priorityBandVerboseLogsKey is set. The
+ * badge colour is resolved once, at registerCSS time, from a snapshot of the
+ * priority distribution — so when a badge disagrees with the Priority Editor the
+ * question is always "which snapshot was this sheet built from, and when", and
+ * that is exactly what this prints.
+ */
+export async function logBandColorMapping(
+  plugin: RNPlugin,
+  label: string,
+  percentiles: number[] | null,
+  colorForBand: (band: number) => string
+): Promise<void> {
+  if (!(await bandVerboseLogsEnabled(plugin))) return;
+  const source = percentiles
+    ? 'RELATIVE (percentiles of the live distribution)'
+    : 'ABSOLUTE FALLBACK (band midpoint — pool empty or too small)';
+  console.log(`[PriorityBands] ${label} colour scale: ${source}`);
+  const rows = Array.from({ length: BAND_COUNT }, (_, band) => ({
+    band: bandLabel(band),
+    absoluteMidpoint: band * 10 + 5,
+    percentileUsed: bandColorPercentile(percentiles, band),
+    color: colorForBand(band),
+  }));
+  // console.table renders this readably in devtools; the plain log keeps the
+  // data recoverable from a copy-pasted console dump.
+  console.table?.(rows);
+  console.log(`[PriorityBands] ${label} mapping`, JSON.stringify(rows));
 }
 
 /**
@@ -865,7 +948,7 @@ ${html}[data-rem-tags~="${slug}"]::before {
   // Caveat: on a single-line highlight the two corners nearly coincide, so the
   // badge can sit close to the counter.
   const badges = `
-/* Priority band badges on highlights (Incremental Everything) */
+/* Priority band badges on highlights (Incremental RemNote) */
 ${pdf}[data-rem-tags*="priorityband"],
 ${html}[data-rem-tags*="priorityband"] {
   position: relative;
@@ -965,7 +1048,7 @@ ${incOverride}::before {
   // ::before rather than ::after because that is the pseudo-element the corner
   // placement was actually verified with against a live table.
   return `
-/* Priority band badges in table cells (Incremental Everything) */
+/* Priority band badges in table cells (Incremental RemNote) */
 .tree-node--table-cell .rem[data-rem-tags*="priorityband"] .rem-text {
   position: relative;
 }

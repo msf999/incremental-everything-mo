@@ -1,0 +1,744 @@
+import { RNPlugin, PluginRem, RemId } from '@remnote/plugin-sdk';
+import {
+  PRIORITY_QUEUE_DEFAULT_BURST,
+  PRIORITY_QUEUE_KB_SCOPE,
+  PRIORITY_QUEUE_SHIELD_SLICE,
+  incrementalQueueActiveKey,
+  priorityQueueBurstSlotCode,
+  priorityQueueLastRefreshSlotCode,
+  priorityQueuePowerupCode,
+  priorityQueueScopeSlotCode,
+  priorityQueueShieldSliceSlotCode,
+  priorityQueueSkipPausedSlotCode,
+  priorityQueuePausedThresholdSlotCode,
+  PRIORITY_QUEUE_SKIP_PAUSED,
+  PRIORITY_QUEUE_PAUSED_THRESHOLD,
+  PRIORITY_QUEUE_SHIELD_SLICE_MAX,
+  PRIORITY_QUEUE_BURST_MIN,
+  PRIORITY_QUEUE_BURST_MAX,
+  allCardPriorityInfoKey,
+} from '../consts';
+import { CardPriorityInfo } from '../card_priority/types';
+import { getCardsPerRem } from '../sorting';
+import { FillSlots, splitFillTarget } from './fill_split';
+import {
+  attachToReviewQueueTag,
+  buildGraphData,
+  buildReviewDocTitle,
+  findOrCreateMetadataRem,
+  findOrCreateGraphRem,
+  findOrCreateTag,
+  GraphItem,
+  PRD_TAG_NAME,
+  writeEntries,
+  writeGraph,
+} from './index';
+import { selectPriorityItems, SelectionResult, SelectedItem, findDueAncestorSpoiler, AncestorInfo, ForcedAncestor } from './select';
+import { ClusterFinder } from './cluster';
+import { coolingClusterMembersToKeep, missingClusterSiblings } from './cluster_rules';
+import { cleanPriorityReviewDocuments, PrdDocReport, scanPriorityReviewDocuments } from './clean';
+import { CoolingScanner } from './cooling_gather';
+import { CoolingVerdict, dueAnswerLineIds, isCardDue } from './cooling';
+import { readChildren } from './children';
+import { loadCardSource } from './card_source';
+
+/**
+ * The persistent Priority Queue document — one per scope.
+ *
+ * A snapshot review document is built once and decays: every item you review
+ * leaves a dead entry behind, and every day's snapshot adds a document to the
+ * tag, until practising the tag serves yesterday's leftovers before today's
+ * priorities. The Priority Queue document is the same document kept alive
+ * instead: REFILL tops it up to a fill target from the current ranking, DRAIN
+ * removes what you have reviewed (and what is cooling), REFRESH is both. Small
+ * bursts are the point — RemNote serves a document's cards in random order
+ * (its base card provider is literally named `random`), so the only control a
+ * plugin has over what comes first is how few items the document holds.
+ *
+ * Nothing here runs while a queue is open. RemNote gathers a document's cards
+ * when Practice is pressed, so editing between sessions is safe and editing
+ * during one is not.
+ */
+
+export interface PriorityQueueDocInfo {
+  doc: PluginRem;
+  scopeRemId: RemId | null;
+  burst: number;
+  /** 0–1. See PRIORITY_QUEUE_SHIELD_SLICE. */
+  shieldSlice: number;
+  /** Leave out flashcard Rems inside paused documents. */
+  skipPaused: boolean;
+  /** Paused Rems at or below this priority are kept anyway. */
+  pausedThreshold: number;
+  lastRefresh: number | null;
+}
+
+export const clampBurst = (n: number) =>
+  Math.max(PRIORITY_QUEUE_BURST_MIN, Math.min(PRIORITY_QUEUE_BURST_MAX, Math.round(n)));
+export const clampShieldSlice = (f: number) =>
+  Math.max(0, Math.min(PRIORITY_QUEUE_SHIELD_SLICE_MAX, Math.round(f * 100) / 100));
+export const clampPausedThreshold = (n: number) =>
+  Math.max(0, Math.min(100, Math.round(Number.isFinite(n) ? n : PRIORITY_QUEUE_PAUSED_THRESHOLD)));
+
+/**
+ * True when RemNote is on a flashcards route. The URL is the authority: the
+ * queue widget's session flag can outlive the queue (see the URLChange
+ * listener), so it is consulted only when the URL cannot be read.
+ */
+export async function isQueueOpen(plugin: RNPlugin): Promise<boolean> {
+  try {
+    const url = await plugin.window.getURL();
+    if (typeof url === 'string') return url.includes('/flashcards');
+  } catch {
+    /* fall through */
+  }
+  try {
+    return !!(await plugin.storage.getSession<boolean>(incrementalQueueActiveKey));
+  } catch {
+    return false;
+  }
+}
+
+export async function isPriorityQueueDoc(rem: PluginRem): Promise<boolean> {
+  try {
+    return await rem.hasPowerup(priorityQueuePowerupCode);
+  } catch {
+    return false;
+  }
+}
+
+async function readSlot(rem: PluginRem, slot: string): Promise<string | null> {
+  try {
+    const raw = await rem.getPowerupProperty(priorityQueuePowerupCode, slot);
+    return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function readInfo(doc: PluginRem): Promise<PriorityQueueDocInfo> {
+  const scope = await readSlot(doc, priorityQueueScopeSlotCode);
+  const burst = Number(await readSlot(doc, priorityQueueBurstSlotCode));
+  const last = Number(await readSlot(doc, priorityQueueLastRefreshSlotCode));
+  const sliceRaw = await readSlot(doc, priorityQueueShieldSliceSlotCode);
+  const slice = sliceRaw === null ? NaN : Number(sliceRaw);
+  const skipRaw = await readSlot(doc, priorityQueueSkipPausedSlotCode);
+  const thresholdRaw = await readSlot(doc, priorityQueuePausedThresholdSlotCode);
+  return {
+    doc,
+    scopeRemId: scope && scope !== PRIORITY_QUEUE_KB_SCOPE ? scope : null,
+    burst: Number.isFinite(burst) && burst > 0 ? burst : PRIORITY_QUEUE_DEFAULT_BURST,
+    shieldSlice: Number.isFinite(slice) ? clampShieldSlice(slice) : PRIORITY_QUEUE_SHIELD_SLICE,
+    skipPaused: skipRaw === null ? PRIORITY_QUEUE_SKIP_PAUSED : skipRaw !== '0',
+    pausedThreshold: thresholdRaw === null ? PRIORITY_QUEUE_PAUSED_THRESHOLD : clampPausedThreshold(Number(thresholdRaw)),
+    lastRefresh: Number.isFinite(last) && last > 0 ? last : null,
+  };
+}
+
+/** Every Priority Queue document in the KB. */
+export async function listPriorityQueueDocs(plugin: RNPlugin): Promise<PriorityQueueDocInfo[]> {
+  const tag = await plugin.rem.findByName([PRD_TAG_NAME], null);
+  if (!tag) return [];
+  const docs = (await tag.taggedRem()) || [];
+  const out: PriorityQueueDocInfo[] = [];
+  for (const doc of docs) {
+    if (await isPriorityQueueDoc(doc)) out.push(await readInfo(doc));
+  }
+  return out;
+}
+
+export async function findPriorityQueueDoc(
+  plugin: RNPlugin,
+  scopeRemId: RemId | null
+): Promise<PriorityQueueDocInfo | null> {
+  const all = await listPriorityQueueDocs(plugin);
+  return all.find((d) => d.scopeRemId === scopeRemId) ?? null;
+}
+
+export async function setPriorityQueueBurst(plugin: RNPlugin, doc: PluginRem, burst: number): Promise<void> {
+  await doc.setPowerupProperty(priorityQueuePowerupCode, priorityQueueBurstSlotCode, [String(clampBurst(burst))]);
+}
+
+export async function setPriorityQueueShieldSlice(plugin: RNPlugin, doc: PluginRem, fraction: number): Promise<void> {
+  await doc.setPowerupProperty(priorityQueuePowerupCode, priorityQueueShieldSliceSlotCode, [
+    String(clampShieldSlice(fraction)),
+  ]);
+}
+
+export async function setPriorityQueuePausedFilter(
+  plugin: RNPlugin,
+  doc: PluginRem,
+  skipPaused: boolean,
+  pausedThreshold: number
+): Promise<void> {
+  await doc.setPowerupProperty(priorityQueuePowerupCode, priorityQueueSkipPausedSlotCode, [skipPaused ? '1' : '0']);
+  await doc.setPowerupProperty(priorityQueuePowerupCode, priorityQueuePausedThresholdSlotCode, [
+    String(clampPausedThreshold(pausedThreshold)),
+  ]);
+}
+
+export async function findOrCreatePriorityQueueDoc(
+  plugin: RNPlugin,
+  scopeRemId: RemId | null,
+  burst: number = PRIORITY_QUEUE_DEFAULT_BURST
+): Promise<PriorityQueueDocInfo> {
+  const existing = await findPriorityQueueDoc(plugin, scopeRemId);
+  if (existing) return existing;
+
+  const doc = await plugin.rem.createRem();
+  if (!doc) throw new Error('Could not create the Priority Queue document.');
+  await doc.setText(await buildReviewDocTitle(plugin, 'Priority Queue', scopeRemId));
+  await doc.setIsDocument(true);
+  await doc.addPowerup(priorityQueuePowerupCode);
+  await doc.setPowerupProperty(priorityQueuePowerupCode, priorityQueueScopeSlotCode, [
+    scopeRemId ?? PRIORITY_QUEUE_KB_SCOPE,
+  ]);
+  await setPriorityQueueBurst(plugin, doc, burst);
+  await setPriorityQueueShieldSlice(plugin, doc, PRIORITY_QUEUE_SHIELD_SLICE);
+  await setPriorityQueuePausedFilter(plugin, doc, PRIORITY_QUEUE_SKIP_PAUSED, PRIORITY_QUEUE_PAUSED_THRESHOLD);
+  // Status block first, graph second, entries after — created now so the
+  // first refill appends below them rather than above the graph.
+  await findOrCreateMetadataRem(plugin, doc);
+  await findOrCreateGraphRem(plugin, doc);
+  await attachToReviewQueueTag(plugin, doc);
+  // The tag lookups the entries need, created up front so the first refill
+  // does not create them mid-loop.
+  await findOrCreateTag(plugin, 'INC');
+  await findOrCreateTag(plugin, 'FC');
+  return {
+    doc,
+    scopeRemId,
+    burst: clampBurst(burst),
+    shieldSlice: PRIORITY_QUEUE_SHIELD_SLICE,
+    skipPaused: PRIORITY_QUEUE_SKIP_PAUSED,
+    pausedThreshold: PRIORITY_QUEUE_PAUSED_THRESHOLD,
+    lastRefresh: null,
+  };
+}
+
+// --- refresh --------------------------------------------------------------
+
+export type RefreshMode = 'refresh' | 'drain' | 'refill';
+
+export interface RefreshOptions {
+  scopeRemId: RemId | null;
+  mode?: RefreshMode;
+  /** Overrides (and stores) the document's fill target. */
+  burst?: number;
+  /** Overrides (and stores) the document's shield slice, 0–1. */
+  shieldSlice?: number;
+  /** Overrides (and stores) whether paused-document Rems are left out. */
+  skipPaused?: boolean;
+  /** Overrides (and stores) the priority at or below which paused Rems are kept. */
+  pausedThreshold?: number;
+  /** Skip the open-queue guard — for the QueueExit hook, which runs as the queue closes. */
+  skipQueueGuard?: boolean;
+  onProgress?: (message: string) => void;
+}
+
+export interface RefreshResult {
+  blocked?: 'queue-open';
+  /** Null only when blocked before the document existed. */
+  doc: PluginRem | null;
+  scopeRemId: RemId | null;
+  burst: number;
+  /** Entries in the document after the refresh. */
+  holding: { total: number; flashcards: number; incRems: number };
+  drained: { reviewed: number; cooling: number; ancestor: number; missing: number; kept: number };
+  added: { total: number; flashcards: number; incRems: number; shieldSlice: number };
+  /** The fill target split for the whole document (fill_split.ts). */
+  slots?: FillSlots;
+  /** Due Card Cluster siblings added to complete clusters already in the document. */
+  clusterSiblingsAdded?: number;
+  /** Refresh only: the IncRems drawn again — kept in place, or replaced by the new draw. */
+  incRedraw?: { kept: number; replaced: number } | null;
+  cooling: CoolingVerdict[];
+  selection: SelectionResult | null;
+  elapsedMs: number;
+}
+
+/** The target Rem ids the document's entries point at, by entry kind. */
+async function readDocTargets(plugin: RNPlugin, doc: PluginRem): Promise<Map<RemId, RemId>> {
+  const children = await readChildren(plugin, doc);
+  const targets = new Map<RemId, RemId>(); // entryId -> targetId
+  for (const child of children) {
+    if (!Array.isArray(child.text)) continue;
+    const ref = child.text.find((el) => el && typeof el === 'object' && (el as any).i === 'q' && (el as any)._id);
+    if (ref) targets.set(child._id, (ref as any)._id as RemId);
+  }
+  return targets;
+}
+
+/** Plain text of a Rem for labels, without a bridge call. */
+function flattenLabel(text: unknown): string {
+  if (!Array.isArray(text)) return '';
+  return text
+    .map((el) => (typeof el === 'string' ? el : el && typeof el === 'object' && typeof (el as any).text === 'string' ? (el as any).text : ''))
+    .join('')
+    .trim();
+}
+
+function formatStamp(ms: number): string {
+  return new Date(ms).toLocaleString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+/**
+ * Drain, then refill up to the fill target, then rewrite the status block and
+ * the graph. Returns `blocked: 'queue-open'` (and does nothing) while a queue
+ * is open, unless the caller vouches for the moment.
+ */
+export async function refreshPriorityQueue(plugin: RNPlugin, options: RefreshOptions): Promise<RefreshResult> {
+  const startedAt = Date.now();
+  const mode = options.mode ?? 'refresh';
+  const progress = options.onProgress ?? (() => {});
+
+  if (!options.skipQueueGuard && (await isQueueOpen(plugin))) {
+    console.warn('[Priority Queue] Refresh refused: a queue is open.');
+    const existing = await findPriorityQueueDoc(plugin, options.scopeRemId);
+    return {
+      blocked: 'queue-open',
+      doc: existing?.doc ?? null,
+      scopeRemId: options.scopeRemId,
+      burst: options.burst ?? existing?.burst ?? PRIORITY_QUEUE_DEFAULT_BURST,
+      holding: { total: 0, flashcards: 0, incRems: 0 },
+      drained: { reviewed: 0, cooling: 0, ancestor: 0, missing: 0, kept: 0 },
+      added: { total: 0, flashcards: 0, incRems: 0, shieldSlice: 0 },
+      cooling: [],
+      selection: null,
+      elapsedMs: Date.now() - startedAt,
+    };
+  }
+
+  const info = await findOrCreatePriorityQueueDoc(plugin, options.scopeRemId, options.burst);
+  let doc = info.doc;
+  const burst = clampBurst(options.burst ?? info.burst);
+  if (burst !== info.burst) await setPriorityQueueBurst(plugin, doc, burst);
+  const shieldSlice = clampShieldSlice(options.shieldSlice ?? info.shieldSlice);
+  if (shieldSlice !== info.shieldSlice) await setPriorityQueueShieldSlice(plugin, doc, shieldSlice);
+  const skipPaused = options.skipPaused ?? info.skipPaused;
+  const pausedThreshold = clampPausedThreshold(options.pausedThreshold ?? info.pausedThreshold);
+  if (skipPaused !== info.skipPaused || pausedThreshold !== info.pausedThreshold) {
+    await setPriorityQueuePausedFilter(plugin, doc, skipPaused, pausedThreshold);
+  }
+
+  // Card facts, loaded ONCE for the whole refresh: the card cache in Full Mode
+  // (no card read), one card.getAll() otherwise, shared by the drain, cooling
+  // and selection below. See card_source.ts.
+  progress('Reading card state…');
+  const cardSource = await loadCardSource(plugin);
+  const scanner = new CoolingScanner(plugin, { scopeRemId: info.scopeRemId, cardSource });
+  const cardRatio = await getCardsPerRem(plugin);
+  const slots = splitFillTarget(burst, cardRatio);
+
+  // 1. Drain. The document's own targets are judged for cooling first, so an
+  //    entry whose sibling was reviewed in the last session leaves with the
+  //    reviewed ones.
+  progress('Reading the document…');
+  const entryTargets = await readDocTargets(plugin, doc);
+  const targetIds = [...new Set(entryTargets.values())];
+  await scanner.scan(targetIds);
+
+  // The parent switch, for entries already in the document. The draw only
+  // checks a child's ancestors when it first picks the child, so a child that
+  // entered in one fill stayed through every later refresh even after its
+  // parent or grandparent came due — and practising it would show that
+  // ancestor's answer. Each entry's ancestors are checked on every refresh; a
+  // child with a due ancestor is drained, and the ancestor pulled in instead.
+  // Same detector, same two levels, same memoised reads as the draw.
+  progress('Checking entries for due ancestors…');
+  const heldByAncestor = new Map<RemId, ForcedAncestor>();
+  {
+    const now = Date.now();
+    const ancestorCache = new Map<RemId, AncestorInfo>();
+    const targetRems = targetIds.length ? (await plugin.rem.findMany(targetIds)) || [] : [];
+    await Promise.all(
+      targetRems.map(async (rem) => {
+        try {
+          const spoiler = await findDueAncestorSpoiler(plugin, rem, now, ancestorCache);
+          if (!spoiler) return;
+          heldByAncestor.set(rem._id, {
+            childRemId: rem._id,
+            childName: flattenLabel(rem.text),
+            ancestorRemId: spoiler.remId,
+            ancestorName: flattenLabel(spoiler.text),
+            level: spoiler.level,
+          });
+        } catch (e) {
+          // Fails open, like the draw: an unreadable ancestor keeps the entry.
+          console.warn(`[Priority Queue] Ancestor check failed for ${rem._id}:`, e);
+        }
+      })
+    );
+  }
+
+  // Card Clusters are kept whole (cluster_rules.ts): a cooling member stays while
+  // a sibling in the document is due and not cooling. Due-ness to the end of
+  // today, as the drain judges it.
+  const clusterFinder = new ClusterFinder(plugin);
+  const endOfToday = new Date();
+  endOfToday.setHours(23, 59, 59, 999);
+  const hasDueCard = (id: string) =>
+    (cardSource.cardsByRem.get(id) ?? []).some((c) => isCardDue(c, endOfToday.getTime()));
+  const entryClusters = await clusterFinder.index(targetIds);
+  const coolingKeptForCluster = coolingClusterMembersToKeep(
+    scanner.coolingIds(),
+    targetIds,
+    entryClusters.parentOf,
+    hasDueCard
+  );
+
+  progress('Draining reviewed, cooling and ancestor-held entries…');
+  const scan = await scanPriorityReviewDocuments(plugin, undefined, {
+    docIds: [doc._id],
+    coolingRemIds: new Set([...scanner.coolingIds()].filter((id) => !coolingKeptForCluster.has(id))),
+    ancestorHeldRemIds: new Set(heldByAncestor.keys()),
+    cardSource,
+  });
+  const report: PrdDocReport | undefined = scan.docs[0];
+  const drained = { reviewed: 0, cooling: 0, ancestor: 0, missing: 0, kept: 0 };
+  const forceAncestors: ForcedAncestor[] = [];
+  // Multi-line cards drained because an answer line is due: the lines take their place.
+  const forceAnswerLinesOf: RemId[] = [];
+  if (report && mode !== 'refill') {
+    for (const e of report.removableEntries) {
+      if (e.status === 'cooling') {
+        drained.cooling++;
+        const verdict = e.targetRemId ? scanner.verdicts.get(e.targetRemId) : undefined;
+        if (verdict && dueAnswerLineIds(verdict).length) forceAnswerLinesOf.push(e.targetRemId as RemId);
+      } else if (e.status === 'ancestor-due') {
+        drained.ancestor++;
+        const held = e.targetRemId ? heldByAncestor.get(e.targetRemId) : undefined;
+        if (held) forceAncestors.push(held);
+      } else if (e.status === 'missing') drained.missing++;
+      else drained.reviewed++;
+    }
+    drained.kept = report.keptEntries.length;
+    if (report.removableEntries.length) {
+      await cleanPriorityReviewDocuments(plugin, [report], { deleteEmptiedDocs: false });
+    }
+  }
+
+  // What the document still holds after the drain — never re-selected.
+  const remaining = report
+    ? mode === 'refill'
+      ? [...report.dueEntries, ...report.removableEntries, ...report.keptEntries, ...report.unknownEntries]
+      : [...report.dueEntries, ...report.keptEntries, ...report.unknownEntries]
+    : [];
+  const remainingFc = remaining.filter((e) => e.kind === 'fc').length;
+  const remainingInc = remaining.length - remainingFc;
+
+  // 2. Fill to the document's split (fill_split.ts). Flashcards stay until they
+  //    are reviewed, so only their empty slots are filled. IncRems are drawn
+  //    again on every Refresh: the queue injects them at the ratio whatever the
+  //    document holds, so an unserved IncRem has no claim on its slot, and a
+  //    fresh draw per refresh is what the regular queue does per session
+  //    (queue_prefetch.ts reruns the lottery). IncRems drawn again stay where
+  //    they are; entries with writing of your own on them are never drawn away.
+  //    Refill only fills empty slots; Drain adds nothing.
+  const redraw = mode === 'refresh';
+  const redrawable = redraw
+    ? (report?.dueEntries ?? []).filter((e) => e.kind === 'inc' && !!e.targetRemId && !e.carriesNotes)
+    : [];
+  const redrawableEntryIds = new Set(redrawable.map((e) => e.entryRemId));
+  const redrawableTargets = new Set(redrawable.map((e) => e.targetRemId as RemId));
+  const cardsToAdd = mode === 'drain' ? 0 : Math.max(0, slots.flashcards - remainingFc);
+  const incToSelect = mode === 'drain' ? 0 : Math.max(0, slots.incRems - (remainingInc - redrawable.length));
+  // Never re-selected: everything the document keeps, except the IncRems in the draw.
+  const excludeRemIds = new Set<RemId>(
+    remaining
+      .filter((e) => !redrawableEntryIds.has(e.entryRemId))
+      .map((e) => e.targetRemId)
+      .filter((id): id is RemId => !!id)
+  );
+
+  const toSelect = cardsToAdd + incToSelect;
+  progress(toSelect ? `Selecting ${toSelect} items…` : 'Computing the priority universe…');
+  const selection = await selectPriorityItems(plugin, {
+    scopeRemId: info.scopeRemId,
+    incRemCount: incToSelect,
+    cardCount: cardsToAdd,
+    cardRatio,
+    filterPaused: skipPaused,
+    pausedPriorityThreshold: pausedThreshold,
+    excludeRemIds,
+    shieldSliceFraction: shieldSlice,
+    coolingScanner: scanner,
+    cardSource,
+    // Drain only removes; the ancestors wait for the next refresh or refill.
+    forceAncestors: mode === 'drain' ? [] : forceAncestors,
+    forceAnswerLinesOf: mode === 'drain' ? [] : forceAnswerLinesOf,
+  });
+  await scanner.publish();
+
+  // The re-draw: IncRems not drawn again leave; the ones drawn again are
+  // already in the document and are not written twice.
+  const drawnIncIds = new Set(selection.items.filter((i) => i.type === 'incremental').map((i) => i.rem._id));
+  const redrawnAway = redrawable.filter((e) => !drawnIncIds.has(e.targetRemId as RemId));
+  const incRedraw = redraw ? { kept: redrawable.length - redrawnAway.length, replaced: redrawnAway.length } : null;
+  const removedEntryIds = new Set<RemId>();
+  if (redrawnAway.length) {
+    progress(`Replacing ${redrawnAway.length} IncRems…`);
+    for (const e of redrawnAway) {
+      try {
+        const rem = await plugin.rem.findOne(e.entryRemId);
+        if (rem) await rem.remove();
+        removedEntryIds.add(e.entryRemId);
+      } catch (err) {
+        console.warn(`[Priority Queue] Could not remove IncRem entry ${e.entryRemId} for the re-draw:`, err);
+      }
+    }
+  }
+  const kept = remaining.filter((e) => !removedEntryIds.has(e.entryRemId));
+  const drawnItems = selection.items.filter(
+    (i) => !(i.type === 'incremental' && redrawableTargets.has(i.rem._id))
+  );
+
+  // 3. Complete every Card Cluster the document now touches — kept entries,
+  //    new draws and swapped-in ancestors alike: each due sibling missing from
+  //    the document is added, cooling or not, past the fill target if need be.
+  //    The draw does this for what it draws; this covers what it never sees.
+  const clusterItems: SelectedItem[] = [];
+  if (mode !== 'drain') {
+    const fcTargets = [
+      ...kept.filter((e) => e.kind === 'fc').map((e) => e.targetRemId),
+      ...drawnItems.filter((i) => i.type === 'flashcard').map((i) => i.rem._id),
+    ].filter((id): id is RemId => !!id);
+    const clusters = await clusterFinder.index(fcTargets);
+    if (clusters.membersOf.size) {
+      const blocked = new Set<string>([
+        ...kept.map((e) => e.targetRemId).filter((id): id is RemId => !!id),
+        ...drawnItems.map((i) => i.rem._id),
+        ...heldByAncestor.keys(),
+      ]);
+      const memberIds = new Map([...clusters.membersOf].map(([parent, kids]) => [parent, kids.map((k) => k._id)]));
+      const missing = missingClusterSiblings(fcTargets, clusters.parentOf, memberIds, hasDueCard, blocked);
+      const remById = new Map([...clusters.membersOf.values()].flat().map((r) => [r._id, r]));
+      for (const id of missing) {
+        const rem = remById.get(id);
+        if (!rem) continue;
+        clusterItems.push({
+          rem,
+          type: 'flashcard',
+          priority: selection.priorityByRemId.get(id) ?? 100,
+          percentile: selection.cardPercentiles[id] ?? 100,
+        });
+      }
+      if (clusterItems.length || coolingKeptForCluster.size) {
+        console.log(
+          `[CardCluster] ${clusters.membersOf.size} clusters in the document: added ${clusterItems.length} due siblings, ` +
+            `kept ${coolingKeptForCluster.size} cooling members with their cluster`
+        );
+      }
+    }
+  }
+  const newItems = [...drawnItems, ...clusterItems];
+
+  const addedFc = newItems.filter((i) => i.type === 'flashcard').length;
+  const addedInc = newItems.length - addedFc;
+  // Entries are appended at the bottom; the status block and the graph must
+  // already be in place (and in that order) so they stay on top.
+  await ensureHeaderOrder(plugin, doc);
+  if (newItems.length) {
+    progress(`Writing ${newItems.length} entries…`);
+    await writeEntries(plugin, doc, newItems);
+  }
+
+  // 3. Status block and graph, describing the document as it now is. The Rem
+  //    object is re-read first: its `children` list was captured before the
+  //    entries (and, on a new document, the status block) were written.
+  doc = (await plugin.rem.findOne(doc._id)) ?? doc;
+  const now = Date.now();
+  const holding = {
+    total: kept.length + newItems.length,
+    flashcards: kept.filter((e) => e.kind === 'fc').length + addedFc,
+    incRems: kept.filter((e) => e.kind === 'inc').length + addedInc,
+  };
+  const graphItems: GraphItem[] = [
+    ...kept.map((e): GraphItem => {
+      const id = e.targetRemId;
+      const priority = id ? selection.priorityByRemId.get(id) : undefined;
+      const percentile = id
+        ? e.kind === 'inc'
+          ? selection.incRemPercentiles[id]
+          : selection.cardPercentiles[id]
+        : undefined;
+      return {
+        type: e.kind === 'inc' ? 'incremental' : 'flashcard',
+        priority: typeof priority === 'number' ? priority : 100,
+        percentile: typeof percentile === 'number' ? percentile : 100,
+      };
+    }),
+    ...newItems.map((i) => ({ type: i.type, priority: i.priority, percentile: i.percentile })),
+  ];
+
+  const s = selection.stats;
+  const heldBack = selection.skippedAncestorItems.length;
+  const cooling = scanner.sortedVerdicts();
+  const statusText =
+    `Scope: ${s.scopeName}\n` +
+    `Priority Queue · fill target ${burst} · shield slice ${Math.round(shieldSlice * 100)}% · ` +
+    (skipPaused ? `paused documents skipped above P${pausedThreshold}` : 'paused documents included') +
+    `\n` +
+    `Holding: ${holding.total} items (${holding.flashcards} flashcard Rems, ${holding.incRems} IncRems) · ` +
+    `slots ${slots.flashcards} + ${slots.incRems} at the Flashcard Ratio\n` +
+    `Last refresh: ${formatStamp(now)} — drained ${drained.reviewed} reviewed` +
+    (drained.cooling ? `, ${drained.cooling} cooling` : '') +
+    (drained.ancestor ? `, ${drained.ancestor} held by a due ancestor` : '') +
+    (drained.missing ? `, ${drained.missing} missing` : '') +
+    ` · added ${newItems.length}` +
+    (selection.shieldSliceCount ? ` (${selection.shieldSliceCount} from the shield slice)` : '') +
+    (incRedraw ? ` · IncRems re-drawn: kept ${incRedraw.kept}, replaced ${incRedraw.replaced}` : '') +
+    (clusterItems.length ? ` · ${clusterItems.length} Card Cluster siblings added` : '') +
+    `\n` +
+    `Cooling now: ${cooling.length} Rems` +
+    (heldBack
+      ? ` · Held back (due ancestor): ${heldBack}, ` +
+        `${selection.skippedAncestorItems.filter((a) => a.ancestorAction === 'added').length} ancestors swapped in`
+      : '') +
+    (selection.skippedPausedItems.length ? ` · Skipped (paused): ${selection.skippedPausedItems.length}` : '') +
+    `\n` +
+    `Due in scope: ${s.dueCardRems} flashcard Rems (${s.dueCards} cards), ${s.dueIncRems} IncRems\n` +
+    `Randomness: IncRem ${selection.randomnessPct.incRem}%, Cards ${selection.randomnessPct.card}%`;
+
+  const metadataRem = await findOrCreateMetadataRem(plugin, doc);
+  if (metadataRem) await metadataRem.setText([statusText]);
+  await writeGraph(plugin, doc, buildGraphData(graphItems, selection.randomnessPct));
+  await doc.setPowerupProperty(priorityQueuePowerupCode, priorityQueueLastRefreshSlotCode, [String(now)]);
+
+  const elapsedMs = Date.now() - startedAt;
+  console.log(
+    `[Priority Queue] ${mode} (${s.scopeName}): holding ${holding.total}, drained ${drained.reviewed + drained.cooling + drained.ancestor + drained.missing} ` +
+      `(${drained.cooling} cooling, ${drained.ancestor} ancestor-held), added ${newItems.length} (${selection.shieldSliceCount} shield slice)${incRedraw ? `, IncRems re-drawn: kept ${incRedraw.kept}, replaced ${incRedraw.replaced}` : ''}, ` +
+      `${cooling.length} cooling in scope, card state from ${cardSource.kind === 'cache' ? 'the cache' : 'card.getAll()'}, in ${elapsedMs}ms`
+  );
+
+  return {
+    doc,
+    scopeRemId: info.scopeRemId,
+    burst,
+    holding,
+    drained,
+    added: { total: newItems.length, flashcards: addedFc, incRems: addedInc, shieldSlice: selection.shieldSliceCount },
+    slots,
+    incRedraw,
+    clusterSiblingsAdded: clusterItems.length,
+    cooling,
+    selection,
+    elapsedMs,
+  };
+}
+
+/**
+ * Status block at position 0, graph at position 1, whatever else the document
+ * holds after them. Creates either when missing; moves them when an earlier
+ * write left them below the entries.
+ */
+async function ensureHeaderOrder(plugin: RNPlugin, doc: PluginRem): Promise<void> {
+  const metadata = await findOrCreateMetadataRem(plugin, doc);
+  const graph = await findOrCreateGraphRem(plugin, doc);
+  // Positions are asked of each Rem: neither the lazy `children` field nor
+  // getChildrenRem() can be trusted for order (see children.ts).
+  try {
+    if (metadata && (await metadata.positionAmongstSiblings()) !== 0) await metadata.setParent(doc, 0);
+    if (graph && (await graph.positionAmongstSiblings()) !== 1) await graph.setParent(doc, 1);
+  } catch (e) {
+    console.warn('[Priority Queue] Could not reorder the header children:', e);
+  }
+}
+
+
+/**
+ * The startup counterpart of the queue-exit auto-refresh, for the full-KB
+ * Priority Queue only, so the first Practice of a RemNote run finds it drained
+ * and topped up. Document-scoped queues are left alone: each costs a scope build
+ * (tens of seconds on a large document), many are practised rarely, and each is
+ * refreshed anyway when a session on it ends, or from the popup. The caller
+ * decides when — after the caches, so a Full Mode refresh reads no cards — and
+ * whether (the setting, Light Mode).
+ *
+ * The queue guard stays on: a queue opened during startup blocks the refresh.
+ * Resolves `false` if the refresh threw.
+ */
+export async function refreshKbPriorityQueueAtStartup(plugin: RNPlugin): Promise<boolean> {
+  const tag = '[Startup] Priority Queue auto-refresh';
+  const docs = await listPriorityQueueDocs(plugin);
+  if (!docs.some((info) => !info.scopeRemId)) {
+    console.log(`${tag}: nothing to refresh, no full-KB Priority Queue yet`);
+    return true;
+  }
+
+  const docQueues = docs.filter((info) => !!info.scopeRemId).length;
+  const startedAt = Date.now();
+  try {
+    const result = await refreshPriorityQueue(plugin, { scopeRemId: null });
+    if (result.blocked) {
+      console.log(`${tag}: stopped, a queue is open`);
+      return true;
+    }
+    const skipped = result.selection?.skippedPausedItems ?? [];
+    const highPaused = skipped.filter((s) => s.priority < 20).length;
+    console.log(
+      `${tag}: full KB done in ${Date.now() - startedAt}ms, ` +
+        `holding ${result.holding.total}, drained ${result.drained.reviewed} reviewed, ` +
+        `${result.drained.cooling} cooling, ${result.drained.ancestor} ancestor-held, ` +
+        `${result.drained.missing} missing, added ${result.added.total}, ${skipped.length} paused skipped ` +
+        `(${docQueues} document queue${docQueues === 1 ? '' : 's'} left for their own sessions)`
+    );
+    await plugin.app.toast(
+      `Priority Queue refreshed at startup: ${result.holding.total} items ready` +
+        (skipped.length
+          ? `. ⚠️ ${skipped.length} skipped in paused documents` +
+            (highPaused ? `, ${highPaused} of them HIGH PRIORITY` : '') +
+            ' — open the Priority Queue popup and Refresh to see them.'
+          : '.')
+    );
+    return true;
+  } catch (e) {
+    console.error(`${tag}: failed for the full KB`, e);
+    return false;
+  }
+}
+
+/** Opens Practice for the document: RemNote's own Practice button is this route. */
+export async function practicePriorityQueue(plugin: RNPlugin, doc: PluginRem): Promise<void> {
+  await plugin.window.setURL(`/flashcards/${doc._id}`);
+}
+
+/**
+ * The card shield as it stands and as it would stand once every entry of the
+ * document is reviewed: the lowest priority among overdue, unpaused Rems that
+ * are neither cooling nor in the document. Read from the priority cache only.
+ */
+export async function computeShieldOutlook(
+  plugin: RNPlugin,
+  docTargetIds: ReadonlySet<RemId>,
+  coolingIds: ReadonlySet<RemId>,
+  scopeIds: ReadonlySet<RemId> | null
+): Promise<{ now: number | null; afterDocument: number | null; overdueRems: number }> {
+  const infos = (await plugin.storage.getSession<CardPriorityInfo[]>(allCardPriorityInfoKey)) || [];
+  let now: number | null = null;
+  let after: number | null = null;
+  let overdue = 0;
+  for (const info of infos) {
+    if ((info.dueCardsOverdue ?? 0) <= 0 || info.paused) continue;
+    if (scopeIds && !scopeIds.has(info.remId)) continue;
+    overdue++;
+    if (coolingIds.has(info.remId)) continue;
+    if (now === null || info.priority < now) now = info.priority;
+    if (docTargetIds.has(info.remId)) continue;
+    if (after === null || info.priority < after) after = info.priority;
+  }
+  return { now, afterDocument: after, overdueRems: overdue };
+}
+
+/** The entries' target Rem ids by kind, without a scan. */
+export async function readDocTargetIds(plugin: RNPlugin, doc: PluginRem): Promise<RemId[]> {
+  const fresh = (await plugin.rem.findOne(doc._id)) ?? doc;
+  return [...new Set((await readDocTargets(plugin, fresh)).values())];
+}

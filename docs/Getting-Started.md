@@ -1,6 +1,6 @@
-# Getting Started with Incremental Everything
+# Getting Started with Incremental RemNote
 
-Welcome to **Incremental Everything**! This guide will walk you through the basics of making Rems incremental, reviewing them, and managing your learning workflow.
+Welcome to **Incremental RemNote**! This guide will walk you through the basics of making Rems incremental, reviewing them, and managing your learning workflow.
 
 ---
 
@@ -9,6 +9,7 @@ Welcome to **Incremental Everything**! This guide will walk you through the basi
 Incremental learning transforms how you acquire knowledge. Instead of reading a book from cover to cover or watching a full lecture, you break content into smaller pieces and review them over time—interleaved with flashcards and other material.
 
 **Key Benefits:**
+
 - **Process 1000+ sources in parallel** without losing track
 - **Prioritize ruthlessly** to focus on what matters most
 - **Build lasting knowledge** by converting passive reading into active flashcards
@@ -20,8 +21,109 @@ For a deeper understanding, see [What is Incrementalism?](What-is-Incrementalism
 ## Installation
 
 1. Open the [RemNote Plugin Store](https://www.remnote.com/plugins)
-2. Search for "**Incremental Everything**"
+2. Search for "**Incremental RemNote**"
 3. Click **Install**
+
+---
+
+## The Incremental RemNote Panel { #the-incremental-plugin-panel }
+
+Once installed, the plugin adds a small **Incremental RemNote** 🌐 panel at the bottom of the left sidebar. It is the one fixed place to reach the plugin from, and where the onboarding tips live.
+
+![The Incremental RemNote panel in the sidebar: header controls, the Sorting button, the Priority Queue group with its eye and play actions, and the scope line](assets/panel-hub-expanded.png){ width="400" }
+
+**In the header:**
+
+| Control | What it does |
+|---------|--------------|
+| ⌨ | Opens the [Keyboard Shortcuts](Keyboard-Shortcuts.md) page |
+| ⚙ | Opens the plugin's [settings popup](Plugin-Settings-Reference.md) — every setting the plugin owns, grouped |
+| ? | Opens this documentation, at the home page |
+| ✕ | Hides the panel **for this session** — it is back next time you open RemNote. To bring it back sooner, run the **Show Incremental RemNote Panel** command |
+
+**Action buttons:**
+
+- **Sorting** — the [flashcard/incremental mix and randomness](Prioritization-&-Sorting.md#sorting-criteria) for your queue.
+- **Priority Queue** — three actions on the [Priority Queue](Priority-Review-Document.md), grouped into one control:
+
+| Button | What it does |
+|--------|--------------|
+| **Priority Queue** | Opens the [Priority Queue popup](Priority-Review-Document.md#the-priority-queue-popup) with the document you currently have open offered as the scope — the scope it will use is named under the button — and the whole knowledge base as the alternative |
+| 👁 | Opens the **Priority Review Queue** Rem — every Priority Queue document is tagged with it, so its references are the list of them. Go there to practise one from your phone |
+| ▶ | **Learn** (`Cmd/Ctrl+L`) — the plugin's main action. Opens the queue on the **full-KB** Priority Queue, building the document first if there is none yet. **`Shift`- or `Cmd`/`Ctrl`-click** practises the scope named under the button instead; if that scope has no queue yet, the popup opens with it already filled in |
+
+The 👁 button says so if you have no review documents yet: the tag is created by the first one.
+
+### The collapsed panel { #collapsed-panel }
+
+Click the **🌐 globe** in the panel header to collapse the panel to a single row of icons. Click the globe again to expand it. Useful when you keep the left sidebar narrow, or when you would rather give the room to your documents.
+
+![The collapsed panel: one row of icons at the bottom of the sidebar — the globe, the Mastery Drill with a count badge, keyboard shortcuts, settings, the Priority Review Queue Rem and Learn](assets/panel-hub-collapsed.png){ width="400" }
+
+| Icon | What it does |
+|------|--------------|
+| 🌐 | Expands the panel again. A **blue dot** on it means a tip is waiting |
+| 🎯 | Opens the [Mastery Drill](History-Queue-Dashboard-and-Mastery-Drill.md), with the number of cards ready to drill on a badge. Only appears when the drill is on and at least 10 cards are ready |
+| ⌨ | Opens the [Keyboard Shortcuts](Keyboard-Shortcuts.md) page |
+| ⚙ | Opens the plugin's [settings popup](Plugin-Settings-Reference.md) |
+| 👁 | Opens the **Priority Review Queue** Rem |
+| ▶ | **Learn**, exactly as in the expanded panel — including `Shift`/`Cmd`-click for the current scope |
+
+The choice is remembered **per device** and survives a restart, so a laptop where you keep the sidebar narrow can stay collapsed while your desktop stays expanded. There is no setting for it: the globe is the setting.
+
+**What is not on the row.** **Sorting**, the **Priority Queue** button and the scope line have no icon here on purpose — at a sidebar narrow enough to want a collapsed panel, ten icons would wrap into the stack of rows that collapsing is meant to get rid of. Expand the panel to reach them. The one you would otherwise miss, the scoped queue, is covered by `Shift`/`Cmd`-clicking ▶.
+
+**The Mastery Drill notification stands down.** While the panel is collapsed, the drill does not appear as its own card in the sidebar — the 🎯 icon carries it, with the same count.
+
+**Tips pause rather than pass.** A tip is still drawn while collapsed, and the globe carries a blue dot when one is waiting, but it is not recorded as shown. Days spent collapsed therefore do not cycle the pile past tips you never had a chance to read; expand the panel and the tip is there. See [Tips](#tips) below.
+
+### When ▶ starts pulsing { #when-learn-starts-pulsing }
+
+After you open RemNote, the plugin keeps working in the background for a while — up to a few minutes on a large knowledge base. The **▶** button stays still until all of it has finished, then starts pulsing:
+
+- the card priority cache and the IncRem cache
+- the deferred pre-tagging of flashcards that have no priority yet
+- the cooling scan for the Card Shield
+- the CardPriority hidden-slot check
+- the priority band colours
+- the [full-KB Priority Queue refresh](Priority-Review-Document.md#refresh-after-every-session), which runs once the caches and the cooling scan are done
+
+Hover **▶** to see what is still running. If it never starts pulsing, one of these failed or took too long: the tooltip names it, and the console has the details.
+
+In [Light Mode](Full-Mode-x-Light-Mode.md), or with [flashcard prioritisation](Priorities-for-Flashcards.md#the-opt-in) off, the card cache, pre-tagging and cooling scan do not run, so ▶ waits only for the rest; the Priority Queue refresh does not run in Light Mode or with its setting off. You can practise at any time — the pulse only tells you the plugin is fully ready.
+
+### Tips { #tips }
+
+![The panel with a tip on screen: the lightbulb title, the tip body, and the I Got It, Learn More and All Tips buttons, with ✕ in the tip's corner](assets/panel-hub-expanded-with-tip.png){ width="400" }
+
+The panel shows **one tip per session**. Answer it and the tip area is done until the next time you open RemNote — it will not hand you another one, and moving around RemNote will not swap it for a different one either. Each tip has four buttons:
+
+- **I Got It** — you know this one. It is never shown again. This is remembered per knowledge base and syncs across your devices.
+- **✕** — not now. The tip stays in the pile and can resurface later.
+- **Learn More** — opens the documentation section for the feature the tip is about. Tips that are habits rather than features have no such button.
+- **All Tips** — opens the full list. See [All Tips](#all-tips) below.
+
+**I Got It** and **✕** both end the tip area for the session, and the panel then goes quiet for **two hours** — so a reload does not immediately produce another tip. Both the quiet period and the one-per-session limit are **per knowledge base**: answering a tip in one knowledge base does not silence the panel in another.
+
+A tip you have not retired **will** come back on another day — that is what ✕ means. But tips are offered in rotation, least recently seen first, so every other tip still in the pile gets its turn before any one of them repeats. This matters most near the end: with two or three tips left, a random draw would keep landing on the same one.
+
+Tips come in two groups, and the second is not offered until the first is done: **Basics** teaches the daily loop, **Utilities** waits until you have it. So a brand-new user's first tip is about `Alt+X`, not about cycling text case.
+
+When you have answered **I Got It** to every tip, the tip area disappears for good and the panel keeps a small **💡 All tips** link.
+
+### All Tips { #all-tips }
+
+**All Tips** opens the whole pile in one popup — useful for checking what you have already been told, and for reading ahead without waiting a session per tip.
+
+- **Acknowledged** first, most recently answered at the top, each with the date you pressed **I Got It**. Tips you retired before the plugin started recording dates say *date not recorded*.
+- **Not yet acknowledged** below, in the order the panel will offer them.
+
+Each row has its own **Learn More**, and every tip you have not retired has its own **I Got It** — so you can clear tips you already know without waiting for the panel to offer them one at a time. As in the panel, **I Got It** here means the tip is never shown again.
+
+The popup is keyboard-driven: `↑`/`↓` move (`Home`/`End` jump to either end), `Enter` acknowledges the selected tip, `Space` opens its documentation, `Esc` closes.
+
+!!! note "Starting over"
+    There is no undo for **I Got It**. If you want the whole pile back, the **Debug** popup has a *Reset acknowledgements* button under **Onboarding Tips State**, which clears every acknowledgement for the current knowledge base.
 
 ---
 
@@ -51,7 +153,7 @@ The first step is to convert a Rem, PDF, or website into an "Incremental Rem" so
 ### What Happens When You Make a Rem Incremental?
 
 1. The Rem receives the `Incremental` powerup tag
-2. A **"Made Incremental"** event is recorded in the repetition history
+2. A **"Made Incremental"** event is recorded in the repetition history, stamped with the priority and the interval the Rem started with
 3. The Rem is scheduled for its first review (based on your Initial Interval setting, default: 1 day)
 4. The Rem will now appear in your queue, interleaved with flashcards
 
@@ -72,6 +174,7 @@ When you enter the queue, your Incremental Rems appear alongside your flashcards
 ### The "One Memory, One Action" Principle
 
 Before clicking "Next," always perform at least one productive action:
+
 - **Extract** a key sentence as a new Incremental Rem
 - **Create** a flashcard from important information
 - **Rephrase** a confusing passage
@@ -100,6 +203,7 @@ When you've fully processed an item and extracted all valuable knowledge:
 ![Yellow left border visual indicator for dismissed Rems](assets/visual-feedback-editor.png){ width="600" }
 
 **Visual Settings:**
+
 - **Show Yellow Left Border for Dismissed Rems** — Toggle the visual indicator (default: on)
 - **Hide Dismissed Tag in Editor** — Reduce clutter by hiding the tag (default: on)
 
@@ -114,64 +218,10 @@ If you want to review a dismissed item again:
 3. A **"Made Incremental"** marker is added to distinguish the new learning session
 
 This allows you to:
+
 - See your complete learning journey across multiple sessions
 - Resume where you left off with preserved context
 - Analyze your long-term engagement with material
-
----
-
-## Repetition History & Statistics
-
-The plugin offers two powerful views to analyze your learning progress: the **Single History View** for individual items and the **Aggregated History View** for entire folders and knowledge trees.
-
-### 1. Single History View
-
-Gives you detailed insights into your review history for any specific Incremental Rem.
-
-**What it shows:**
-*   **Stats Row:** Total reps, total time spent, age since first review
-*   **Next Review:** Scheduled date with days late/early indicator
-*   **History Table:** Date, time spent, interval, priority, and status for each repetition
-
-![Repetition History Popup](assets/repetition-history-popup.png){ width="400" }
-
-### 2. Aggregated History View
-
-Gives you a high-level overview of progress stats for a Rem and **all its descendants**. Perfect for checking your progress on a specific book, course, or topic.
-
-**What it shows:**
-*   **Tree-View Hierarchy:** Displays a hierarchical tree of your Incremental Rems, sorted exactly as they appear in your document.
-*   **Aggregated Metrics:** Shows total repetitions, time spent, and item counts for the current selection **plus** all its descendants.
-
-![Aggregated Repetition History](assets/aggregated-repetition-history.gif){ width="600" }
-
-### How to Access (Smart Routing)
-
-There is a single unified command: **Open IncRem Repetition History**.
-
-*   **Keyboard Shortcut:** [`Ctrl+Shift+H`](Keyboard-Shortcuts.md#view-navigation) (works in both Queue and Editor)
-*   **In the Queue:** Click the 📊 icon in the Answer Buttons info bar
-
-**Smart Behavior:**
-*   If you select an **Incremental Rem** (or one with history), it opens the **Single History View**.
-*   If you select a **Folder** (that has Incremental descendants), it automatically opens the **Aggregated History View**.
-
-### Switching Views
-
-You can easily toggle between views using the button in the window header:
-*   Click **"Show Aggregated"** from the Single View to see the tree stats.
-*   Click **"Show Single"** from the Aggregated View to focus on the specific item.
-
-### Event Markers
-
-The history includes special event markers:
-
-| Marker | Meaning |
-|--------|---------|
-| ▶ **Made Incremental** | When the Rem was first made (or re-made) incremental |
-| ⏸ **Dismissed** | When the Rem was dismissed via the Dismiss button |
-
-These markers help you understand your learning timeline and distinguish between different review sessions.
 
 ---
 
@@ -200,9 +250,10 @@ For comprehensive details, see [Prioritization & Sorting](Prioritization-&-Sorti
 
 Now that you understand the basics, explore these topics:
 
+- [Repetition History & Statistics](Repetition-History-and-Statistics.md) — Read an item's review log, the aggregated tree view, and what each event marker means
 - [Prioritization & Sorting](Prioritization-&-Sorting.md) — Master the priority system
 - [Reviewing Items in the Queue](Reviewing-Items-in-the-Queue.md) — Deep dive into the queue workflow
-- [Create Incremental Rem from PDF Highlights](Create-Incremental-Rem-from-PDF-Highlights.md) — Extract from PDFs
+- [Create Incremental Rem from PDF Highlights](Create-Incremental-Rem-from-PDF-Highlights.md) — Extract from PDFs, and [move an Incremental Rem's data to its parent](Create-Incremental-Rem-from-PDF-Highlights.md#transfer-to-parent) when it landed on the wrong one
 - [Keyboard Shortcuts](Keyboard-Shortcuts.md) — Speed up your workflow
 - [Changelog](Changelog.md) — See the latest features
 

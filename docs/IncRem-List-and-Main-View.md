@@ -14,6 +14,8 @@ The **IncRem List** popup shows Incremental Rems scoped to the **current documen
 - **Scope:** Only shows IncRems that are descendants of the current document
 - **Use case:** Quick access to all Incremental Rems within the document you're currently reading
 
+![IncRem List Widget under the Document Title](assets/increm-list-widget.png){ width="800" }
+
 ### All Inc Rems (Main View)
 
 The **All Inc Rems** popup shows every Incremental Rem in your entire Knowledge Base. You can open it via a command or clicking the "View All" icon at the right side of the IncRem Counter badge.
@@ -162,7 +164,7 @@ When launching a review from the list, the plugin saves your current filter/sort
 |--------|----------------------|-------------------------------|
 | **When repetition is recorded** | Immediately (before opening editor) | On timer end (after review) |
 | **Rescheduling** | Done immediately when clicking the button (timer only adds review time) | Deferred to timer end — the scheduler's interval is pre-computed and the timer records the full repetition on "End Review" |
-| **Return destination** | Back to queue document | Back to IncRem List (with same filters) |
+| **Return destination** | Back into the queue | Back to IncRem List (with same filters) |
 | **End button text** | "End Review and Back to Queue" | "End Review and Back to IncRem List" |
 
 ### When to Use It

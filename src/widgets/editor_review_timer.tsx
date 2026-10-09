@@ -125,6 +125,43 @@ function EditorReviewTimer() {
     });
   }, [timerData?.remId]);
 
+  // The name the session snapshot carries is only as good as the writer that
+  // parked it. The Execute Repetition popup fills its own name field from an
+  // async lookup, so a fast confirm can hand us an empty string, and the
+  // header then reads "Unnamed Rem" for a rem that plainly has a name. Resolve
+  // it from the rem itself whenever the snapshot is empty or a placeholder —
+  // once per rem, outside the tracker, so an edit to the rem being reviewed
+  // does not re-run the whole session read.
+  const [resolvedName, setResolvedName] = useState<string | null>(null);
+
+  useEffect(() => {
+    const remId = timerData?.remId;
+    const snapshot = timerData?.remName;
+    if (!remId) {
+      setResolvedName(null);
+      return;
+    }
+    if (snapshot && snapshot !== 'Unnamed Rem' && snapshot !== 'Untitled') {
+      setResolvedName(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const rem = await plugin.rem.findOne(remId);
+      if (!rem || cancelled) return;
+      const name = await safeRemTextToString(plugin, rem.text);
+      if (!cancelled && name && name !== 'Untitled') {
+        setResolvedName(name);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [plugin, timerData?.remId, timerData?.remName]);
+
+  /** The rem name to show and to name in toasts — resolution wins over the snapshot. */
+  const reviewName = resolvedName || timerData?.remName || 'Unnamed Rem';
+
   // Auto-scroll to the last bookmark when a timer session starts from the
   // editor popup ("Timer" button). The popup that started the session sets a
   // pending-scroll flag and then closes itself immediately — killing any
@@ -373,7 +410,8 @@ function EditorReviewTimer() {
     try {
       // Update priority if changed
       if (timerData.priority !== undefined && timerData.priority !== null) {
-        await setIncRemPriority(plugin, rem, timerData.priority);
+        // recordHistory: false — the rep entry written below carries this priority.
+        await setIncRemPriority(plugin, rem, timerData.priority, { recordHistory: false });
       }
 
       // Calculate review time in seconds
@@ -411,7 +449,7 @@ function EditorReviewTimer() {
 
         await updateSRSDataForRem(plugin, timerData.remId, incRem.nextRepDate, updatedHistory);
         await addToIncrementalHistory(plugin, timerData.remId);
-        await plugin.app.toast(`✓ ${timerData.remName}: Repetition updated (${timeDisplay})`);
+        await plugin.app.toast(`✓ ${reviewName}: Repetition updated (${timeDisplay})`);
       } else {
         // Mode 2: Started from Editor command. We need to create the repetition right now.
         // If the user chose "Keep Current Date" in the regression dialog before starting
@@ -463,7 +501,7 @@ function EditorReviewTimer() {
         await updateSRSDataForRem(plugin, timerData.remId, newNextRepDate, newHistory);
         await addToIncrementalHistory(plugin, timerData.remId);
         const dateStr = dayjs(newNextRepDate).format('MMMM D, YYYY');
-        await plugin.app.toast(`✓ ${timerData.remName}: Repetition stored (${timeDisplay}), next review: ${dateStr}`);
+        await plugin.app.toast(`✓ ${reviewName}: Repetition stored (${timeDisplay}), next review: ${dateStr}`);
       }
 
       const updatedIncRem = await getIncrementalRemFromRem(plugin, rem);
@@ -492,18 +530,21 @@ function EditorReviewTimer() {
     // Perform navigation at the very end — only if requested
     if (navigateBack) {
       if (timerData.origin === 'queue') {
-        // Return to the queue
+        // Straight back into the queue, through the route RemNote's own Practice
+        // button takes (see practicePriorityQueue in lib/priority_review_document/queue_doc.ts).
+        // Leaving the queue for the editor fires no QueueExit, so the queue's
+        // document id is still in session here.
         const subQueueId = await plugin.storage.getSession<string>(currentSubQueueIdKey);
         if (subQueueId) {
           const subQueueRem = await plugin.rem.findOne(subQueueId);
           if (subQueueRem) {
-            await subQueueRem.openRemAsPage();
-            await plugin.app.toast('Hit Cmd+Shift+P to resume your Queue!');
+            await plugin.window.setURL(`/flashcards/${subQueueId}`);
           } else {
             await plugin.app.toast('Could not find the queue document.');
           }
         } else {
-          await plugin.app.toast("Please click 'Flashcards' on the sidebar to resume the Global Queue!");
+          // No document: the review came from the Global Queue.
+          await plugin.window.setURL('/flashcards');
         }
       } else if (timerData.origin === 'inc-rem-list') {
         // Return to the IncRem List popup (state was already stored in session by inc_rem_list.tsx)
@@ -537,7 +578,8 @@ function EditorReviewTimer() {
     try {
       // Update priority if changed
       if (timerData.priority !== undefined && timerData.priority !== null) {
-        await setIncRemPriority(plugin, currentRem, timerData.priority);
+        // recordHistory: false — the rep entry written below carries this priority.
+        await setIncRemPriority(plugin, currentRem, timerData.priority, { recordHistory: false });
       }
 
       // Calculate review time and sync PDF page
@@ -634,7 +676,7 @@ function EditorReviewTimer() {
     await plugin.storage.setSession('editor-review-timer-rem-name', nextRemName || 'Unnamed Rem');
     await plugin.storage.setSession('editor-review-timer-queue-list', newQueueList);
 
-    await plugin.app.toast(`✓ Saved: ${timerData.remName}. Starting: ${nextRemName}`);
+    await plugin.app.toast(`✓ Saved: ${reviewName}. Starting: ${nextRemName}`);
 
     // 4. Open the next rem
     const nextIncRemType = await determineIncRemType(plugin, nextRem);
@@ -706,7 +748,7 @@ function EditorReviewTimer() {
       await plugin.storage.setSession('plugin_operation_active', false);
     }
 
-    await plugin.app.toast(`✓ Dismissed: ${timerData.remName}`);
+    await plugin.app.toast(`✓ Dismissed: ${reviewName}`);
 
     const hasNext = !!(timerData.queueList && timerData.queueList.length > 0);
 
@@ -808,9 +850,9 @@ function EditorReviewTimer() {
   }
 
   // Truncate rem name if too long
-  const displayName = timerData.remName.length > 40
-    ? timerData.remName.substring(0, 37) + '...'
-    : timerData.remName;
+  const displayName = reviewName.length > 40
+    ? reviewName.substring(0, 37) + '...'
+    : reviewName;
 
   return (
     <div

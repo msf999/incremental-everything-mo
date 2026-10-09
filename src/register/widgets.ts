@@ -1,9 +1,106 @@
 import { QueueItemType, ReactRNPlugin, WidgetLocation } from '@remnote/plugin-sdk';
-import { pageRangeWidgetId, parentSelectorWidgetId, powerupCode, priorityGraphPowerupCode, incremNotesSidebarWidgetId, enableMasteryDrillId } from '../lib/consts';
+import { pageRangeWidgetId, parentSelectorWidgetId, powerupCode, priorityGraphPowerupCode, incremNotesSidebarWidgetId, enableMasteryDrillId, pluginHubWidgetId, onboardingTipsWidgetId } from '../lib/consts';
 import { getIESetting } from '../lib/settings';
+import { screenFittedHeight } from '../lib/utils';
+
+/* Shows each queue badge/timer widget in one queue variant only. RemNote wraps
+   each location widget as
+     div.fade-in-first-load.<location class> > div > iframe
+   and a hidden iframe is how the widget learns to stop polling (useHostShown).
+
+   Compact: the toolbar widgets live in the top bar. queue_beautiful_bar sits in
+   .rn-queue (which carries .queue-beautiful-box only in Beautiful) and is hidden.
+   Registering anything at QueueBelowTopBar drops RemNote's own h-2 spacer there
+   (it renders only when the location is empty), so its wrapper keeps that 0.5rem.
+
+   Beautiful: RemNote now mounts QueueToolbar widgets in the chrome's action row
+   (.queue-beautiful-chrome-actions), where the badge looks out of place — so our
+   two are hidden there and queue_beautiful_bar carries them. Its wrapper leaves
+   the flow and overlays the card box's top-right corner: the box already opens
+   with 40px of blank space (that 0.5rem spacer + the card content's pt-8) above
+   the breadcrumbs, and the ~36px badge row fits inside it. The spacer moves to
+   the next sibling so the card sits exactly where RemNote puts it. The width cap
+   keeps the transparent iframe from swallowing clicks across the whole strip
+   when the card content scrolls under it. */
+const QUEUE_VARIANT_CSS = `
+  .queue-beautiful-chrome-actions .rn-queue__widget-toolbar:has(> div > iframe[data-plugin-id="incremental-everything"]:is([src*="widgetName=queue_toolbar_priority&"], [src*="widgetName=no_inc_timer_indicator&"])) {
+    display: none;
+  }
+  .rn-queue__widget-below-top-bar:has(> div > iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue_beautiful_bar&"]) {
+    min-height: 0.5rem;
+    flex-shrink: 0;
+  }
+  .rn-queue:not(.queue-beautiful-box) iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue_beautiful_bar&"] {
+    display: none;
+  }
+  .queue-beautiful-box > .rn-queue__widget-below-top-bar:has(> div > iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue_beautiful_bar&"]) {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: min(360px, 60%);
+    min-height: 0;
+    z-index: 5;
+  }
+  .queue-beautiful-box > .rn-queue__widget-below-top-bar:has(> div > iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue_beautiful_bar&"]) + * {
+    margin-top: 0.5rem;
+  }
+`;
+
+/* SidebarEnd widgets lose 64px per side to RemNote, not to anything we set.
+
+   The sidebar mounts its plugin slot as
+     <WidgetsAtLocation location={SidebarEnd} widgetClassName="px-8" />
+   and the renderer behind it puts that class on BOTH boxes it builds:
+
+     div.fade-in-first-load.relative.px-8   <- wrapper (overflow:hidden)
+       div.px-8                             <- mount div (display:flex)
+         iframe[data-plugin-id]
+
+   `.px-8` is 2rem, so the iframe starts 4rem in from each edge — on a sidebar
+   dragged down to ~200px there is more padding than widget. No other location
+   does this (QueueToolbar/UnderRemEditor pass "" or a w-full class), and the
+   dimensions we register cannot reach it: `width: '100%'` is 100% of the box
+   that has already been inset.
+
+   So take both paddings back and re-add the 0.5rem that the native chrome
+   directly above and below this slot uses (the updater banner's `mx-2`, the
+   status-badge stack's `px-2`), which lines our panels up with the sidebar's
+   own rows. Scoped by data-plugin-id so we only move our own widgets. */
+const SIDEBAR_END_PADDING_CSS = `
+  .fade-in-first-load.px-8:has(> div > iframe[data-plugin-id="incremental-everything"]) {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+  .fade-in-first-load.px-8 > div.px-8:has(> iframe[data-plugin-id="incremental-everything"]) {
+    padding-left: 0;
+    padding-right: 0;
+  }
+`;
 
 export async function registerWidgets(plugin: ReactRNPlugin) {
   const masteryDrillEnabled = await getIESetting(plugin, enableMasteryDrillId);
+
+  // The "Incremental RemNote" hub: shortcuts to settings, docs, sorting criteria
+  // and the Priority Review Document creator, plus one onboarding tip at a time.
+  // Ungated on purpose — it is the entry point to everything else, so it has to
+  // be visible before the user knows there is a settings popup to find.
+  plugin.app.registerWidget(pluginHubWidgetId, WidgetLocation.SidebarEnd, {
+    dimensions: {
+      width: '100%',
+      height: 'auto',
+    },
+  });
+
+  // The whole tip pile, behind the hub's "All Tips" button. Sized for prose:
+  // every tip's one-line body is shown in full, which the 130px sidebar cannot
+  // do. Height is fixed so the list scrolls inside the popup rather than the
+  // popup growing past the window on a knowledge base with every tip unseen.
+  plugin.app.registerWidget(onboardingTipsWidgetId, WidgetLocation.Popup, {
+    dimensions: {
+      width: 620,
+      height: 'auto',
+    },
+  });
 
   // IE Settings popup — the plugin's own settings UI (grouped and layered,
   // unlike RemNote's flat plugin-settings list).
@@ -58,9 +155,18 @@ export async function registerWidgets(plugin: ReactRNPlugin) {
     },
   });
 
+  plugin.app.registerWidget('card_enablement_audit', WidgetLocation.Popup, {
+    dimensions: {
+      width: 1100,
+      height: 1100,
+    },
+  });
+
   plugin.app.registerWidget('reschedule', WidgetLocation.Popup, {
     dimensions: {
-      width: '100%',
+      // Same width as priority_interval: both carry the scheduler picker, whose
+      // two segments and multiplier field need the room to stay on one line.
+      width: '370px',
       height: 'auto',
     },
   });
@@ -134,9 +240,24 @@ export async function registerWidgets(plugin: ReactRNPlugin) {
     },
   });
 
-  plugin.app.registerWidget('review_document_creator', WidgetLocation.Popup, {
+  // Beautiful queue variant: carries the two widgets above at QueueBelowTopBar
+  // (top of the card box). QUEUE_VARIANT_CSS hides it in Compact, and hides the
+  // two above in the Beautiful chrome, so each variant shows one copy.
+  plugin.app.registerWidget('queue_beautiful_bar', WidgetLocation.QueueBelowTopBar, {
     dimensions: {
-      width: 500,
+      width: '100%',
+      height: 'auto',
+    },
+  });
+  await plugin.app.registerCSS('queue-beautiful-bar', QUEUE_VARIANT_CSS);
+  await plugin.app.registerCSS('sidebar-end-padding', SIDEBAR_END_PADDING_CSS);
+
+  // The Priority Queue popup: status, refresh/drain/refill/practise for the
+  // persistent review document, and the Cooling list. Replaces the snapshot
+  // creator (review_document_creator).
+  plugin.app.registerWidget('priority_queue_popup', WidgetLocation.Popup, {
+    dimensions: {
+      width: 640,
       height: 'auto',
     },
   });
@@ -144,6 +265,55 @@ export async function registerWidgets(plugin: ReactRNPlugin) {
   plugin.app.registerWidget('jump_to_rem_input', WidgetLocation.Popup, {
     dimensions: {
       width: 400,
+      height: 'auto',
+    },
+  });
+
+  // Confirmation + report for "Tag Rems With Images". A popup rather than a
+  // native confirm(): the dialog offers a third choice (this scope / whole KB),
+  // and the report has to stay on screen — a toast pair raced and the result
+  // was replaced by the "scanning…" toast before it could be read.
+  plugin.app.registerWidget('image_scan_popup', WidgetLocation.Popup, {
+    dimensions: {
+      width: 480,
+      height: 'auto',
+    },
+  });
+
+  // Scan → review → delete for the blank Rems an Anki import leaves under the
+  // Extra Card Detail powerup. Taller than the image scan popup because the
+  // review stage shows a skip tally and a sample of what will be removed —
+  // deleting is irreversible, so the numbers come before the decision.
+  plugin.app.registerWidget('empty_ecd_popup', WidgetLocation.Popup, {
+    dimensions: {
+      width: 520,
+      height: 'auto',
+    },
+  });
+
+  // Pin Source Quote on a PDF that also has a Text Reader version: pin in both
+  // views or just one (lib/pdf_source_pins PIN_SOURCE_VIEWS_POPUP).
+  plugin.app.registerWidget('pin_source_views_popup', WidgetLocation.Popup, {
+    dimensions: {
+      width: 440,
+      height: 'auto',
+    },
+  });
+
+  // Generic message dialog for failures the user must read (lib/message_dialog.ts).
+  plugin.app.registerWidget('message_popup', WidgetLocation.Popup, {
+    dimensions: {
+      width: 420,
+      height: 'auto',
+    },
+  });
+
+  // Scan → review → delete for entries left behind in Priority Review Documents.
+  // Tall and scrollable because the review stage is also the diagnostic: it lists
+  // every document with what it still carries, and you tick which ones to clean.
+  plugin.app.registerWidget('prd_cleanup_popup', WidgetLocation.Popup, {
+    dimensions: {
+      width: 620,
       height: 'auto',
     },
   });
@@ -256,10 +426,10 @@ export async function registerWidgets(plugin: ReactRNPlugin) {
   // Repetition history popup for Answer Buttons
   plugin.app.registerWidget('repetition_history', WidgetLocation.Popup, {
     dimensions: {
-      // 440px (was 380) so the header fits Show Aggregated + Add session + close
-      // on one line, and the history grid keeps its column widths beside the
-      // per-row edit/delete actions.
-      width: '440px',
+      // 500px (was 440, was 380) so the header fits Show Aggregated + Cards
+      // History + Add session + close, and the history grid keeps its column
+      // widths beside the per-row edit/delete actions.
+      width: '500px',
       height: 'auto',
     },
   });
@@ -271,10 +441,14 @@ export async function registerWidgets(plugin: ReactRNPlugin) {
     },
   });
 
+  // Study Dashboard popup. The height follows the screen rather than sitting at
+  // the 950 it used to, which ran off a laptop display; the body scrolls, so a
+  // shorter frame only means less of it at once. Keep in sync with the
+  // container height in widgets/study_dashboard.tsx.
   plugin.app.registerWidget('study_dashboard', WidgetLocation.Popup, {
     dimensions: {
       width: '900px',
-      height: 850,
+      height: screenFittedHeight(600),
     },
   });
 
@@ -296,7 +470,10 @@ export async function registerWidgets(plugin: ReactRNPlugin) {
   // can show Incremental Rems and Cards side-by-side when both groups are present.
   plugin.app.registerWidget('weighted_shield_popup_wide', WidgetLocation.Popup, {
     dimensions: {
-      width: '1150px',
+      // Wide enough for the Card Priority × Memory Analytics table's 23 columns
+      // without a horizontal scroller — the table is the reason this variant
+      // exists, and a scroller hides the FSRS columns at the right edge.
+      width: '1400px',
       height: 900,
     },
   });
@@ -387,11 +564,28 @@ export async function registerWidgets(plugin: ReactRNPlugin) {
 
   // Mastery Drill widgets are gated behind the 'enable-mastery-drill' setting.
   if (masteryDrillEnabled) {
-    // Mastery Drill popup
+    // Mastery Drill popup. The height follows the screen rather than sitting at
+    // the 900 it used to: the card list inside is capped in `vh`, so it scales
+    // with the frame and the drill gets the room a tall display can give it.
     plugin.app.registerWidget('mastery_drill', WidgetLocation.Popup, {
       dimensions: {
         width: 1100,
-        height: 900,
+        height: screenFittedHeight(560),
+      },
+    });
+
+    // Regular-queue drill (lib/mastery_drill_native): its bar in the queue, empty unless that
+    // drill is on screen, and the card list it opens.
+    plugin.app.registerWidget('mastery_drill_queue_bar', WidgetLocation.QueueBelowTopBar, {
+      dimensions: {
+        width: '100%',
+        height: 'auto',
+      },
+    });
+    plugin.app.registerWidget('mastery_drill_list', WidgetLocation.Popup, {
+      dimensions: {
+        width: 900,
+        height: screenFittedHeight(560),
       },
     });
 

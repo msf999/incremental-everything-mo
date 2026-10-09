@@ -1,4 +1,5 @@
 import { declareIndexPlugin, ReactRNPlugin } from '@remnote/plugin-sdk';
+import { registerStartupShieldCoolingScan } from '../lib/priority_review_document/shield_cooling_scan';
 import '../style.css';
 import '../App.css';
 import { allCardPriorityInfoKey } from '../lib/consts';
@@ -7,7 +8,11 @@ import relativeTime from 'dayjs/plugin/relativeTime';
 import { handleMobileDetectionOnStartup, shouldUseLightMode } from '../lib/mobileUtils';
 import { loadCardPriorityCache } from '../lib/card_priority/cache';
 import { writeCardPriorityCache } from '../lib/card_priority/persistence';
+import { checkFlashcardPrioritisationOptOut } from '../lib/card_priority/opt_out';
+import { checkCardPriorityHiddenSlotMigration } from '../lib/card_priority/hidden_slot_migration';
+import { isVisiblePrioritySlotRetired } from '../lib/card_priority/slot_access';
 import { registerEventListeners } from '../register/events';
+import { refreshTagSubtreeCSS } from '../lib/tag_subtree_css';
 import { registerPluginPowerups } from '../register/powerups';
 import { registerPluginSettings } from '../register/settings';
 import { registerWidgets } from '../register/widgets';
@@ -23,15 +28,22 @@ import {
   registerCoreQueueDisplayCommands,
   registerHideInQueueLegacyCommands,
 } from '../register/queue_display_commands';
-import { enableHideInQueueIntegrationId, enableFlashcardPrioritisationId, pdfHighlightBordersReloadKey, priorityBandColorsReloadKey } from '../lib/consts';
+import { registerTrueFalseClusterTracker, registerTrueFalseCommands, registerTrueFalsePowerups } from '../register/true_false';
+import { autoRefreshPriorityQueueId, enableHideInQueueIntegrationId, enableFlashcardPrioritisationId, pdfHighlightBordersReloadKey, priorityBandColorsReloadKey, cardInfoBarHeightKey } from '../lib/consts';
+import { registerCardInfoBarDockCss } from '../lib/card_info_bar_dock';
+import { refreshKbPriorityQueueAtStartup } from '../lib/priority_review_document/queue_doc';
+import { bandVerboseLogsEnabled } from '../lib/priority_bands';
 import { registerIncrementalRemTracker } from '../register/tracker';
+import { registerLogosBridge } from '../lib/logos_bridge';
+import { registerWindowSourcesPresence } from '../lib/window_sources';
 import { cleanupOrphanedReviewGraphs } from '../lib/priority_review_document/cleanup';
 import { migrateAuthoritativeAggregatesToShards } from '../lib/authoritative_aggregates';
 import { registerJumpToRemHelper } from '../register/window';
-import { registerPluginHidingCSS, registerPdfHighlightCSS, registerClozeExtractCSS, registerTagBadgeCSS, registerIgnoreTagCSS, registerHighlightBandBadgeCSS, registerTableBandBadgeCSS } from '../lib/ui_helpers';
-import { installForkGates, registerForkWidgets, registerForkSettingsSignpost } from '../lib/fork_gates';
+import { registerPluginHidingCSS, registerPdfHighlightCSS, registerClozeExtractCSS, registerTagBadgeCSS, registerIgnoreTagCSS, registerHighlightBandBadgeCSS, registerTableBandBadgeCSS, registerHasImageCSS, registerPinReferenceCSS } from '../lib/ui_helpers';
+import { installForkGates, registerForkWidgets, registerForkSettingsSignpost, FORK_FEATURES } from '../lib/fork_gates';
 import { getIESetting } from '../lib/settings';
-import { migrateIESettingsIfNeeded, isIESettingsSeedNeeded } from '../lib/settings_migration';
+import { StartupTaskBoard, waitForSessionFlag } from '../lib/startup_status';
+import { migrateIESettingsIfNeeded, settingIdsNeedingRegistration } from '../lib/settings_migration';
 
 async function onActivate(plugin: ReactRNPlugin) {
   //Debug
@@ -48,19 +60,37 @@ async function onActivate(plugin: ReactRNPlugin) {
   // call below, so denied commands/widgets/menus/CSS are dropped centrally.
   installForkGates(plugin);
 
+  // Records the background startup work as it settles, for the hub's ▶ pulse.
+  const startup = new StartupTaskBoard(plugin);
 
-  await registerPluginPowerups(plugin);
+
+  // Read BEFORE the powerups are registered: on a knowledge base whose card
+  // priorities have been verified out of the deprecated visible `priority` slot,
+  // that slot is not registered at all — which is the only thing that removes the
+  // leftover "Priority — Empty" row, since the row comes from the slot definition
+  // and survives its values being deleted. Same shape as the settings
+  // registration, which is likewise handed only what this KB still needs.
+  // Defaults to registering if the record cannot be read.
+  await registerPluginPowerups(plugin, {
+    retireVisiblePrioritySlot: await isVisiblePrioritySlotRetired(plugin),
+  });
   // Core queue display powerups (Remove Parent / Remove Grandparent) are
   // always registered — the Cloze and Extract creators apply Remove Parent to
   // newly-created rems. These powerup codes don't exist in the standalone
   // Hide in Queue plugin, so they cannot collide with it.
   await registerCoreQueueDisplayPowerups(plugin);
-  // Popup-tier settings are registered with RemNote only while this KB still
-  // needs seeding — the migration reads them through getSetting, which throws
-  // for an unregistered id. Once seeded they vanish from RemNote's panel and
-  // the IE Settings popup owns them.
-  const seedNeeded = await isIESettingsSeedNeeded(plugin);
-  await registerPluginSettings(plugin, { includePopupTier: seedNeeded });
+  // True/False cards: the TFT / TFF powerups and the CSS keyed on them.
+  await registerTrueFalsePowerups(plugin);
+  // FORK (Deviation 13): True/False cards are card authoring — gated with the cloze tools.
+  if (FORK_FEATURES.clozeTools) registerTrueFalseClusterTracker(plugin);
+  // Settings appear in RemNote's own panel only while this KB still has to read
+  // them across — the migration reads through getSetting, which throws for an
+  // unregistered id. For an up-to-date KB this list is empty, so the plugin's
+  // section of that panel is empty too and the IE Settings popup owns every
+  // setting.
+  await registerPluginSettings(plugin, {
+    ids: await settingIdsNeedingRegistration(plugin),
+  });
   // FORK (Deviation 13): the only row the fork leaves in RemNote's panel.
   await registerForkSettingsSignpost(plugin);
 
@@ -84,6 +114,11 @@ async function onActivate(plugin: ReactRNPlugin) {
   registerEventListeners(plugin, resetSessionItemCounter);
 
   registerIncrementalRemTracker(plugin);
+  // A full load was measured at 29s; the deadline only has to catch a load that died.
+  const incRemSettled = startup.track(
+    'incRemCache',
+    waitForSessionFlag(plugin, 'inc_rem_cache_fully_loaded', { timeoutMs: 15 * 60 * 1000 })
+  );
 
   // Fire-and-forget: clear synced graph-data entries whose Priority Review
   // Document graph Rem was deleted. Errors are logged inside the helper and
@@ -101,6 +136,11 @@ async function onActivate(plugin: ReactRNPlugin) {
   // index widget: plugin.track subscriptions belong to the realm that owns the
   // callback, and this is the same realm registerCallbacks runs in.
   registerPrefetchTrackers(plugin);
+  // Long-polls the local Logos helper while the Logos Bridge setting is on.
+  registerLogosBridge(plugin);
+  // Publishes this window's open PDFs/articles so a command run in another
+  // RemNote window can find them.
+  registerWindowSourcesPresence(plugin);
   await registerWidgets(plugin);
   await registerForkWidgets(plugin); // FORK (Deviation 13): combined History tab
 
@@ -119,26 +159,57 @@ async function onActivate(plugin: ReactRNPlugin) {
     await registerPdfHighlightCSS(plugin);
   });
 
+  // card_info_bar docks above the Beautiful queue's answer buttons, in a band the
+  // size of the bar. The widget reports its height here because it can't call
+  // registerCSS from its own iframe. Also runs at activation with the default height.
+  plugin.track(async (rp) => {
+    const barHeight = await rp.storage.getSession<number>(cardInfoBarHeightKey);
+    await registerCardInfoBarDockCss(plugin, barHeight);
+  });
+
   // Band badge colours come from the RELATIVE position of each band in the
   // priority distribution, which is only known once the caches are warm — well
   // after activation. This re-registers both badge stylesheets whenever that
   // mapping should be recomputed (cache load below, or a badge refresh).
   plugin.track(async (rp) => {
-    await rp.storage.getSession(priorityBandColorsReloadKey); // reactive trigger
+    const reloadStamp = await rp.storage.getSession(priorityBandColorsReloadKey); // reactive trigger
+    // Through `plugin`, not `rp`: cache warmth is recorded here, not subscribed
+    // to — each cache load bumps the reload key itself once it is warm.
+    const cachesWarm =
+      startup.get('cardCache') !== 'running' &&
+      !!(await plugin.storage.getSession<boolean>('inc_rem_cache_fully_loaded'));
+    // Instrumentation (verbose-gated): `undefined` here means this is the
+    // ACTIVATION-time run, i.e. the colours are being baked before either
+    // priority cache is warm. Any later run carries the stamp of whatever
+    // bumped the key.
+    if (await bandVerboseLogsEnabled(plugin)) {
+      console.log(
+        `[PriorityBands] re-registering band stylesheets — trigger=${
+          reloadStamp === undefined ? 'ACTIVATION (caches likely cold)' : `reload key ${reloadStamp}`
+        }`
+      );
+    }
     await registerTableBandBadgeCSS(plugin);
     await registerHighlightBandBadgeCSS(plugin);
+    if (cachesWarm) startup.settle('priorityBands', 'done');
   });
 
   await registerPluginHidingCSS(plugin);
   await registerClozeExtractCSS(plugin);
   await registerTagBadgeCSS(plugin);
   await registerIgnoreTagCSS(plugin);
+  // Descendants of #cloze-extract / #ignore Rems; kept current by the listeners
+  // in lib/tag_subtree_css. Not awaited: it walks the open panes.
+  void refreshTagSubtreeCSS(plugin);
+  await registerHasImageCSS(plugin);
+  await registerPinReferenceCSS(plugin);
 
   await registerCommands(plugin);
 
   // Remove Parent / Remove Grandparent commands are always available — they
   // wrap powerups that are always registered and don't conflict with anything.
   await registerCoreQueueDisplayCommands(plugin);
+  await registerTrueFalseCommands(plugin);
 
   // Hide-in-Queue legacy commands gated on the same setting as the legacy
   // powerups above (must be in lockstep — registering commands without their
@@ -161,15 +232,31 @@ async function onActivate(plugin: ReactRNPlugin) {
   const mayBuildCardPriorityCache =
     !useLightMode && (await getIESetting(plugin, enableFlashcardPrioritisationId));
 
+  let cardCacheSettled: Promise<void>;
+  let pretaggingSettled: Promise<void>;
+  let coolingScanSettled: Promise<void>;
   if (mayBuildCardPriorityCache) {
     // Run the full, expensive cache build, then recompute the band colours: the
     // percentile mapping is meaningless until this cache exists.
-    loadCardPriorityCache(plugin).then(
+    const cardCacheLoad = loadCardPriorityCache(plugin);
+    // Tracked BEFORE the bump below is chained, so the task is already settled
+    // when the band tracker re-runs and asks whether the caches are warm.
+    cardCacheSettled = startup.track('cardCache', cardCacheLoad);
+    cardCacheLoad.then(
       () => plugin.storage.setSession(priorityBandColorsReloadKey, Date.now()),
       (err) => console.error('CACHE: card priority cache build failed', err)
     );
+    // Pre-tagging is the build's phase 2, which runs on after the build resolves.
+    pretaggingSettled = startup.track('pretagging', cardCacheLoad.then((load) => load.deferred));
+    // Once the cache has finished loading, judge cooling for the shield, so the
+    // first queue of this RemNote run already excludes cooling Rems.
+    coolingScanSettled = startup.track('coolingScan', registerStartupShieldCoolingScan(plugin));
 
   } else {
+    cardCacheSettled = pretaggingSettled = coolingScanSettled = Promise.resolve();
+    startup.settle('cardCache', 'skipped');
+    startup.settle('pretagging', 'skipped');
+    startup.settle('coolingScan', 'skipped');
     // Empty cache. Readers treat "absent" as "no card priorities known", which is
     // the correct answer in both cases; the cascade falls back to per-rem
     // rem.getCards() rather than assuming nothing has cards.
@@ -182,6 +269,58 @@ async function onActivate(plugin: ReactRNPlugin) {
     // next full-mode launch pay a cold build for it.
     await writeCardPriorityCache(plugin, []);
   }
+
+  // The queue-exit auto-refresh, also run once at startup for the full-KB
+  // Priority Queue (document queues wait for their own sessions). After the caches: in Full Mode a refresh takes its card facts
+  // from the card cache, and would otherwise pay for a card.getAll(). After the
+  // cooling scan too: both publish cooling, and the scan — which alone records the
+  // Rems held back by a cooling ancestor for the shield — skips itself once any
+  // cooling has been published. Not in Light Mode, for the same reason as at exit.
+  if (useLightMode || !(await getIESetting(plugin, autoRefreshPriorityQueueId))) {
+    startup.settle('priorityQueueRefresh', 'skipped');
+  } else {
+    startup.track(
+      'priorityQueueRefresh',
+      Promise.all([cardCacheSettled, pretaggingSettled, coolingScanSettled, incRemSettled]).then(() =>
+        refreshKbPriorityQueueAtStartup(plugin)
+      )
+    );
+  }
+
+  // Turning the flashcard-prioritisation opt-in OFF leaves every tag it wrote in
+  // place. Deferred and deliberately not awaited: it ends in a modal and a KB-wide
+  // scan, neither of which belongs on the activation path. It is a no-op unless
+  // the setting actually changed since the last launch of this KB.
+  setTimeout(() => {
+    checkFlashcardPrioritisationOptOut(plugin).catch((err) =>
+      console.warn('Flashcard prioritisation opt-out check failed', err)
+    );
+  }, 8000);
+
+  // Offers to move card priorities out of the VISIBLE Priority slot, whose
+  // property child makes RemNote render "Priority — 31" in place of a table
+  // cell's own content. Offered on every launch while the condition holds — it is
+  // a live rendering bug in the user's tables, not a preference — with a "never
+  // ask again" on the decline path. Deferred well past the opt-out prompt so two
+  // modals can never land together, and a no-op in light mode.
+  const hiddenSlotCheck = new Promise<void>((resolve) => setTimeout(resolve, 20000)).then(() =>
+    checkCardPriorityHiddenSlotMigration(plugin)
+  );
+  hiddenSlotCheck.catch((err) => console.warn('Card priority hidden-slot migration check failed', err));
+  startup.track('hiddenSlotCheck', hiddenSlotCheck);
+
+  // The band stylesheets are normally re-registered warm by the caches' own
+  // bumps. Two paths never get there: an IncRem cache with no IncRems (which
+  // bumps nothing) finishing after the card cache, and a registration that
+  // threw. Bump once more for those; if even that run does not settle it, say so.
+  void Promise.all([cardCacheSettled, incRemSettled]).then(async () => {
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    await sleep(5000);
+    if (startup.get('priorityBands') !== 'running') return;
+    await plugin.storage.setSession(priorityBandColorsReloadKey, Date.now());
+    await sleep(15000);
+    startup.settle('priorityBands', 'failed');
+  });
 }
 
 async function onDeactivate(_: ReactRNPlugin) { }

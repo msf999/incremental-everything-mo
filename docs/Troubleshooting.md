@@ -39,11 +39,13 @@ Error 15/268:
 ```
 
 **Step 2:** Jump to the rem
+
 - `Ctrl+/` → "Jump to Rem by ID"
 - Paste: `tfhQYD3Q2wDw4VWUH`
 - Press Enter
 
 **Step 3:** Investigate
+
 - View the rem's content
 - Check if it's corrupted
 - Fix any issues
@@ -61,6 +63,7 @@ ghi789rst
 ```
 
 **Quick workflow:**
+
 1. `Ctrl+/` → "Jump to Rem by ID"
 2. Paste first RemId → Enter
 3. Investigate the rem
@@ -73,6 +76,7 @@ ghi789rst
 When you see "Rem not found" errors:
 
 **Use Jump to Rem to confirm:**
+
 - If popup shows "Rem not found" → The rem was deleted (orphaned)
 - If rem opens → The rem exists (error was temporary)
 
@@ -141,6 +145,7 @@ tfhQYD3Q2wDw4VWUH
 ```
 
 **Result:** 
+
 - Popup closes automatically
 - Rem opens in RemNote
 - Toast notification: "✅ Found: What is the capital..."
@@ -156,6 +161,7 @@ tfhQYD3Q2wDw4VWUH
 ```
 
 **Result:**
+
 - Error message shown in popup: "Rem not found: tfhQYD3Q2wDw4VWUH"
 - Popup stays open so you can try again
 - Toast notification: "❌ Rem not found"
@@ -173,12 +179,14 @@ tfhQYD3Q2wDw4VWUH
 **Cause:** The rem with this ID doesn't exist in your knowledge base
 
 **Possible reasons:**
+
 1. The rem was deleted
 2. You copied the RemId incorrectly
 3. The rem is in a different knowledge base
 4. Typo in the RemId
 
 **Solutions:**
+
 - Double-check you copied the full RemId
 - Verify you're in the correct knowledge base
 - Check if the rem was recently deleted
@@ -190,6 +198,7 @@ tfhQYD3Q2wDw4VWUH
 **Cause:** Unexpected error during processing
 
 **Solutions:**
+
 1. Try again (might be temporary)
 2. Reload the plugin (Settings → Plugins → Toggle off/on)
 3. Check console for detailed error (F12)
@@ -227,11 +236,13 @@ Future startups will be much faster!
 **What it means:** The card references a Rem that no longer exists in your knowledge base.
 
 **Why this happens:**
+
 - The Rem was deleted but the card still exists
 - Database inconsistency
 - The card's parent Rem was removed
 
 **Impact:** 
+
 - ❌ The card was **NOT** tagged with cardPriority
 - ❌ No priority was assigned
 - The card may not appear correctly in the queue
@@ -258,17 +269,20 @@ Each candidate is **double-checked** with a fresh live lookup before removal, so
 **What it means:** An unexpected error occurred while processing the Rem.
 
 **Common causes:**
+
 - Permission issues
 - Corrupted Rem data
 - Network timeout during processing
 - Bug in the code logic
 
 **Impact:**
+
 - ❌ The card was **NOT** tagged with cardPriority
 - ❌ No priority was assigned
 - The Rem needs manual investigation
 
 **How to fix:**
+
 1. Check the detailed error log in console
 2. Look for the specific error message
 3. Try to open the Rem manually in RemNote
@@ -309,12 +323,14 @@ ghi789rst
 ```
 
 You can copy this list and:
+
 1. Search for these Rems in RemNote
 2. Check if they still exist
 3. Manually assign priorities if needed
 
 #### Step 3: Re-run Pre-computation
 After fixing issues:
+
 1. Run pre-computation again
 2. Check if error count decreased
 3. Most "Rem not found" errors should auto-resolve after card cleanup
@@ -343,6 +359,7 @@ A "rogue" `CardPriority` tag is the powerup sitting on a rem that is **not** a f
 
 #### For the Entire Knowledge Base (Batch)
 Use the global command to scan your entire knowledge base and remove rogue tags in bulk:
+
 1. **Press `Ctrl+/`** (or `Cmd+/` on Mac)
 2. **Type:** `Sanitize Rogue CardPriority Tags`
 3. **Press Enter**
@@ -351,6 +368,7 @@ You'll get a batch confirmation dialog (in chunks of 20) listing the rems about 
 
 #### For a Specific Rem (Debug Widget)
 To inspect and clean a single rem and its descendants:
+
 1. Navigate to the rem in the editor.
 2. Type `/debug` to open the **Debug Widget** below the rem.
 3. Under **Card Priority Powerup**, click **Sanitize Rogue Tags**. This runs the *same* authoritative scan as the global command, scoped to this rem's subtree.
@@ -471,6 +489,7 @@ The tool merges/moves all misplaced page nodes into the `Highlights` container a
 **Step 3 — Verify**
 
 Click **Debug PDF** again and confirm:
+
 - All page nodes now sit **under** the `Highlights` container, with one page per page number (no duplicates).
 - All `PDFHighlight` rems show the correct `PdfId` (matching the PDF document rem ID).
 - Clicking a highlight pin in the PDF viewer navigates to the right page.
@@ -578,7 +597,7 @@ This is a property of the **search ranking**, not a corruption of the Rem — wh
 The Debug Widget now opens on **any** focused Rem (not just IncRem/CardPriority/Dismissed ones):
 
 1. Focus the Rem you want to inspect.
-2. Run **`Debug Incremental Everything`** from the command palette.
+2. Run **`Debug Incremental RemNote`** from the command palette.
 3. Scroll to the **Search / Linkage Diagnostics** section (at the bottom of the widget) and click **Probe Searchability**.
 
 ### What It Reports
@@ -587,7 +606,7 @@ The probe reproduces the editor's search via `plugin.search.search()` and dumps 
 
 - **Verdict** — a plain-language summary of the likely cause.
 - **Own-text search rank** (top 50) and **Deep search rank** (top 1000) — whether the Rem appears in its *own* name search and at what position. "NOT FOUND" with many partial matches above it is the signature of common-token saturation.
-- **Found under alias? / Found under prefix?** — whether a distinctive word *does* surface the Rem (it usually does — which is exactly what the [Find Rem picker](Utilities.md#find-rem-reference-or-open) exploits).
+- **Found under alias? / Found under prefix?** — whether a distinctive word *does* surface the Rem (it usually does — which is exactly what the [Find Rem picker](Utilities-Finding-and-Navigating.md#find-rem-reference-or-open) exploits).
 - **Type & flags** (Concept/Descriptor, isProperty/isSlot/isPowerup…), **literal character count**, **Unicode normalization** (NFC vs NFD), **hidden/zero-width characters**, **leading/trailing whitespace** — rarer causes of invisibility, each ruled in or out.
 - **Aliases**, **duplicate same-name Rems**, and the **ancestor chain** (flagging search-excluding powerups such as `SuperPrivate`, `SearchPortal`, `ImportedDocument`, `RestoredFromTrash`).
 - **`timesSelectedInSearch`** and reference counts.
@@ -596,7 +615,7 @@ Run it on a Rem that *works* and one that *doesn't* to compare — the differenc
 
 ### The Fix
 
-There is **no API to boost a Rem's search ranking**, and the Rem itself is healthy — so the solution is to bypass RemNote's ranking. Use the **[Find Rem — Reference or Open](Utilities.md#find-rem-reference-or-open)** picker (`Opt+Shift+F`): it searches each word separately and floats the exact-name match to the top, so you can insert a reference or open the otherwise-invisible Rem.
+There is **no API to boost a Rem's search ranking**, and the Rem itself is healthy — so the solution is to bypass RemNote's ranking. Use the **[Find Rem — Reference or Open](Utilities-Finding-and-Navigating.md#find-rem-reference-or-open)** picker (`Opt+Shift+F`): it searches each word separately and floats the exact-name match to the top, so you can insert a reference or open the otherwise-invisible Rem.
 
 ---
 
@@ -696,3 +715,36 @@ Please get in touch, via the [plugin's issue tracker](https://github.com/bjsi/in
 - **the numbers differ in shape from the ones above** — a different slot id, or a Rem where a *manual* priority disagrees with what is displayed.
 
 The diagnostic tools were built for exactly this, and the more knowledge bases they are run against, the more precisely the remaining cases can be described to RemNote.
+
+
+## 🃏 Why can't this card be practised?
+
+A card record can exist while RemNote refuses to serve it, and the states that cause this look identical through the obvious API. `rem.getCards()` hides **disabled** cards, so a Rem returning zero cards proves nothing on its own — it may hold plenty. These tools, in the **Debug** widget, tell the states apart. All of them are read-only unless stated.
+
+### Probe Card Enablement
+
+Focus a Rem and press it. Prints every signal that decides whether its cards can be practised: `enablePractice`, the practice direction, the Rem's cloze ids, whether it is or sits inside a table, the whole ancestor chain with each ancestor's *Disable Descendant Cards* and Deck status, and per card `inGetCards` / `nextRepetitionTime` / reps / whether its markup is still present.
+
+Two results are worth knowing in advance:
+
+*   **`enablePractice=false` with `practiceDirection=forward`** is normal. RemNote's UI shows *Flashcard Direction: None* for a Rem with practice off, but the stored direction is untouched — so the direction never proves a card is disabled.
+*   **`inTable=true`** means the Rem is a table row or cell. Those ship with cards off and are not an oversight.
+*   **`disabled cloze ids (derived)`** lists the clozes RemNote has switched off. It says *derived* because RemNote keeps that list on the Rem and exposes it to no plugin — the probe works it out from the cards that exist but never surface. When another cause is already hiding every card on the Rem it says **NOT CONCLUSIVE** instead, since that would make every cloze look switched off. To undo it, run RemNote's `/Enable All Cloze Cards` on the Rem; switching cards back on does not clear it.
+
+### Card ownership probe
+
+Paste a card id. Compares the `remId` field the plugin groups by against the SDK's own `card.getRem()`, and reports whether the card's cloze markup lives on either Rem. Use it when a Rem seems to own cards that make no sense for it.
+
+### Purge orphaned cloze cards on a Rem
+
+**Deletes data.** For one Rem, selects only cloze cards whose cloze id is absent from the Rem's current text *and* which have no `nextRepetitionTime`. Everything else is kept and listed with a reason. Forward/backward records are a separate, opt-in selection, offered only when the Rem has **no back side** — with one, a disabled direction explains the record and it is left alone.
+
+### Sweep the KB for markup-gone cloze cards
+
+**Deletes data.** The same idea across the whole knowledge base, split by what history would be lost:
+
+*   **Kept — real graded practice**: reported with the number of reps at stake, never deletable here. A reworded Rem, or one cloze split into several, loses its markup while keeping history worth preserving. Grades are counted over the *full lifetime* history, ignoring any RESET — so a card RemNote labels *New* because it was reset is still protected.
+*   **No history at all**: nothing to lose. The default selection.
+*   **Entries but never graded**: skips, resets and views only — RemNote shows these as *Times practiced N / Last practiced Never*. Opt-in.
+
+Both deletion tools require the backup JSON — full repetition histories of everything queued for deletion — to be saved before the delete button unlocks. Card deletion cannot be undone from the plugin.

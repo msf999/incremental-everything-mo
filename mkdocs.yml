@@ -1,6 +1,6 @@
-site_name: Incremental Everything for RemNote — User's Manual
-site_url: https://hugomarins.github.io/incremental-everything/
-site_description: The official User's Manual for the Incremental Everything plugin for RemNote.
+site_name: Incremental RemNote — User's Manual
+site_url: https://hugomarins.github.io/incremental-remnote/
+site_description: The official User's Manual for the Incremental RemNote plugin.
 site_author: bjsi
 repo_url: https://github.com/bjsi/incremental-everything
 repo_name: bjsi/incremental-everything
@@ -8,6 +8,10 @@ edit_uri: ""
 
 theme:
   name: material
+  # Holds partials/header.html (a copy of the theme's, plus the contact menu)
+  # and partials/contact.html. Kept OUTSIDE docs/ so the templates are not
+  # published as pages of the manual.
+  custom_dir: overrides
   logo: assets/logo.png
   favicon: assets/logo.png
   palette:
@@ -42,6 +46,14 @@ plugins:
   - search:
       lang: en
 
+# Entries of the header's contact menu (overrides/partials/contact.html).
+extra:
+  contact:
+    - name: Report an issue on GitHub
+      link: https://github.com/bjsi/incremental-everything/issues
+    - name: Ask on RemNote's Discord
+      link: https://discord.com/channels/689979930804617224/1201559830431809566
+
 markdown_extensions:
   - attr_list
   - md_in_html
@@ -58,9 +70,13 @@ markdown_extensions:
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - toc:
       permalink: true
+      # Keep the ToC to H2/H3. The Utilities category pages nest three deep
+      # (page title → utility → detail); deeper detail headings stay out of it.
+      toc_depth: 3
 
 nav:
   - Home: index.md
+  - Changelog: Changelog.md
   - "User's Manual":
     - 1. Getting Started: Getting-Started.md
     - "2. What is Incrementalism?": What-is-Incrementalism?.md
@@ -70,26 +86,40 @@ nav:
       - Reviewing Items in the Editor: Reviewing-Items-in-the-Editor.md
     - "4. Prioritization & Sorting": Prioritization-&-Sorting.md
     - "4a. Priorities for Flashcards": Priorities-for-Flashcards.md
-    - "4b. Priority Review Document": Priority-Review-Document.md
+    - "4b. Priority Queue": Priority-Review-Document.md
     - 5. Advanced Workflows:
       - PDF Incremental Reading Workflow: PDF-Incremental-Reading-Workflow.md
       - Create Incremental Rem from PDF Highlights: Create-Incremental-Rem-from-PDF-Highlights.md
+      - AI Transcription of PDF Highlights: AI-Transcription-of-PDF-Highlights.md
+      - Source Pins: Source-Pins.md
       - Incremental Video: Incremental-Video.md
       - IncRem List & Main View: IncRem-List-and-Main-View.md
       - History, Queue Dashboard & Mastery Drill: History-Queue-Dashboard-and-Mastery-Drill.md
+      - "Repetition History & Statistics": Repetition-History-and-Statistics.md
       - Study Dashboard: Study-Dashboard.md
-    - 6. Essential References:
+    - 6. Integrations:
+      - Logos Bible Software: Logos-Bible-Software-Integration.md
+    - 7. Utilities:
+      - Overview: Utilities.md
+      - Text & Lists: Utilities-Text-and-Lists.md
+      - Outline & Headings: Utilities-Outline-and-Headings.md
+      - Finding & Navigating: Utilities-Finding-and-Navigating.md
+      - Queue Display: Utilities-Queue-Display.md
+      - True or False Cards: Utilities-True-or-False-Cards.md
+      - Cleaning Up: Utilities-Cleaning-Up.md
+      - Under the Hood: Utilities-Under-the-Hood.md
+    - 8. Essential References:
       - Plugin Widgets Reference: Plugin-Widgets-Reference.md
       - Plugin Commands Reference: Plugin-Commands-Reference.md
       - Plugin Settings Reference: Plugin-Settings-Reference.md
       - IncRem Scheduler: IncRem-Scheduler.md
       - Keyboard Shortcuts: Keyboard-Shortcuts.md
-      - Utilities: Utilities.md
+      - RemNote Native Shortcuts: RemNote-Native-Shortcuts.md
+      - Colour Coding Reference: Colour-Coding-Reference.md
       - Full Mode vs Light Mode: Full-Mode-x-Light-Mode.md
-    - 7. FAQ & Troubleshooting:
+    - 9. FAQ & Troubleshooting:
       - Does the plugin prioritize due-today items?: Does-the-plugin-prioritize-items-that-are-due-today-over-older-items?.md
       - How priority and due date interact: How-the-Incremental-Queue-takes-priority-and-due-date-in-consideration.md
       - How to hide card priorities?: How-to-hide-card-priorities?.md
       - Troubleshooting: Troubleshooting.md
-    - 8. Changelog: Changelog.md
-    - 9. Contributing to the Wiki: Contributing-to-the-Wiki.md
+    - 10. Contributing to the Wiki: Contributing-to-the-Wiki.md

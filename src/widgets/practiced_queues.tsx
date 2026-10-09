@@ -5,6 +5,7 @@ import {
     usePlugin,
     useSyncedStorageState,
     useSessionStorageState,
+    useLocalStorageState,
 } from "@remnote/plugin-sdk";
 import '../style.css';
 import '../App.css';
@@ -33,6 +34,28 @@ import {
     type ProgressUpdate,
 } from "../lib/authoritative_aggregates";
 import { computeMonthlyShieldCatchUp, MonthlyShieldCatchUp } from "../lib/shield_history";
+import { CardForgettingCurve } from "../components/CardForgettingCurve";
+import { practicedQueuesVisibleKey, showQueueDashboardCurveId } from "../lib/consts";
+import {
+    CALIBRATION_PERIOD_LABELS,
+    FIXED_FALLBACK,
+    SpeedThresholds,
+    cpmToSecondsPerCard,
+    ensureSpeedCalibration,
+    resolveSpeedThresholds,
+    speedColorStyle,
+} from "../lib/speed_color";
+import { retentionColorClass, retentionPercent } from "../lib/retention";
+import { useIESetting } from "../lib/settings";
+import {
+    SpeedCalibrationPeriod,
+    SpeedColorMode,
+    speedCalibrationMarginSecondsId,
+    speedCalibrationPeriodId,
+    speedColorGreenCpmId,
+    speedColorModeId,
+    speedColorRedCpmId,
+} from "../lib/consts";
 
 export interface PracticedQueueSession {
     id: string;
@@ -74,19 +97,84 @@ interface AggregatedStats {
     incRemsTime: number;
     retentionRate: number;
     avgSpeed: number;
+    avgSecondsPerCard: number;
 }
 
 const NUM_TO_LOAD_IN_BATCH = 20;
+
+// Unit the Summary table's Speed column is rendered in. Device-local (not
+// synced) so each machine keeps its own preference.
+type SpeedUnit = "cpm" | "spc";
+const SPEED_UNIT_KEY = "summarySpeedUnit";
 
 const formatTimeShort = (ms: number) => {
     if (!ms) return "0s";
     const seconds = Math.floor(ms / 1000);
     const minutes = Math.floor(seconds / 60);
     const hours = Math.floor(minutes / 60);
-    if (hours > 0) return `${hours}h ${minutes % 60}m`;
+    // The "Ever" row reaches five-digit hour counts, so separate thousands.
+    if (hours > 0) return `${hours.toLocaleString()}h ${minutes % 60}m`;
     if (minutes > 0) return `${minutes}m`;
     return `${seconds}s`;
 };
+
+interface SpeedColorState {
+    thresholds: SpeedThresholds;
+    /** A history walk is running right now. */
+    calibrating: boolean;
+    mode: SpeedColorMode;
+    period: SpeedCalibrationPeriod;
+    recalibrate: () => Promise<void>;
+}
+
+/**
+ * The colour scale in force, plus a way to re-measure it.
+ *
+ * Calibrated mode needs a walk over every card's repetition history, so the
+ * hook never blocks on it: it paints with whatever is available immediately
+ * (the fixed limits, or a still-valid cached calibration) and only then, if the
+ * cache is missing or stale, measures in the background and repaints.
+ */
+function useSpeedThresholds(): SpeedColorState {
+    const plugin = usePlugin();
+    const mode = useIESetting(speedColorModeId);
+    const period = useIESetting(speedCalibrationPeriodId);
+    const margin = useIESetting(speedCalibrationMarginSecondsId);
+    const redCpm = useIESetting(speedColorRedCpmId);
+    const greenCpm = useIESetting(speedColorGreenCpmId);
+
+    const [thresholds, setThresholds] = useState<SpeedThresholds>(FIXED_FALLBACK);
+    const [calibrating, setCalibrating] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            const immediate = await resolveSpeedThresholds(plugin);
+            if (cancelled) return;
+            setThresholds(immediate);
+            // resolveSpeedThresholds only reports 'calibrated' when a usable
+            // cache backed it, so this is exactly the "must measure" case.
+            if (mode !== "calibrated" || immediate.source === "calibrated") return;
+            setCalibrating(true);
+            await ensureSpeedCalibration(plugin, period);
+            if (cancelled) return;
+            setCalibrating(false);
+            setThresholds(await resolveSpeedThresholds(plugin));
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [plugin, mode, period, margin, redCpm, greenCpm]);
+
+    const recalibrate = useCallback(async () => {
+        setCalibrating(true);
+        await ensureSpeedCalibration(plugin, period, true);
+        setCalibrating(false);
+        setThresholds(await resolveSpeedThresholds(plugin));
+    }, [plugin, period]);
+
+    return { thresholds, calibrating, mode, period, recalibrate };
+}
 
 function getStartOfDay(date: Date) {
     const newDate = new Date(date);
@@ -135,9 +223,12 @@ function buildRow(
         endMs
     );
     const remembered = Math.max(0, s.cardsCount - s.forgotCount);
-    const retentionRate = s.cardsCount > 0 ? (remembered / s.cardsCount) * 100 : 0;
+    // 0 rather than null for a period with no cards: the table already hides the
+    // cell behind a `cardsCount > 0` guard, so the number is never rendered.
+    const retentionRate = retentionPercent(remembered, s.cardsCount) ?? 0;
     const cardsTimeMin = s.cardsTime / 1000 / 60;
     const avgSpeed = cardsTimeMin > 0 ? s.cardsCount / cardsTimeMin : 0;
+    const avgSecondsPerCard = s.cardsCount > 0 ? s.cardsTime / 1000 / s.cardsCount : 0;
     return {
         label,
         totalTime: s.totalTime,
@@ -147,6 +238,7 @@ function buildRow(
         incRemsTime: s.incRemsTime,
         retentionRate,
         avgSpeed,
+        avgSecondsPerCard,
     };
 }
 
@@ -155,12 +247,19 @@ function SummaryTable({
     allSessions,
     allAggregates,
     lastComputed,
+    speed,
 }: {
     authoritative: DailyAggregate[];
     allSessions: PracticedQueueSession[];
     allAggregates: DailyAggregate[];
     lastComputed: number;
+    speed: SpeedColorState;
 }) {
+    const { thresholds } = speed;
+    const [speedUnit, setSpeedUnit] = useLocalStorageState<SpeedUnit>(SPEED_UNIT_KEY, "cpm");
+    // Guard against a stale/garbled stored value so the column never renders blank.
+    const unit: SpeedUnit = speedUnit === "spc" ? "spc" : "cpm";
+
     const stats = useMemo(() => {
         const now = new Date();
         const startOfToday = getStartOfDay(now);
@@ -205,7 +304,22 @@ function SummaryTable({
                             <th className="p-2 font-bold rn-clr-content-secondary text-right">Cards</th>
                             <th className="p-2 font-bold rn-clr-content-secondary text-right">Inc. Rems</th>
                             <th className="p-2 font-bold rn-clr-content-secondary text-right">Ret.</th>
-                            <th className="p-2 font-bold rn-clr-content-secondary text-right">Speed</th>
+                            <th className="p-2 font-bold rn-clr-content-secondary text-right">
+                                <div className="flex flex-wrap items-center justify-end gap-x-1.5 gap-y-0.5">
+                                    <span>Speed</span>
+                                    <button
+                                        onClick={() => setSpeedUnit(unit === "cpm" ? "spc" : "cpm")}
+                                        className="px-1.5 py-0.5 text-[10px] font-medium rounded border rn-clr-border-opaque rn-clr-content-tertiary hover:rn-clr-background-primary transition-colors"
+                                        title={
+                                            unit === "cpm"
+                                                ? "Showing cards per minute — click to show seconds per card"
+                                                : "Showing seconds per card — click to show cards per minute"
+                                        }
+                                    >
+                                        {unit === "cpm" ? "cpm" : "s/card"}
+                                    </button>
+                                </div>
+                            </th>
                         </tr>
                     </thead>
                     <tbody className="divide-y rn-clr-divide-opaque">
@@ -218,29 +332,38 @@ function SummaryTable({
                                 <td className="p-2 text-right">
                                     {row.cardsCount > 0 ? (
                                         <div>
-                                            <span className="font-bold rn-clr-content-primary">{row.cardsCount}</span>
-                                            <span className="rn-clr-content-tertiary text-[10px] ml-1">({formatTimeShort(row.cardsTime)})</span>
+                                            <span className="font-bold rn-clr-content-primary whitespace-nowrap">{row.cardsCount.toLocaleString()}</span>{" "}
+                                            <span className="rn-clr-content-tertiary text-[10px] whitespace-nowrap">({formatTimeShort(row.cardsTime)})</span>
                                         </div>
                                     ) : <span className="rn-clr-content-tertiary">-</span>}
                                 </td>
                                 <td className="p-2 text-right">
                                     {row.incRemsCount > 0 ? (
                                         <div>
-                                            <span className="font-bold rn-clr-content-primary">{row.incRemsCount}</span>
-                                            <span className="rn-clr-content-tertiary text-[10px] ml-1">({formatTimeShort(row.incRemsTime)})</span>
+                                            <span className="font-bold rn-clr-content-primary whitespace-nowrap">{row.incRemsCount.toLocaleString()}</span>{" "}
+                                            <span className="rn-clr-content-tertiary text-[10px] whitespace-nowrap">({formatTimeShort(row.incRemsTime)})</span>
                                         </div>
                                     ) : <span className="rn-clr-content-tertiary">-</span>}
                                 </td>
                                 <td className="p-2 text-right">
                                     {row.cardsCount > 0 ? (
-                                        <span className={row.retentionRate >= 90 ? "text-green-600 font-bold" : (row.retentionRate < 80 ? "text-red-500 font-bold" : "text-yellow-600 font-bold")}>
+                                        <span className={`${retentionColorClass(row.retentionRate)} font-bold`}>
                                             {row.retentionRate.toFixed(0)}%
                                         </span>
                                     ) : <span className="rn-clr-content-tertiary">-</span>}
                                 </td>
                                 <td className="p-2 text-right">
                                     {row.cardsCount > 0 ? (
-                                        <span><span className="rn-clr-content-primary">{row.avgSpeed.toFixed(1)}</span> <span className="rn-clr-content-tertiary text-[10px]">cpm</span></span>
+                                        <span>
+                                            <span className="font-bold whitespace-nowrap" style={speedColorStyle(row.avgSpeed, thresholds)}>
+                                                {unit === "cpm"
+                                                    ? row.avgSpeed.toFixed(1)
+                                                    : row.avgSecondsPerCard.toFixed(1)}
+                                            </span>{" "}
+                                            <span className="rn-clr-content-tertiary text-[10px] whitespace-nowrap">
+                                                {unit === "cpm" ? "cpm" : "s/card"}
+                                            </span>
+                                        </span>
                                     ) : <span className="rn-clr-content-tertiary">-</span>}
                                 </td>
                             </tr>
@@ -248,6 +371,51 @@ function SummaryTable({
                     </tbody>
                 </table>
             </div>
+            <SpeedScaleCaption speed={speed} />
+        </div>
+    );
+}
+
+/**
+ * One line under the Summary explaining what "red" and "green" currently mean.
+ * Only shown in calibrated mode: with fixed limits the two numbers are in the
+ * settings the user just typed them into, and a caption would be noise.
+ */
+function SpeedScaleCaption({ speed }: { speed: SpeedColorState }) {
+    const { thresholds, calibrating, mode, period, recalibrate } = speed;
+    if (mode !== "calibrated") return null;
+
+    const windowLabel = CALIBRATION_PERIOD_LABELS[period];
+    return (
+        <div className="mt-1.5 flex items-center gap-2 text-[10px] rn-clr-content-tertiary">
+            {calibrating ? (
+                <span>Measuring your average speed over {windowLabel}…</span>
+            ) : thresholds.source === "calibrated" ? (
+                <>
+                    <span>
+                        Speed colours calibrated on{" "}
+                        <b className="rn-clr-content-secondary">
+                            {thresholds.avgSeconds?.toFixed(1)} s/card
+                        </b>{" "}
+                        average over {windowLabel} ({thresholds.sampleCount?.toLocaleString()}{" "}
+                        reps): green at{" "}
+                        {cpmToSecondsPerCard(thresholds.greenCpm).toFixed(1)} s/card or faster,
+                        red at {cpmToSecondsPerCard(thresholds.redCpm).toFixed(1)} s/card or
+                        slower.
+                    </span>
+                    <button
+                        onClick={recalibrate}
+                        className="underline hover:rn-clr-content-secondary whitespace-nowrap"
+                        title="Re-measure your average from card history now"
+                    >
+                        Recalibrate
+                    </button>
+                </>
+            ) : (
+                <span>
+                    No reviews found in {windowLabel} — using the fixed speed colour limits.
+                </span>
+            )}
         </div>
     );
 }
@@ -276,7 +444,18 @@ function PracticedQueues() {
         0
     );
     const [activeSession] = useSessionStorageState<PracticedQueueSession | null>("activeQueueSession", null);
+    const showForgettingCurve = useIESetting(showQueueDashboardCurveId);
+    // The curve can show the previous card instead of the current one. The
+    // choice remembers which card was current when it was made, so it lapses
+    // back to the current card as soon as the queue moves on — no effect, no
+    // frame drawn with a stale choice.
+    const [previousCurveWhile, setPreviousCurveWhile] = useState<string | null>(null);
+    const canShowPreviousCurve =
+        !!activeSession?.prevCardId && activeSession.prevCardId !== activeSession.currentCardId;
+    const showPreviousCurve =
+        canShowPreviousCurve && previousCurveWhile !== null && previousCurveWhile === activeSession?.currentCardId;
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const speed = useSpeedThresholds();
 
     const [recomputeJob, setRecomputeJob] = useState<{
         running: boolean;
@@ -301,13 +480,13 @@ function PracticedQueues() {
         migrateAuthoritativeAggregatesToShards(plugin);
     }, [plugin]);
 
-    // Handshake with QueueEnter auto-focus loop in queue_session.ts: it polls
-    // this key to detect whether the tab actually became visible, retrying
-    // openWidgetInRightSidebar if RemNote stole focus to the AI Tutor tab.
+    // Mount marker consumed by lib/queue_dashboard: it is both the "did the tab
+    // actually come up, or did RemNote steal it?" acknowledgement and the target
+    // of the [QDASH] wedged-channel watchdog. Must stay a cheap session write.
     useEffect(() => {
-        plugin.storage.setSession('practiced_queues_visible', Date.now());
+        plugin.storage.setSession(practicedQueuesVisibleKey, Date.now());
         return () => {
-            plugin.storage.setSession('practiced_queues_visible', null);
+            plugin.storage.setSession(practicedQueuesVisibleKey, null);
         };
     }, [plugin]);
 
@@ -614,8 +793,52 @@ function PracticedQueues() {
                             session={activeSession}
                             isLive={true}
                             onDelete={() => { }}
+                            thresholds={speed.thresholds}
                         />
                         <div className="h-px w-full rn-clr-background-elevation-10 mt-6 md:mt-4"></div>
+                    </div>
+                )}
+
+                {/* The card on screen right now, as a memory curve: where its
+                    retrievability has been, and where each of the four answer
+                    buttons would send it. Only meaningful while a session is
+                    live, and only for a flashcard — an IncRem has no card. */}
+                {activeSession && showForgettingCurve && activeSession.currentCardId && (
+                    <div className="mb-6">
+                        <CardForgettingCurve
+                            cardId={showPreviousCurve ? activeSession.prevCardId : activeSession.currentCardId}
+                            title={`${showPreviousCurve ? 'Previous' : 'Current'} Card — Forgetting Curve`}
+                            height={220}
+                            headerRight={
+                                canShowPreviousCurve && (
+                                    <div className="flex rn-clr-border-opaque border rounded-md overflow-hidden text-[10px]">
+                                        {([false, true] as const).map((previous) => (
+                                            <button
+                                                key={String(previous)}
+                                                onClick={() =>
+                                                    setPreviousCurveWhile(
+                                                        previous ? activeSession.currentCardId ?? null : null,
+                                                    )
+                                                }
+                                                className={`px-2 py-0.5 ${
+                                                    showPreviousCurve === previous
+                                                        ? 'rn-clr-background-secondary font-semibold'
+                                                        : 'rn-clr-content-tertiary'
+                                                }`}
+                                                title={
+                                                    previous
+                                                        ? 'The card you just answered, with that answer included'
+                                                        : 'The card on screen now'
+                                                }
+                                            >
+                                                {previous ? 'Previous' : 'Current'}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )
+                            }
+                        />
+                        <div className="h-px w-full rn-clr-background-elevation-10 mt-4"></div>
                     </div>
                 )}
 
@@ -667,6 +890,7 @@ function PracticedQueues() {
                     allSessions={filteredData}
                     allAggregates={filteredAggregates}
                     lastComputed={authoritativeLastComputed}
+                    speed={speed}
                 />
 
                 <div className="flex items-center gap-2 mb-4">
@@ -714,6 +938,7 @@ function PracticedQueues() {
                                 key={session.id}
                                 session={session}
                                 onDelete={() => deleteItem(session.id)}
+                                thresholds={speed.thresholds}
                             />
                         ))}
                     </div>
@@ -789,7 +1014,7 @@ function MonthlyShieldCatchUpPanel({ refreshKey }: { refreshKey: number }) {
     );
 }
 
-function QueueSessionItem({ session, onDelete, isLive }: { session: PracticedQueueSession, onDelete: () => void, isLive?: boolean }) {
+function QueueSessionItem({ session, onDelete, isLive, thresholds }: { session: PracticedQueueSession, onDelete: () => void, isLive?: boolean, thresholds: SpeedThresholds }) {
     const plugin = usePlugin();
 
     const formatTime = (ms: number) => {
@@ -837,15 +1062,21 @@ function QueueSessionItem({ session, onDelete, isLive }: { session: PracticedQue
         return formatInterval(totalMs);
     }
 
+    /**
+     * Straight into the queue on that document — the same route RemNote's own
+     * Practice button takes (see lib/priority_review_document/queue_doc.ts,
+     * practicePriorityQueue). Inlined rather than imported: that module pulls
+     * the selection and cooling code behind it, and this widget lives in the
+     * sidebar for the whole session.
+     */
     const handleOpen = async () => {
-        if (session.queueId) {
-            const rem = await plugin.rem.findOne(session.queueId);
-            if (rem) {
-                plugin.window.openRem(rem);
-            } else {
-                plugin.app.toast("Could not find the document for this queue.");
-            }
+        if (!session.queueId) return;
+        const rem = await plugin.rem.findOne(session.queueId);
+        if (!rem) {
+            plugin.app.toast("Could not find the document for this queue.");
+            return;
         }
+        await plugin.window.setURL(`/flashcards/${session.queueId}`);
     }
 
     const seconds = session.flashcardsTime / 1000;
@@ -858,23 +1089,19 @@ function QueueSessionItem({ session, onDelete, isLive }: { session: PracticedQue
 
     const forgotCount = session.againCount || 0;
     const rememberedCount = Math.max(0, count - forgotCount);
-    const retentionRate = count > 0 ? ((rememberedCount / count) * 100).toFixed(0) : "100";
+    // null when no card was answered — an IncRem-only session, or a live card
+    // that has just opened.
+    const retentionValue = retentionPercent(rememberedCount, count);
+    // "100" for that case: a live card reads better at 100% than at a dash.
+    const retentionRate = (retentionValue ?? 100).toFixed(0);
 
-    let hue = 0;
-    if (count > 0 && seconds > 0) {
-        if (cardsPerMinVal < 1.5) {
-            hue = 0;
-        } else if (cardsPerMinVal >= 4) {
-            hue = 120;
-        } else {
-            const ratio = (cardsPerMinVal - 1.5) / (4 - 1.5);
-            hue = Math.floor(ratio * 120);
-        }
-    }
-    const speedColor = { color: count > 0 ? `hsl(${hue}, 90%, 35%)` : '' };
+    const speedColor = speedColorStyle(count > 0 ? cardsPerMinVal : 0, thresholds);
 
-    const retentionVal = parseInt(retentionRate);
-    const retentionColor = retentionVal >= 90 ? "text-green-600" : (retentionVal < 80 ? "text-red-500" : "text-yellow-600");
+    // Grey when there is no retention to report. A session that answered no
+    // cards at all shows `0 / 0 (100%)`, and painting that green would claim
+    // perfect recall on the strength of nothing.
+    const retentionColor =
+        retentionValue === null ? 'text-gray-500' : retentionColorClass(retentionValue);
 
     if (isLive) {
         return (
@@ -1080,8 +1307,12 @@ function QueueSessionItem({ session, onDelete, isLive }: { session: PracticedQue
     return (
         <div className="p-3 border rounded-lg rn-clr-border-opaque hover:shadow-sm transition-shadow rn-clr-background-elevation-10">
             <div className="flex justify-between items-start">
-                <div onClick={handleOpen} className="cursor-pointer flex-grow">
-                    <div className="font-semibold text-lg hover:underline truncate" title={session.scopeName || "Ad-hoc Queue"}>
+                {/* Only a document queue can be reopened. Editor reviews and ad-hoc
+                    queues (Global Queue, embedded queues) record no queueId — and
+                    take the name of the first IncRem they touch — so they must not
+                    look clickable. */}
+                <div onClick={session.queueId ? handleOpen : undefined} className={`flex-grow ${session.queueId ? 'cursor-pointer' : ''}`}>
+                    <div className={`font-semibold text-lg truncate ${session.queueId ? 'hover:underline' : ''}`} title={session.queueId ? `Practice "${session.scopeName || 'this queue'}" again` : `${session.scopeName || "Ad-hoc Queue"} — an editor review or ad-hoc session, no queue to reopen`}>
                         {session.scopeName ? session.scopeName : (session.queueId ? (
                             <RemViewer remId={session.queueId} width="100%" />
                         ) : "Ad-hoc Queue")}
@@ -1098,7 +1329,7 @@ function QueueSessionItem({ session, onDelete, isLive }: { session: PracticedQue
                                 <span className="font-bold text-green-600">{rememberedCount}</span>
                                 <span className="text-gray-400">/</span>
                                 <span className="font-bold text-red-500">{forgotCount}</span>
-                                <span className="ml-1 font-semibold text-gray-500">({retentionRate}%)</span>
+                                <span className={`ml-1 font-semibold ${retentionColor}`}>({retentionRate}%)</span>
                             </div>
 
                             {session.incRemsCount > 0 && (

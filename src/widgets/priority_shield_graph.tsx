@@ -20,6 +20,28 @@ import {
   priorityShieldGraphPrefsKey,
 } from '../lib/consts';
 import dayjs from 'dayjs';
+import { IE_DOCS_BASE_URL } from '../lib/settings';
+
+const DOCS_PATH = 'Prioritization-%26-Sorting/#priority-shield-history';
+
+/**
+ * Opens the docs section for this graph. `window.open` is blocked in some
+ * embedded contexts, so fall back to a synthesised anchor click — same helper
+ * shape as the IE Settings popup.
+ */
+const openDocs = () => {
+  const url = `${IE_DOCS_BASE_URL}${DOCS_PATH}`;
+  const opened = window.open(url, '_blank');
+  if (!opened || opened.closed) {
+    const link = document.createElement('a');
+    link.href = url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(() => document.body.removeChild(link), 100);
+  }
+};
 
 interface ShieldHistoryEntry {
   absolute: number | null;
@@ -675,6 +697,22 @@ function PriorityShieldGraph() {
     <div className="p-4 flex flex-col" style={{ width: '1030px' }}>
       <div className="flex flex-col items-center mb-6 relative">
         <h3 className="text-lg font-bold">Priority Shield History</h3>
+        <button
+          onClick={openDocs}
+          title="Open the documentation for Priority Shield History"
+          className="rounded-full w-6 h-6 flex items-center justify-center hover:opacity-75"
+          style={{
+            position: 'absolute',
+            top: 0,
+            right: 0,
+            border: '1px solid var(--rn-clr-border-opaque, rgba(128,128,128,0.3))',
+            color: 'var(--rn-clr-content-secondary)',
+            background: 'transparent',
+            cursor: 'pointer',
+          }}
+        >
+          ?
+        </button>
         <div className="flex items-center gap-4 mt-2 text-sm flex-wrap justify-center" style={{ color: 'var(--rn-clr-content-secondary)' }}>
           <label className="flex items-center gap-1.5 cursor-pointer select-none">
             <input
@@ -707,31 +745,31 @@ function PriorityShieldGraph() {
         </div>
       </div>
 
-      {/* Show document-level charts if we have an effective scope (original or current) */}
-      {effectiveDocScopeId && hasDocData && renderChart(
-        filteredDocChartData,
-        `📄 ${documentName || 'Document'} IncRem Shield`,
-        '#e74c3c', '#f39c12', '#9b59b6'
+      {hasCardKbData && renderChart(
+        filteredCardKbChartData,
+        '🌐 Knowledge Base Card Shield',
+        '#c0392b', '#e67e22', '#2980b9'
       )}
-      {effectiveDocScopeId && hasCardDocData && renderChart(
-        filteredCardDocChartData,
-        `📄 ${documentName || 'Document'} Card Shield`,
-        '#d35400', '#f1c40f', '#16a085'
+      {hasKbData && renderChart(
+        filteredKbChartData,
+        '🌐 Knowledge Base IncRem Shield',
+        '#8884d8', '#82ca9d', '#e91e63'
       )}
 
       {(hasDocData || hasCardDocData) && (hasKbData || hasCardKbData) && (
         <div style={{ height: '2px', backgroundColor: 'var(--rn-clr-border-opaque)', margin: '32px 0' }} />
       )}
 
-      {hasKbData && renderChart(
-        filteredKbChartData,
-        '🌐 Knowledge Base IncRem Shield',
-        '#8884d8', '#82ca9d', '#e91e63'
+      {/* Show document-level charts if we have an effective scope (original or current) */}
+      {effectiveDocScopeId && hasCardDocData && renderChart(
+        filteredCardDocChartData,
+        `📄 ${documentName || 'Document'} Card Shield`,
+        '#d35400', '#f1c40f', '#16a085'
       )}
-      {hasCardKbData && renderChart(
-        filteredCardKbChartData,
-        '🌐 Knowledge Base Card Shield',
-        '#c0392b', '#e67e22', '#2980b9'
+      {effectiveDocScopeId && hasDocData && renderChart(
+        filteredDocChartData,
+        `📄 ${documentName || 'Document'} IncRem Shield`,
+        '#e74c3c', '#f39c12', '#9b59b6'
       )}
 
       <div className="mt-4 text-sm rn-clr-content-secondary text-justify">
@@ -758,7 +796,7 @@ function PriorityShieldGraph() {
               - <b>Total Universe (Black dashed line):</b> The absolute maximum volume of material you have managed in this scope (Active + Dismissed).<br />
               - <b>Active Universe (Green line):</b> The physical volume of IncRems currently in your queue awaiting review.<br />
               - <b>Dismissed Area (Yellow shading):</b> The accumulated volume of material you have permanently marked with the `dismissed` powerup. The wider this area gets, the more backlog you've cleared!</li>
-            <li><b>For Cards:</b> It shows the <b>Universe Size (Dashed line)</b>, which is the total number of <i>cards</i> in scope (each card counts as one item — a Rem owning N cards contributes N to the universe). <i>Note:</i> History points recorded before 2026-05-27 used a per-Rem-with-cards universe; from that date onward the universe is per-card. Expect a one-time step in the Card shield charts on that date.</li>
+            <li><b>For Cards:</b> It shows the <b>Universe Size (Dashed line)</b>, which is the total number of <i>cards</i> in scope (each card counts as one item — a Rem owning N cards contributes N to the universe). <i>Note:</i> points stored before v1.0.65 (2026-08-28) used a per-Rem-with-cards universe, so expect a one-time step in the Card shield charts on the day you upgraded to it.</li>
           </ul>
         </div>
 

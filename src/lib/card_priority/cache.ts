@@ -1,12 +1,13 @@
+import { refreshAuthoritativeAggregatesFromCardRead } from '../authoritative_aggregates';
+import { cardLastSeenAt, cardTypeTag } from '../priority_review_document/cooling';
 import { Card, PluginRem, RNPlugin, RemId } from '@remnote/plugin-sdk';
 import { allCardPriorityInfoKey, cardPriorityCacheRefreshKey, orphanRemIdsKey } from '../consts';
 import {
   CardPriorityInfo,
   PrioritySource,
   calculateCardRemPercentilesFromCards,
-  CARD_PRIORITY_CODE,
-  PRIORITY_SLOT,
 } from './types';
+import { getRawCardPriorityString } from './slot_access';
 import { getCardPriority, calculateNewPriority, setCardPriority } from './index';
 import {
   writeCardPriorityCache,
@@ -206,6 +207,33 @@ export async function updateCardPriorityCache(
   }
 }
 
+/**
+ * Replaces an optimistic entry with one read from the Rem's real cards, once
+ * those cards exist. A command that writes the text a card is made from (Alt+Z)
+ * cannot read that card straight away, so it stores what it knows and calls
+ * this; each attempt waits longer, and the first one that finds cards wins.
+ */
+export function rereadCardPriorityCacheWhenCardsExist(
+  plugin: RNPlugin,
+  remId: RemId,
+  delaysMs: number[] = [2000, 5000, 15000]
+) {
+  const attempt = async (i: number) => {
+    try {
+      const rem = await plugin.rem.findOne(remId);
+      if (!rem) return;
+      if (((await rem.getCards()) || []).length > 0) {
+        await updateCardPriorityCache(plugin, remId);
+        return;
+      }
+    } catch (e) {
+      console.warn('[Cache] Deferred card re-read failed for Rem:', remId, e);
+    }
+    if (i + 1 < delaysMs.length) setTimeout(() => void attempt(i + 1), delaysMs[i + 1]);
+  };
+  setTimeout(() => void attempt(0), delaysMs[0]);
+}
+
 export async function flushCacheUpdatesNow(plugin: RNPlugin) {
   await flushCacheUpdates(plugin, true);
 }
@@ -379,8 +407,13 @@ const WARM_SELF_CHECK_SAMPLE = 200;
  * needed a slot read, and those are what the blob holds.
  *
  * Kept deliberately in step with getCardPriority's arithmetic — the `?? Infinity`
- * on nextRepetitionTime is what implicitly excludes disabled cards from due
- * counts, and diverging here would give warm and cold builds different due counts.
+ * on nextRepetitionTime is what implicitly excludes UNSCHEDULED cards from due
+ * counts, and diverging here would give warm and cold builds different numbers.
+ *
+ * Cards under a PAUSED deck are deliberately still counted as due: pausing
+ * defers work rather than cancelling it (see isPerCardDue). Note the cold path
+ * reads `rem.getCards()`, which returns [] for a paused rem, so it under-reports
+ * them — a pre-existing divergence, and the reason the warm path is preferred.
  */
 function buildInfoFromStore(
   remId: RemId,
@@ -402,6 +435,10 @@ function buildInfoFromStore(
     dueCards: cards.filter((c) => (c.nextRepetitionTime ?? Infinity) <= now).length,
     dueCardsOverdue: cards.filter((c) => (c.nextRepetitionTime ?? Infinity) <= startOfToday).length,
     cardsNextRep: cards.map((c) => c.nextRepetitionTime ?? null),
+    // From the same launch-time card.getAll() — see CardPriorityInfo.cardsLastSeen.
+    cardsLastSeen: cards.map((c) => cardLastSeenAt(c as any)),
+    cardsType: cards.map((c) => cardTypeTag((c as any).type)),
+    cardsCreatedAt: cards.map((c) => (typeof (c as any).createdAt === 'number' ? (c as any).createdAt : null)),
   };
 }
 
@@ -478,7 +515,7 @@ async function tryWarmPhase1(
     const mismatches = (
       await Promise.all(
         sample.map(async (rem) => {
-          const live = await rem.getPowerupProperty(CARD_PRIORITY_CODE, PRIORITY_SLOT);
+          const live = await getRawCardPriorityString(rem);
           const stored = store.byRem.get(rem._id)!;
           const liveNum = parseInt(live);
           return !isNaN(liveNum) && liveNum === stored.priority ? null : rem._id;
@@ -497,7 +534,9 @@ async function tryWarmPhase1(
 
   const infos: CardPriorityInfo[] = [];
   for (const rem of reusable) {
-    infos.push(buildInfoFromStore(rem._id, store.byRem.get(rem._id)!, cardsByRem.get(rem._id) || []));
+    infos.push(
+      buildInfoFromStore(rem._id, store.byRem.get(rem._id)!, cardsByRem.get(rem._id) || [])
+    );
   }
 
   const batchSize = 100;
@@ -528,10 +567,19 @@ async function tryWarmPhase1(
  *
  * @param plugin Plugin instance
  */
+export interface CardPriorityCacheLoad {
+  /**
+   * Phase 2 — the deferred pre-tagging of untagged rems with cards — which keeps
+   * running after the build itself resolves. `true` once it has finished (or
+   * there was nothing to defer), `false` if it hit a fatal error.
+   */
+  deferred: Promise<boolean>;
+}
+
 export async function loadCardPriorityCache(
   plugin: RNPlugin,
   opts?: { forceCold?: boolean }
-) {
+): Promise<CardPriorityCacheLoad> {
   console.log(
     `[Card Priority Cache] Starting cache build with deferred loading...` +
       (opts?.forceCold ? ' (FORCED COLD — ignoring the saved copy)' : '')
@@ -542,6 +590,11 @@ export async function loadCardPriorityCache(
   const allCards = await plugin.card.getAll();
   const cardRemIds = allCards ? _.uniq(allCards.map((c) => c.remId)) : [];
   console.log(`[Card Priority Cache] Found ${cardRemIds.length} rems with cards`);
+
+  // Same read, second use: the Practiced Queues summary statistics are rebuilt
+  // from these cards instead of from a card.getAll() of their own. Not awaited —
+  // it waits for the Incremental Rem cache and must not hold this build up.
+  void refreshAuthoritativeAggregatesFromCardRead(plugin, { cards: allCards || [] });
 
   // Bucket cards by rem once — replaces per-rem rem.getCards() inside getCardPriority.
   const cardsByRem = new Map<RemId, Card[]>();
@@ -572,7 +625,7 @@ export async function loadCardPriorityCache(
     console.log('[Card Priority Cache] No cards or cardPriority tags found. Setting empty cache.');
     await writeCardPriorityCache(plugin, []);
     await persistCardPriorityStore(plugin, [], Date.now(), Date.now());
-    return;
+    return { deferred: Promise.resolve(true) };
   }
 
   const phase1Start = Date.now();
@@ -618,8 +671,7 @@ export async function loadCardPriorityCache(
     if (enrichedWarm.length > 0) {
       await plugin.app.toast(`✅ Loaded ${enrichedWarm.length} card priorities in ${totalWarmTime}s`);
     }
-    await schedulePhase2(plugin, untaggedRemIds, totalUnique);
-    return;
+    return schedulePhase2(plugin, untaggedRemIds, totalUnique);
   }
 
   console.log(`[Card Priority Cache] Phase 1 (COLD) - Loading ${taggedForInheritanceRems.length} pre-tagged rems...`);
@@ -705,7 +757,7 @@ export async function loadCardPriorityCache(
     await plugin.app.toast(`✅ Loaded ${enrichedTaggedPriorities.length} pre-tagged card priorities in ${totalTime}s`);
   }
 
-  await schedulePhase2(plugin, untaggedRemIds, totalUnique);
+  return schedulePhase2(plugin, untaggedRemIds, totalUnique);
 }
 
 /**
@@ -719,14 +771,14 @@ async function schedulePhase2(
   plugin: RNPlugin,
   untaggedRemIds: string[],
   totalUnique: number
-) {
+): Promise<CardPriorityCacheLoad> {
   console.log(`[Card Priority Cache] Found ${untaggedRemIds.length} untagged rems with cards for deferred processing`);
 
   if (untaggedRemIds.length === 0) {
     console.log('[Card Priority Cache] All rems with cards are pre-tagged! No deferred processing needed.');
     await plugin.app.toast('✅ All card priorities loaded!');
     await plugin.storage.setSession('card_priority_cache_fully_loaded', true);
-    return;
+    return { deferred: Promise.resolve(true) };
   }
 
   const untaggedPercentage = Math.round((untaggedRemIds.length / totalUnique) * 100);
@@ -734,9 +786,12 @@ async function schedulePhase2(
     await plugin.app.toast(`⏳ Processing ${untaggedRemIds.length} untagged rems in background... `);
   }
 
-  setTimeout(async () => {
-    await processDeferredCardPriorityCache(plugin, untaggedRemIds);
-  }, 3000);
+  const deferred = new Promise<boolean>((resolve) => {
+    setTimeout(() => {
+      processDeferredCardPriorityCache(plugin, untaggedRemIds).then(resolve, () => resolve(false));
+    }, 3000);
+  });
+  return { deferred };
 }
 
 /**
@@ -745,7 +800,7 @@ async function schedulePhase2(
  * @param plugin Plugin instance
  * @param untaggedRemIds Array of rem IDs that don't have cardPriority tags yet
  */
-async function processDeferredCardPriorityCache(plugin: RNPlugin, untaggedRemIds: string[]) {
+async function processDeferredCardPriorityCache(plugin: RNPlugin, untaggedRemIds: string[]): Promise<boolean> {
   console.log(`[Card Priority Cache] Phase 2 (deferred) - Starting background processing of ${untaggedRemIds.length} untagged cards...`);
   const startTime = Date.now();
 
@@ -795,11 +850,29 @@ async function processDeferredCardPriorityCache(plugin: RNPlugin, untaggedRemIds
             // of manual priorities being lost when importing between knowledge bases —
             // that was traced to RemNote's importer and reproduced with the plugin
             // fully disabled (see the wiki Troubleshooting entry).
-            const existing = await getCardPriority(plugin, rem);
+
+            // The stored value, read alongside — it is what decides whether a
+            // write is redundant, and getCardPriority cannot answer that.
+            //
+            // getCardPriority never returns null for these rems: when nothing is
+            // stored it SYNTHESISES an entry from the ancestor walk (source
+            // 'inherited') or the default setting (source 'default'). Comparing
+            // that against calculateNewPriority compared one derivation with the
+            // same derivation, so `unchanged` was true for essentially every rem
+            // this phase exists to tag — the write never ran, the powerup was
+            // never applied, and the identical set of "untagged rems with cards"
+            // came back at the next startup. 'Update all inherited Card
+            // Priorities' leads its guard with `!hasPowerupTag` instead, which is
+            // why running it by hand did stick.
+            const [storedRaw, existing] = await Promise.all([
+              getRawCardPriorityString(rem),
+              getCardPriority(plugin, rem),
+            ]);
             const calculated = await calculateNewPriority(plugin, rem, existing);
 
             let cardInfo = existing;
             const unchanged =
+              !!storedRaw &&
               existing &&
               existing.priority === calculated.priority &&
               existing.source === calculated.source;
@@ -886,9 +959,11 @@ async function processDeferredCardPriorityCache(plugin: RNPlugin, untaggedRemIds
         );
       }, 2000);
     }
+    return true;
   } catch (error) {
     console.error('[Card Priority Cache] Phase 2 fatal error during background processing:', error);
     await plugin.app.toast('⚠️ Background processing encountered an error. Some cards may not be cached.');
+    return false;
   } finally {
     await plugin.storage.setSession('plugin_operation_active', false);
   }
