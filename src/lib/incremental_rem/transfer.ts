@@ -8,6 +8,8 @@ import {
   nextRepDateSlotCode,
   repHistorySlotCode,
   schedulerSlotCode,
+  rotationSlotCode, // FORK (Deviation 5)
+  firstAddedSlotCode, // FORK (Deviation 5)
   originalIncrementalDateSlotCode,
 } from '../consts';
 import { IncrementalRep, repCountsForStats } from './types';
@@ -225,6 +227,12 @@ export async function executeTransferIncRemToParent(
     const schedulerRaw = await source
       .getPowerupProperty(powerupCode, schedulerSlotCode)
       .catch(() => '');
+    // FORK (Deviation 5): the fork's own slots travel too — Rotation (the inherited
+    // rhythm) and First Added (when the rem first became incremental).
+    const [rotationRich, firstAddedRich] = await Promise.all([
+      source.getPowerupPropertyAsRichText(powerupCode, rotationSlotCode).catch(() => null),
+      source.getPowerupPropertyAsRichText(powerupCode, firstAddedSlotCode).catch(() => null),
+    ]);
 
     const storedHistory = tryParseJson(historyRaw);
     const sourceHistory: IncrementalRep[] = Array.isArray(storedHistory)
@@ -285,6 +293,17 @@ export async function executeTransferIncRemToParent(
     if (schedulerRaw) {
       slotWrites.push(
         destination.setPowerupProperty(powerupCode, schedulerSlotCode, [schedulerRaw])
+      );
+    }
+    // FORK (Deviation 5)
+    if (rotationRich && rotationRich.length > 0) {
+      slotWrites.push(
+        destination.setPowerupProperty(powerupCode, rotationSlotCode, rotationRich as RichTextInterface)
+      );
+    }
+    if (firstAddedRich && firstAddedRich.length > 0) {
+      slotWrites.push(
+        destination.setPowerupProperty(powerupCode, firstAddedSlotCode, firstAddedRich as RichTextInterface)
       );
     }
 

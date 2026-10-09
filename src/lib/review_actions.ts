@@ -199,6 +199,7 @@ export async function finishQueueIncRemTurn(
             date: Date.now(),
             scheduled: incRem.nextRepDate,
             interval: 0,
+            keepsInterval: true, // FORK (2026-10-10): "due today" is a one-off, not the item's rhythm
             reviewTimeSeconds: recordedSeconds,
             eventType: 'rep',
             // Same guard as the scheduler: a 'fallback' priority is a placeholder,
@@ -208,11 +209,16 @@ export async function finishQueueIncRemTurn(
         await stampNoteAndContext(plugin, rem, entry);
 
         const newHistory = [...(incRem.history || []), entry];
-        await updateSRSDataForRem(plugin, incRemId, nextRepDate, newHistory);
+        // FORK (2026-08-14 #9 class): a failed write must not look like a closed turn.
+        const persisted = await updateSRSDataForRem(plugin, incRemId, nextRepDate, newHistory);
+        if (!persisted) {
+            await plugin.app.toast('Could not record that review — the item stays as it was.');
+            return null;
+        }
         await updateIncrementalRemCache(plugin, {
             ...incRem,
             nextRepDate,
-            history: newHistory,
+            history: persisted,
         });
     }
 
@@ -299,6 +305,7 @@ export async function finishEditorReviewTurn(
                 date: Date.now(),
                 scheduled,
                 interval: mode === 'due' ? 0 : intervalDays,
+                ...(mode === 'due' ? { keepsInterval: true } : {}), // FORK (2026-10-10): one-off, not the rhythm
                 wasEarly: daysDifference < 0,
                 daysEarlyOrLate: Math.round(daysDifference * 10) / 10,
                 reviewTimeSeconds: recordedSeconds,
@@ -314,8 +321,13 @@ export async function finishEditorReviewTurn(
                     : dateOverride ?? Date.now() + intervalDays * 24 * 60 * 60 * 1000;
         }
 
-        await updateSRSDataForRem(plugin, timer.remId, nextRepDate, history);
-        await updateIncrementalRemCache(plugin, { ...incRem, nextRepDate, history });
+        // FORK (2026-08-14 #9 class): a failed write must not look like a closed turn.
+        const persisted = await updateSRSDataForRem(plugin, timer.remId, nextRepDate, history);
+        if (!persisted) {
+            await plugin.app.toast('Could not record that review — nothing was written.');
+            return null;
+        }
+        await updateIncrementalRemCache(plugin, { ...incRem, nextRepDate, history: persisted });
 
         console.log(
             `[ReviewActions] Left editor review of ${timer.remId} (${mode}, origin ${timer.origin}): ` +

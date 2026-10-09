@@ -37,7 +37,12 @@ export function NextRepTime(props: NextRepTimeProps): React.ReactElement {
   const plugin = usePlugin();
 
   React.useEffect(() => {
+    // FORK (bb758b8 sync): the widget is not remounted per card. Clear the scheduler
+    // state first so a Rotation item never inherits the previous card's chip, and
+    // drop a late result from the previous item (the bug-hunt #47 pattern).
+    let cancelled = false;
     const effect = async () => {
+      setScheduler(undefined);
       const rotMs = getRotationIntervalMs(props.rem.rotation);
       if (rotMs !== null) {
         setNextTime(Date.now() + rotMs);
@@ -46,12 +51,16 @@ export function NextRepTime(props: NextRepTimeProps): React.ReactElement {
 
       const inLookbackMode = !!(await plugin.queue.inLookbackMode());
       const nt = await getNextSpacingDateForRem(plugin, props.rem.remId, inLookbackMode);
+      if (cancelled) return;
       if (nt) {
         setNextTime(nt.newNextRepDate);
         setScheduler(nt.scheduler);
       }
     };
     effect();
+    return () => {
+      cancelled = true;
+    };
   }, [props.rem.remId, props.rem.rotation]);
 
   const duration = dayjs.duration(dayjs(nextTime).diff(dayjs()));

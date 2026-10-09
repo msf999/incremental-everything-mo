@@ -528,8 +528,10 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       // In the queue, the source is what is on screen. Advance off it in the same
       // tick its powerup is removed (executeTransferIncRemToParent does that), and
       // flag the dashboard refocus BEFORE the destructive call, like Dismiss does.
-      const currentIncRemId = await plugin.storage.getSession<string>(currentIncRemKey);
-      const advanceQueue = isQueue && currentIncRemId === source._id;
+      // FORK (bb758b8 sync, upstream bug): decide from the live queue turn, not the raw
+      // session key, which still names the last injected IncRem on a flashcard turn.
+      const { incRemTurnRemId } = await resolveQueueCommandTarget(plugin);
+      const advanceQueue = isQueue && incRemTurnRemId === source._id;
       if (advanceQueue) {
         await requestQueueDashboardRefocus(plugin, 'transfer-to-parent-command');
       }

@@ -25,6 +25,7 @@ import { readRawPdfState, writeRawPdfState } from '../pdf_state';
 import { getNextSpacingDateForRem, updateSRSDataForRem } from '../scheduler';
 import { getInitialIntervalForRem } from '../scheduler_choice';
 import { IncrementalRem, IncrementalRep, UNREADABLE_PRIORITY_FALLBACK, priorityStampFor } from './types';
+import { FORK_FEATURES } from '../fork_gates';
 import { tryParseJson, getDailyDocReferenceForDate, sleep } from '../utils';
 import { getInitialPriority } from '../priority_inheritance';
 import { stampNoteAndContext } from '../history_notes';
@@ -136,39 +137,43 @@ export async function setIncRemPriority(
   priority: number,
   options?: SetIncRemPriorityOptions
 ): Promise<void> {
-  const recordHistory = options?.recordHistory !== false;
+  // FORK (2026-10-10): priority-change history is an option, off by default.
+  const recordHistory = FORK_FEATURES.priorityChangeHistory && options?.recordHistory !== false;
+
+  // FORK (bb758b8 sync, upstream bug): the schema bounds priority to 0-100, and one
+  // out-of-range value makes IncrementalRem.safeParse fail — the rem vanishes
+  // (2026-08-14 #10). Refuse garbage, clamp the rest.
+  if (!Number.isFinite(priority)) {
+    console.error('[IncRem] refusing a non-finite priority', rem._id, priority);
+    return;
+  }
+  const newPriority = Math.min(100, Math.max(0, priority));
 
   // The state being replaced, read BEFORE the write so the entry can show the
-  // transition rather than just the destination.
-  //
-  // Two direct slot reads rather than a getIncrementalRemFromRem: this runs on
-  // every priority write, a batch tool doing hundreds in a row included, and
-  // that helper resolves the Next Rep Date's Daily Doc reference — an extra rem
-  // lookup per call for a number this entry does not need (the nextRepMs stamp
-  // already in the history is the same one). Both are `.catch`ed: a rem whose
-  // slots do not resolve still gets its priority written, it just gets a
-  // history entry with no "from" value.
+  // transition rather than just the destination. `.catch`ed: a rem whose slot
+  // does not resolve still gets its priority written, it just gets a history
+  // entry with no "from" value.
   const before = recordHistory
-    ? await Promise.all([
-        rem.getPowerupProperty(powerupCode, prioritySlotCode).catch(() => null),
-        rem.getPowerupProperty(powerupCode, repHistorySlotCode).catch(() => null),
-      ])
+    ? await rem.getPowerupProperty(powerupCode, prioritySlotCode).catch(() => null)
     : null;
 
-  await rem.setPowerupProperty(powerupCode, prioritySlotCode, [priority.toString()]);
+  await rem.setPowerupProperty(powerupCode, prioritySlotCode, [newPriority.toString()]);
 
-  if (before) {
-    const parsed = parseInt(String(before[0] ?? '').trim(), 10);
-    const previousPriority = Number.isNaN(parsed) ? undefined : parsed;
-    if (previousPriority !== priority) {
-      const history = tryParseJson(before[1]);
-      await appendIncRemPriorityChange(
-        rem,
-        Array.isArray(history) ? history : [],
-        previousPriority,
-        priority,
-        options?.event ?? 'other'
-      );
+  if (recordHistory) {
+    const parsed = parseInt(String(before ?? '').trim(), 10);
+    const previousPriority = Number.isNaN(parsed) ? undefined : Math.min(100, Math.max(0, parsed));
+    if (previousPriority !== newPriority) {
+      // FORK (bb758b8 sync, upstream bug): the History slot is read AFTER the priority
+      // write — the shortest window for a concurrent review to be lost — and through
+      // a reader that tells "empty" from "unreadable". Upstream's `.catch(() => null)`
+      // plus `Array.isArray(history) ? history : []` rewrote an unreadable slot as []
+      // and WIPED the rem's history; an unreadable slot now skips the marker instead.
+      const history = await readHistorySlot(rem);
+      if (history === 'unreadable') {
+        console.warn('[IncRem] History slot unreadable — priority change not recorded', rem._id);
+      } else {
+        await appendIncRemPriorityChange(rem, history, previousPriority, newPriority, options?.event ?? 'other');
+      }
     }
   }
 
@@ -189,8 +194,8 @@ export async function setIncRemPriority(
  * is the nextRepMs invariant — the LAST entry must carry the most recent
  * next-rep stamp, because `getIncrementalRemFromRem` falls back to it when the
  * Daily Doc reference does not round-trip. Appending an unstamped entry would
- * quietly strip that fallback, so the stamp is carried forward, and it doubles
- * as this entry's `scheduled` value.
+ * quietly strip that fallback, so the stamp is carried forward as `nextRepMs`
+ * (FORK: not as `scheduled`, which is the write time).
  *
  * Coalesces on the same terms as the card-priority history: a second change
  * from the SAME gesture within PRIORITY_HISTORY_COALESCE_MS replaces the first
@@ -247,7 +252,11 @@ async function appendIncRemPriorityChange(
 
     const entry: IncrementalRep = {
       date: now,
-      scheduled: lastStamp ?? now,
+      // FORK (bb758b8 sync, upstream bug): `scheduled` is the write time. Upstream used
+      // the carried nextRepMs stamp — a FUTURE date — which made every marker look like
+      // an early review to the same-day / early-response logic. The stamp still travels
+      // as nextRepMs below, which is the invariant that actually matters.
+      scheduled: now,
       priority,
       // Keep the burst's ORIGINAL starting priority when collapsing into the
       // entry we are replacing.
@@ -262,6 +271,23 @@ async function appendIncRemPriorityChange(
     await rem.setPowerupProperty(powerupCode, repHistorySlotCode, [JSON.stringify(newHistory)]);
   } catch (err) {
     console.error('[IncRem] failed to record a priority change in history', err);
+  }
+}
+
+/**
+ * FORK (bb758b8 sync): reads the raw History slot, distinguishing an EMPTY slot
+ * (a valid empty history) from an UNREADABLE one (a failed read or unparsable
+ * JSON). Never throws. setIncRemPriority uses it so a transient read failure can
+ * never be rewritten as an empty history.
+ */
+async function readHistorySlot(rem: PluginRem): Promise<IncrementalRep[] | 'unreadable'> {
+  try {
+    const raw = await rem.getPowerupProperty(powerupCode, repHistorySlotCode);
+    if (raw === undefined || raw === null || String(raw).trim() === '') return [];
+    const parsed = tryParseJson(raw);
+    return Array.isArray(parsed) ? (parsed as IncrementalRep[]) : 'unreadable';
+  } catch {
+    return 'unreadable';
   }
 }
 
@@ -358,7 +384,13 @@ export async function updateReviewRemData(
   // entry gains `nextRepMs` inside updateSRSDataForRem, and callers put this
   // straight into the session cache — returning `newHistory` left the cache and
   // the rem disagreeing about that field.
-  return { ...nextSpacing, newNextRepDate: nextRepDateToUse, newHistory: saved };
+  // FORK: newInterval mirrors the persisted entry (rotation / overrides rewrite it).
+  return {
+    ...nextSpacing,
+    newNextRepDate: nextRepDateToUse,
+    newHistory: saved,
+    newInterval: saved[saved.length - 1]?.interval ?? nextSpacing.newInterval,
+  };
 }
 
 // Request that the Practiced Queues dashboard be restored in the right sidebar
@@ -526,12 +558,25 @@ export async function rescheduleWithoutReview(
     // the item in the queue rather than silently consuming it.
     // FORK (#43): write the rem's CURRENT history, not the Zod-stripped in-memory copy.
     const freshHistory = await readRemHistory(plugin, incRem.remId);
-    const saved = await updateSRSDataForRem(
-      plugin,
-      incRem.remId,
-      targetDay,
-      freshHistory ?? incRem.history ?? []
-    );
+    const base = [...(freshHistory ?? incRem.history ?? [])];
+    // FORK (bb758b8 sync): the Multiplier scheduler grows the next interval from the
+    // last entry's `interval`, and updateSRSDataForRem re-stamps that entry's
+    // nextRepMs to the skip target. A legacy entry with no `interval` would then read
+    // as the skip's length next time — pin the interval the item actually had, so a
+    // skip never changes its rhythm.
+    const last = base[base.length - 1];
+    if (
+      last &&
+      typeof last.interval !== 'number' &&
+      typeof last.nextRepMs === 'number' &&
+      typeof last.date === 'number'
+    ) {
+      base[base.length - 1] = {
+        ...last,
+        interval: Math.max(1, Math.round((last.nextRepMs - last.date) / MS_PER_DAY)),
+      };
+    }
+    const saved = await updateSRSDataForRem(plugin, incRem.remId, targetDay, base);
     if (!saved) {
       await plugin.app.toast('Could not reschedule that item — it stays due. Please try again.');
       return;
@@ -823,7 +868,16 @@ async function getInitialRotation(
   rem: PluginRem
 ): Promise<string> {
   let currentParentId = rem.parent;
+  // FORK (bb758b8 sync): the cycle/depth guard the other ancestor walks got in the
+  // 2026-08-14 #12 fix — a cyclic parent chain must not hang Make-Incremental.
+  const visited = new Set<string>();
+  let depth = 0;
   while (currentParentId) {
+    if (visited.has(currentParentId) || ++depth > 100) {
+      console.warn('[getInitialRotation] ancestor walk stopped (cycle or depth > 100) from', rem._id);
+      break;
+    }
+    visited.add(currentParentId);
     const parent = await plugin.rem.findOne(currentParentId);
     if (!parent) break;
 
