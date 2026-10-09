@@ -137,10 +137,10 @@ async function onActivate(plugin: ReactRNPlugin) {
   // callback, and this is the same realm registerCallbacks runs in.
   registerPrefetchTrackers(plugin);
   // Long-polls the local Logos helper while the Logos Bridge setting is on.
-  registerLogosBridge(plugin);
+  if (FORK_FEATURES.pdfReader) registerLogosBridge(plugin); // FORK (Deviation 13): reading-source integration
   // Publishes this window's open PDFs/articles so a command run in another
   // RemNote window can find them.
-  registerWindowSourcesPresence(plugin);
+  if (FORK_FEATURES.pdfReader) registerWindowSourcesPresence(plugin); // FORK (Deviation 13): feeds only pin-source-quote
   await registerWidgets(plugin);
   await registerForkWidgets(plugin); // FORK (Deviation 13): combined History tab
 
@@ -230,6 +230,7 @@ async function onActivate(plugin: ReactRNPlugin) {
   // is off, light mode because the build itself is what light mode exists to avoid.
   const useLightMode = await shouldUseLightMode(plugin);
   const mayBuildCardPriorityCache =
+    FORK_FEATURES.cardSurface && // FORK (Deviation 13): the card-priority engine is off here
     !useLightMode && (await getIESetting(plugin, enableFlashcardPrioritisationId));
 
   let cardCacheSettled: Promise<void>;
@@ -250,7 +251,10 @@ async function onActivate(plugin: ReactRNPlugin) {
     pretaggingSettled = startup.track('pretagging', cardCacheLoad.then((load) => load.deferred));
     // Once the cache has finished loading, judge cooling for the shield, so the
     // first queue of this RemNote run already excludes cooling Rems.
-    coolingScanSettled = startup.track('coolingScan', registerStartupShieldCoolingScan(plugin));
+    // FORK (Deviation 13): shield cooling belongs to the disabled shields.
+    coolingScanSettled = FORK_FEATURES.shields
+      ? startup.track('coolingScan', registerStartupShieldCoolingScan(plugin))
+      : (startup.settle('coolingScan', 'skipped'), Promise.resolve());
 
   } else {
     cardCacheSettled = pretaggingSettled = coolingScanSettled = Promise.resolve();
@@ -276,7 +280,8 @@ async function onActivate(plugin: ReactRNPlugin) {
   // cooling scan too: both publish cooling, and the scan — which alone records the
   // Rems held back by a cooling ancestor for the shield — skips itself once any
   // cooling has been published. Not in Light Mode, for the same reason as at exit.
-  if (useLightMode || !(await getIESetting(plugin, autoRefreshPriorityQueueId))) {
+  // FORK (Deviation 13): the Priority Queue is off; never refresh it at startup.
+  if (!FORK_FEATURES.priorityReviewDocs || useLightMode || !(await getIESetting(plugin, autoRefreshPriorityQueueId))) {
     startup.settle('priorityQueueRefresh', 'skipped');
   } else {
     startup.track(
@@ -291,7 +296,8 @@ async function onActivate(plugin: ReactRNPlugin) {
   // place. Deferred and deliberately not awaited: it ends in a modal and a KB-wide
   // scan, neither of which belongs on the activation path. It is a no-op unless
   // the setting actually changed since the last launch of this KB.
-  setTimeout(() => {
+  // FORK (Deviation 13): card-priority engine off — no opt-out dialog, ever.
+  if (FORK_FEATURES.cardSurface) setTimeout(() => {
     checkFlashcardPrioritisationOptOut(plugin).catch((err) =>
       console.warn('Flashcard prioritisation opt-out check failed', err)
     );
@@ -303,11 +309,17 @@ async function onActivate(plugin: ReactRNPlugin) {
   // a live rendering bug in the user's tables, not a preference — with a "never
   // ask again" on the decline path. Deferred well past the opt-out prompt so two
   // modals can never land together, and a no-op in light mode.
-  const hiddenSlotCheck = new Promise<void>((resolve) => setTimeout(resolve, 20000)).then(() =>
-    checkCardPriorityHiddenSlotMigration(plugin)
-  );
-  hiddenSlotCheck.catch((err) => console.warn('Card priority hidden-slot migration check failed', err));
-  startup.track('hiddenSlotCheck', hiddenSlotCheck);
+  // FORK (Deviation 13): card-priority engine off — nothing to migrate; the light-mode
+  // pin used to be the only thing keeping this dialog away.
+  if (FORK_FEATURES.cardSurface) {
+    const hiddenSlotCheck = new Promise<void>((resolve) => setTimeout(resolve, 20000)).then(() =>
+      checkCardPriorityHiddenSlotMigration(plugin)
+    );
+    hiddenSlotCheck.catch((err) => console.warn('Card priority hidden-slot migration check failed', err));
+    startup.track('hiddenSlotCheck', hiddenSlotCheck);
+  } else {
+    startup.settle('hiddenSlotCheck', 'skipped');
+  }
 
   // The band stylesheets are normally re-registered warm by the caches' own
   // bumps. Two paths never get there: an IncRem cache with no IncRems (which

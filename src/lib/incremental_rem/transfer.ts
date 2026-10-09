@@ -11,6 +11,7 @@ import {
   originalIncrementalDateSlotCode,
 } from '../consts';
 import { IncrementalRep, repCountsForStats } from './types';
+import { FORK_FEATURES } from '../fork_gates';
 import { getIncrementalRemFromRem, registerInKnownHostIndexes } from './index';
 import { updateIncrementalRemCache, removeIncrementalRemCache } from './cache';
 import { mergeHistoryFromDismissed } from '../dismissed';
@@ -332,7 +333,7 @@ export async function executeTransferIncRemToParent(
       destination._id
     );
     if (carriedPdfState) {
-      slotWrites.push(writeRawPdfState(destination, powerupCode, carriedPdfState));
+      if (FORK_FEATURES.pdfReader) slotWrites.push(writeRawPdfState(destination, powerupCode, carriedPdfState)); // FORK (Deviation 13)
     }
 
     await Promise.all(slotWrites);

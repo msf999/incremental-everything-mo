@@ -269,7 +269,7 @@ export async function finishEditorReviewTurn(
             const pdfRem = await getActivePdfForIncRem(plugin, rem);
             if (pdfRem && recordedSeconds > 0) {
                 const page = await getIncrementalReadingPosition(plugin, timer.remId, pdfRem._id);
-                await addPageToHistory(plugin, timer.remId, pdfRem._id, page || 1, recordedSeconds);
+                if (FORK_FEATURES.pdfReader) await addPageToHistory(plugin, timer.remId, pdfRem._id, page || 1, recordedSeconds); // FORK (Deviation 13)
             }
         } catch (err) {
             console.warn('[ReviewActions] Could not sync reading time to the PDF host', err);

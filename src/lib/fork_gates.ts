@@ -103,6 +103,17 @@ export const FORK_FEATURES = {
   /** Copy/Paste Rem Sources — PDF-workflow helpers (copy also feeds the
       disabled PDF Control Panel's known-rem index). */
   remSourceCopyPaste: false,
+  /** Upstream's priority-change history (v1.0.77): a 'priorityChange' entry in the
+      rem's Incremental history on every priority edit. Off: setIncRemPriority writes
+      the slot only (recordHistory forced false). Option, off — owner decision 2026-10-10. */
+  priorityChangeHistory: false,
+  /** Localize media (store linked images/audio in RemNote) and Cycle Image Size:
+      manual editor utilities. Option, off — owner decision 2026-10-10. */
+  mediaTools: false,
+  /** Review with Timer: the editor_review / editor_review_timer widgets, the
+      review-increm-in-editor command (Ctrl+Shift+E) and the 📝 accordion button.
+      Option, off — owner decision 2026-10-10. */
+  editorReviewTimer: false,
 } as const;
 
 /**
@@ -264,6 +275,13 @@ const GROUPS: GateGroup[] = [
       'pdf-control-panel',
       'open-source-in-popup',
       'open-source-in-floating',
+      // bb758b8 sync: reading-source tooling that arrived with upstream's PDF work
+      'open-in-logos',
+      'tag-rems-with-images',
+      'remove-image-tags',
+      'pin-source-quote',
+      'ai-transcribe-highlight',
+      'restore-highlight-before-ai',
     ],
     widgets: [
       'page-range',
@@ -271,9 +289,11 @@ const GROUPS: GateGroup[] = [
       'pdf_bookmark_popup',
       'pdf_source_popup',
       'pdf_source_floating',
+      'image_scan_popup',
+      'pin_source_views_popup',
     ],
     menuItems: ['pdf_control_panel_menuitem'],
-    css: ['pdf-inc-highlight-styling', 'highlight-priority-band-badges'],
+    css: ['pdf-inc-highlight-styling', 'highlight-priority-band-badges', 'has-image-tag-hide', 'pin-reference-styling'],
   },
   {
     enabled: FORK_FEATURES.readPoints,
@@ -287,9 +307,16 @@ const GROUPS: GateGroup[] = [
       'refresh-card-priority-cache',
       'cleanup-card-priority',
       'sanitize-rogue-card-priority-tags',
+      // bb758b8 sync
+      'migrate-card-priority-hidden-slot',
+      'undo-card-priority-hidden-slot',
+      'hideFrontExtrasCmd', // Hide Front Extras: a flashcard-only queue-display tweak
     ],
-    widgets: ['card_info_bar', 'batch_card_priority'],
+    // flashcard_repetition_history: the card history popup (Forgetting Curve, FSRS
+    // table) — denied 2026-10-10; repetition_history.tsx hides the button that opened it.
+    widgets: ['card_info_bar', 'batch_card_priority', 'flashcard_repetition_history'],
     menuItems: ['batch_card_priority_menuitem'],
+    css: ['incremental-everything-card-info-bar-dock'],
   },
   {
     enabled: FORK_FEATURES.shields,
@@ -308,11 +335,23 @@ const GROUPS: GateGroup[] = [
   },
   {
     enabled: FORK_FEATURES.upstreamQueueToolbarPriority,
-    widgets: ['queue_toolbar_priority'],
+    // queue_beautiful_bar carries the same badge in RemNote's Beautiful queue variant.
+    widgets: ['queue_toolbar_priority', 'queue_beautiful_bar'],
+    css: ['queue-beautiful-bar'],
   },
   {
     enabled: FORK_FEATURES.clozeTools,
-    commands: ['create-cloze-deletion', 'create-cloze-deletion-with-priority'],
+    commands: [
+      'create-cloze-deletion',
+      'create-cloze-deletion-with-priority',
+      // True or False cards (bb758b8 sync): card authoring, so they live with the clozes;
+      // their always-on cluster tracker is guarded on this flag in widgets/index.tsx.
+      'trueFalseTrueCmd',
+      'trueFalseFalseCmd',
+      'trueFalseConvertTagsCmd',
+      'trueFalseClearCmd',
+    ],
+    css: ['true-false-cards', 'true-false-cluster-card'],
   },
   {
     enabled: FORK_FEATURES.outlineTools,
@@ -329,6 +368,7 @@ const GROUPS: GateGroup[] = [
       'break-inline-list-to-children',
       'restore-list-rem',
       'text-case-converter',
+      'convert-extracted-markup', // bb758b8 sync: PDF-extraction markup clean-up
     ],
     widgets: [
       'outline_restructure_preview',
@@ -357,17 +397,28 @@ const GROUPS: GateGroup[] = [
       'jump-to-rem-by-id',
       'test-mobile-detection',
       'debug_clear_flashcard_history',
+      // bb758b8 sync: flashcard maintenance + diagnostics (owner: clutter)
+      'card-enablement-audit',
+      'delete-empty-ecd-rems',
+      'debug-probe-ecd',
+      'toggle-priority-band-logging',
     ],
-    widgets: ['debug', 'jump_to_rem_input'],
+    widgets: ['debug', 'jump_to_rem_input', 'card_enablement_audit', 'empty_ecd_popup'],
+    menuItems: ['card_enablement_audit_menuitem'],
   },
   {
     enabled: FORK_FEATURES.priorityReviewDocs,
-    commands: ['create-priority-review'],
+    // bb758b8 sync: upstream rewrote this as the 'Priority Queue' (Learn / clean) and
+    // added a sidebar hub whose main button drives it, plus queue cooling that the
+    // engine depends on — all of it is this subsystem. Guards in widgets/index.tsx and
+    // register/events.ts use the same flag.
+    commands: ['create-priority-review', 'clean-priority-review', 'practice-priority-queue-kb', 'ie_show_plugin_hub'],
     // review_document_creator was deleted upstream (5b5ab31, bb758b8 sync); its successor
     // is priority_queue_popup. webpack.config.js asserts every denied widget id has a
     // source file, so a stale id here would silently rebuild ALL widget bundles.
-    widgets: ['priority_queue_popup', 'prd_cleanup_popup', 'priority_review_graph'],
+    widgets: ['priority_queue_popup', 'prd_cleanup_popup', 'priority_review_graph', 'plugin_hub', 'onboarding_tips'],
     menuItems: ['create_priority_review_menuitem', 'create_priority_review_queue_menuitem'],
+    css: ['sidebar-end-padding', 'learn-new-cooling-mask'],
   },
   {
     // The three upstream history tabs are replaced by the fork's combined tab.
@@ -376,12 +427,22 @@ const GROUPS: GateGroup[] = [
   },
   {
     enabled: FORK_FEATURES.historyImport,
-    commands: ['import-incremental-history'],
+    // + transfer-increm-to-parent (bb758b8 sync): moves an IncRem's data to its parent.
+    commands: ['import-incremental-history', 'transfer-increm-to-parent'],
     widgets: ['import_increm_history'],
   },
   {
     enabled: FORK_FEATURES.remSourceCopyPaste,
     commands: ['copy-rem-sources', 'paste-rem-sources'],
+  },
+  {
+    enabled: FORK_FEATURES.mediaTools,
+    commands: ['localize-external-media', 'localize-external-media-tree', 'cycle-image-size'],
+  },
+  {
+    enabled: FORK_FEATURES.editorReviewTimer,
+    commands: ['review-increm-in-editor'],
+    widgets: ['editor_review', 'editor_review_timer'],
   },
 ];
 

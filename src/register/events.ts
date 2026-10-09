@@ -398,7 +398,7 @@ export function registerQueueExitListener(
     // Off the exit path: the delay keeps the bridge free for RemNote's own
     // teardown, and the guard is skipped because this IS the moment the queue
     // closes — the URL may still read /flashcards for a beat.
-    void schedulePriorityQueueAutoRefresh(plugin, exitQueueId);
+    if (FORK_FEATURES.priorityReviewDocs) void schedulePriorityQueueAutoRefresh(plugin, exitQueueId); // FORK (Deviation 13)
   });
 }
 
@@ -743,7 +743,7 @@ export function registerQueueEnterListener(
     // background: the live shield watches that data and corrects itself when it
     // lands. No-op once any scan has published, in Light Mode, or while the card
     // cache is still loading.
-    void ensureShieldCoolingScanned(plugin, 'queue entry');
+    if (FORK_FEATURES.shields) void ensureShieldCoolingScanned(plugin, 'queue entry'); // FORK (Deviation 13)
 
     const performanceMode = await getPerformanceMode(plugin);
     const dueIncRemStats = await calculateDueIncRemStats(
@@ -1601,7 +1601,9 @@ export function registerEventListeners(
   if (FORK_FEATURES.sessionAnalytics) registerQueueSessionTracking(plugin); // FORK (Deviation 13)
   registerDrillCardRatingListener(plugin);
   registerNativeDrillListeners(plugin);
-  registerQueueCoolingListeners(plugin);
+  // FORK (Deviation 13): cooling in RemNote's own queues is part of the Priority Queue
+  // engine (its Learn New path has no setting at all) — off with that subsystem.
+  if (FORK_FEATURES.priorityReviewDocs) registerQueueCoolingListeners(plugin);
 
   if (FORK_FEATURES.pdfReader) registerHoveredReferenceTracking(plugin); // FORK (Deviation 13): feeds only the source popups
   // FORK (2026-08-14, bug-hunt #50): this listener's whole job is to reopen the

@@ -709,7 +709,7 @@ function EditorReviewTimer() {
 
     try {
       // Cascade priority inheritance to children (same as Dismiss in answer_buttons)
-      await handleCardPriorityInheritance(plugin, currentRem, currentIncRem);
+      if (FORK_FEATURES.cardSurface) await handleCardPriorityInheritance(plugin, currentRem, currentIncRem); // FORK (Deviation 13, T4)
 
       // Build the final history entry for this review session
       const reviewTimeSeconds = Math.round(elapsedMs / 1000);
