@@ -238,7 +238,7 @@ export const IE_SETTINGS_DEFAULTS: IESettings = {
 
   [collapseQueueTopBar]: false,
   [displayPriorityShieldId]: true,
-  [deferSpoilerIncRemsId]: true,
+  [deferSpoilerIncRemsId]: false, // FORK (2026-10-10): upstream defaults ON; off here, row shown in General → Queue
   [autoRefreshPriorityQueueId]: true,
   [coolingIntervalPercentId]: 5,
   [coolingMinDaysId]: 1,

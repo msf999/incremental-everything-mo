@@ -158,7 +158,7 @@ export const FORK_HIDDEN_IE_SETTINGS: ReadonlySet<string> = new Set([
 export const FORK_IE_GROUPS: Record<string, { label: string; blurb: string }> = {
   general: {
     label: 'General',
-    blurb: 'What the queue and the editor show. Display only — no effect on scheduling.',
+    blurb: 'What the queue and the editor show. Display only — except "Hold Back Spoiler IncRems", which changes what the queue serves.',
   },
   priorityScheduling: {
     label: 'Priority & Scheduling',
@@ -191,6 +191,7 @@ export const FORK_IE_LAYOUT: ReadonlyArray<{
       'queue-toolbar-priority-mode',
       'collapse-queue-top-bar',
       'isolated-queue-view-mode',
+      'defer-spoiler-increms',
       'priorityEditorDisplayMode',
       'showLeftBorderForIncRems',
       'showDismissedIndicator',
@@ -205,6 +206,9 @@ export const FORK_IE_LAYOUT: ReadonlyArray<{
           'queue-toolbar-priority-mode',
           'collapse-queue-top-bar',
           'isolated-queue-view-mode',
+          // bb758b8 sync: upstream's spoiler protection (holds back an IncRem whose own
+          // cards are due). Default OFF here (lib/settings.ts), shown so it can be tried.
+          'defer-spoiler-increms',
         ],
       },
       {
@@ -220,10 +224,11 @@ export const FORK_IE_LAYOUT: ReadonlyArray<{
     ],
   },
   {
-    // Priority first, then scheduling. Within Scheduling: Initial Interval
-    // (applies to both curves), then the scheduler selector, then only the
-    // selected curve's parameters — upstream's `showWhen` rules hide Multiplier
-    // while Beta is on and the two Beta params while it is off.
+    // Priority first, then scheduling. Within Scheduling: Initial Interval (the base
+    // both schedulers grow from), then the 'Default Scheduler' switch (Multiplier /
+    // Saturating Curve, since bb758b8), then the three parameters — upstream removed
+    // the `showWhen` rules, so all three rows always show. The per-type scheduler and
+    // initial-interval rows stay out (defaults = the general setting).
     group: 'priorityScheduling',
     ids: [
       'default-priority',
@@ -242,8 +247,8 @@ export const FORK_IE_LAYOUT: ReadonlyArray<{
       {
         heading: 'Scheduling',
         ids: [
-          // Initial Interval first: it applies to BOTH schedulers, so it reads
-          // as a property of scheduling itself rather than of the chosen curve.
+          // Initial Interval first: it applies to BOTH schedulers, so it reads as a
+          // property of scheduling itself rather than of the chosen curve.
           'initial-interval',
           'beta-scheduler-enabled',
           'multiplier',
@@ -564,7 +569,7 @@ export function installForkGates(plugin: ReactRNPlugin) {
     // by typing one word.
     if (typeof command?.name === 'string' && command.name.length > 0) {
       const ov = (command.id && FORK_COMMAND_OVERRIDES[command.id]) || {};
-      const bare = (ov.name ?? command.name).replace(/^Incremental Everything:\s*/i, '');
+      const bare = (ov.name ?? command.name).replace(/^Incremental (?:Everything|RemNote):\s*/i, '');
       command = {
         ...command,
         name: bare.startsWith('Incremental: ') ? bare : `Incremental: ${bare}`,
@@ -612,11 +617,11 @@ export async function registerForkSettingsSignpost(plugin: ReactRNPlugin) {
       id: 'fork-more-settings-pointer',
       title: 'Settings have moved',
       description:
-        'All Incremental Everything settings are now in the plugin\'s own settings window. ' +
-        'Open it from the omnibar: "Incremental: Settings" (or type: ies).',
+        'All of this plugin\'s settings live in its own settings window. ' +
+        'Open it from the omnibar: "Incremental: Settings" (or type: is).',
       defaultValue: 'info',
       options: [
-        { key: 'info', label: 'Open via omnibar → "Incremental: Settings" (ies)', value: 'info' },
+        { key: 'info', label: 'Open via omnibar → "Incremental: Settings" (is)', value: 'info' },
       ],
     });
   } catch (e) {
