@@ -19,3 +19,6 @@ mcp.json
 # bugs found in upstream while maintaining it.
 CLAUDE.md
 UPSTREAM_ISSUES.md
+
+# Local-only upstream-sync analysis bundles (reports, plans, diffs) — never published
+.claude/sync-*/
