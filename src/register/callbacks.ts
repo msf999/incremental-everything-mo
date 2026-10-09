@@ -56,13 +56,13 @@ const QUEUE_LAYOUT_FIX_CSS = `
      the iframe falls back to its min-h-[500px]. The layout is already a min-h-full
      flex column (ending in the spacer that clears the overlaid answer buttons), so
      growing these two lets the card fill down to the buttons. */
-  .queue-beautiful-box:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]) .beautiful-queue-card-scroll-stage {
+  .queue-beautiful-box:has(${pluginIframeSelector}[src*="widgetName=queue&"]) .beautiful-queue-card-scroll-stage {
     display: flex !important;
     flex-direction: column;
     flex-grow: 1 !important;
     min-height: 0;
   }
-  .queue-beautiful-box:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]) .beautiful-queue-card-content {
+  .queue-beautiful-box:has(${pluginIframeSelector}[src*="widgetName=queue&"]) .beautiful-queue-card-content {
     flex-grow: 1 !important;
     min-height: 0;
   }
@@ -72,7 +72,7 @@ const QUEUE_LAYOUT_FIX_CSS = `
      under them, so those extra 80px were only a blank band above the buttons.
      Zeroing both vars shrinks the spacer and the mask together, keeping the
      gradient off the bottom of the reader. */
-  .queue-beautiful-box:has(iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue&"]) {
+  .queue-beautiful-box:has(${pluginIframeSelector}[src*="widgetName=queue&"]) {
     --beautiful-queue-bottom-fade-gradient-height: 0px;
     --beautiful-queue-bottom-fade-solid-padding: 0px;
   }

@@ -1,5 +1,5 @@
 import { RNPlugin } from '@remnote/plugin-sdk';
-import { cardInfoBarDockCssId, cardInfoBarHeightKey } from './consts';
+import { cardInfoBarDockCssId, cardInfoBarHeightKey, pluginIframeSelector } from './consts';
 
 /* Docks card_info_bar above the answer buttons in the Beautiful queue.
 
@@ -32,7 +32,8 @@ import { cardInfoBarDockCssId, cardInfoBarHeightKey } from './consts';
    card. The height comes from the widget itself (cardInfoBarHeightKey), because CSS
    cannot read an element's height. */
 
-const IFRAME = 'iframe[data-plugin-id="incremental-everything"][src*="widgetName=card_info_bar&"]';
+// FORK (Deviation 1): the fork's manifest id differs from upstream's; build from the shared selector.
+const IFRAME = `${pluginIframeSelector}[src*="widgetName=card_info_bar&"]`;
 // The innermost widget wrapper that holds our iframe.
 const WRAPPER = `.fade-in-first-load:has(${IFRAME}):not(:has(.fade-in-first-load ${IFRAME}))`;
 const ROOT = `.spacedRepetition:has(> .queue-beautiful-scroll-surface ${IFRAME})`;

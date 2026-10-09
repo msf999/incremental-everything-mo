@@ -1,5 +1,5 @@
 import { QueueItemType, ReactRNPlugin, WidgetLocation } from '@remnote/plugin-sdk';
-import { pageRangeWidgetId, parentSelectorWidgetId, powerupCode, priorityGraphPowerupCode, incremNotesSidebarWidgetId, enableMasteryDrillId, pluginHubWidgetId, onboardingTipsWidgetId } from '../lib/consts';
+import { pluginIframeSelector, pageRangeWidgetId, parentSelectorWidgetId, powerupCode, priorityGraphPowerupCode, incremNotesSidebarWidgetId, enableMasteryDrillId, pluginHubWidgetId, onboardingTipsWidgetId } from '../lib/consts';
 import { getIESetting } from '../lib/settings';
 import { screenFittedHeight } from '../lib/utils';
 
@@ -23,17 +23,17 @@ import { screenFittedHeight } from '../lib/utils';
    keeps the transparent iframe from swallowing clicks across the whole strip
    when the card content scrolls under it. */
 const QUEUE_VARIANT_CSS = `
-  .queue-beautiful-chrome-actions .rn-queue__widget-toolbar:has(> div > iframe[data-plugin-id="incremental-everything"]:is([src*="widgetName=queue_toolbar_priority&"], [src*="widgetName=no_inc_timer_indicator&"])) {
+  .queue-beautiful-chrome-actions .rn-queue__widget-toolbar:has(> div > ${pluginIframeSelector}:is([src*="widgetName=queue_toolbar_priority&"], [src*="widgetName=no_inc_timer_indicator&"])) {
     display: none;
   }
-  .rn-queue__widget-below-top-bar:has(> div > iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue_beautiful_bar&"]) {
+  .rn-queue__widget-below-top-bar:has(> div > ${pluginIframeSelector}[src*="widgetName=queue_beautiful_bar&"]) {
     min-height: 0.5rem;
     flex-shrink: 0;
   }
-  .rn-queue:not(.queue-beautiful-box) iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue_beautiful_bar&"] {
+  .rn-queue:not(.queue-beautiful-box) ${pluginIframeSelector}[src*="widgetName=queue_beautiful_bar&"] {
     display: none;
   }
-  .queue-beautiful-box > .rn-queue__widget-below-top-bar:has(> div > iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue_beautiful_bar&"]) {
+  .queue-beautiful-box > .rn-queue__widget-below-top-bar:has(> div > ${pluginIframeSelector}[src*="widgetName=queue_beautiful_bar&"]) {
     position: absolute;
     top: 0;
     right: 0;
@@ -41,7 +41,7 @@ const QUEUE_VARIANT_CSS = `
     min-height: 0;
     z-index: 5;
   }
-  .queue-beautiful-box > .rn-queue__widget-below-top-bar:has(> div > iframe[data-plugin-id="incremental-everything"][src*="widgetName=queue_beautiful_bar&"]) + * {
+  .queue-beautiful-box > .rn-queue__widget-below-top-bar:has(> div > ${pluginIframeSelector}[src*="widgetName=queue_beautiful_bar&"]) + * {
     margin-top: 0.5rem;
   }
 `;
@@ -67,11 +67,11 @@ const QUEUE_VARIANT_CSS = `
    status-badge stack's `px-2`), which lines our panels up with the sidebar's
    own rows. Scoped by data-plugin-id so we only move our own widgets. */
 const SIDEBAR_END_PADDING_CSS = `
-  .fade-in-first-load.px-8:has(> div > iframe[data-plugin-id="incremental-everything"]) {
+  .fade-in-first-load.px-8:has(> div > ${pluginIframeSelector}) {
     padding-left: 0.5rem;
     padding-right: 0.5rem;
   }
-  .fade-in-first-load.px-8 > div.px-8:has(> iframe[data-plugin-id="incremental-everything"]) {
+  .fade-in-first-load.px-8 > div.px-8:has(> ${pluginIframeSelector}) {
     padding-left: 0;
     padding-right: 0;
   }
