@@ -1,6 +1,6 @@
 # Mo's Incremental Everything
 
-> **This is a personal fork of [Incremental RemNote](https://github.com/bjsi/incremental-everything)** (formerly *Incremental Everything*) by Jamesb, Hugomarins and Jonathangimeno. All credit for the plugin itself — incremental reading, prioritization, scheduling, analytics, and everything else it does — belongs upstream; read their README and [documentation site](https://hugomarins.github.io/incremental-remnote/) first. This fork is **unlisted** on RemNote, tracks upstream (currently synced to upstream v1.0.150, commit `bb758b8` of 2026-10-08; this fork is version 1.0.154), and layers the changes described below on top.
+> **This is a personal fork of [Incremental RemNote](https://github.com/bjsi/incremental-everything)** (formerly *Incremental Everything*) by Jamesb, Hugomarins and Jonathangimeno. All credit for the plugin itself — incremental reading, prioritization, scheduling, analytics, and everything else it does — belongs upstream; read their README and [documentation site](https://hugomarins.github.io/incremental-remnote/) first. This fork is **unlisted** on RemNote, tracks upstream (currently synced to upstream v1.0.150, commit `bb758b8` of 2026-10-08; this fork is version 1.0.155), and layers the changes described below on top.
 
 This document only describes **what is different from upstream**. If a feature isn't mentioned here, it works exactly as in the original plugin.
 
@@ -28,13 +28,14 @@ A date property recording the day the Rem was first made incremental in this kno
 
 ## The queue review bar
 
-The answer-button row is rebuilt into six buttons, identical on desktop and mobile:
+The answer-button row is rebuilt into seven buttons, identical on desktop and mobile:
 
-**Previous · Next · Open Editor · Skip · Dismiss · ⚙️ Options**
+**Previous · Next · Open Editor · 🔄 · Skip · Dismiss · ⚙️ Options**
 
 - **Previous** steps back to the last card. Going back to something you just reviewed shows it in the *already-reviewed* state described below.
 - **Next** (blue outline) — as upstream: record a review, advance.
 - **Open Editor** (green outline) — records the review **and opens the Rem in-app** (no browser tab), so you can process it immediately. Scheduling happens before navigation, so the review is never lost.
+- **🔄 Another item** — sets this Incremental Rem aside for the rest of the session (no review, no reschedule — it stays due) and **immediately shows a different due Incremental Rem in its place**. Press it again for another. Skip leaves the same way, but what follows is whatever RemNote already lined up next, usually a flashcard; 🔄 gives you another Incremental Rem now.
 - **Skip** (purple outline) — advances **without recording a review or rescheduling** (the item stays due).
 - **Dismiss** (red outline) — as upstream.
 - **⚙️ Options** toggles a second row holding the power-user tools: Reschedule, Change Priority, Review Note, the Web-Clipper URL button (when the item has one), and Help. Review with Timer, Scroll to Highlight / Bookmark and Read point join the row only when their subsystems are switched on (see *Options, off by default* and *Slimmed down* below).
@@ -60,6 +61,7 @@ This needs **popups allowed for RemNote** in your browser, especially with more 
 | `Ctrl+G` | The full Open Editor flow from the keyboard (including `(OpenLink)` handling) |
 | `Opt+T` | Next item in queue (alternate binding, same as upstream's `Cmd/Ctrl+Right`) |
 | `Opt+B` | Skip — advance without recording a review |
+| `Opt+R` | 🔄 Another item — show a different due Incremental Rem now, no review |
 
 Two upstream defaults collided with Chrome DevTools, which matters when RemNote runs in a browser tab, and were moved: **Review in Editor** `Ctrl+Shift+J` → `Ctrl+Shift+E` (a command that is off by default here now, see below), and **Toggle Ignore Tag** `Ctrl+Shift+I` → `Ctrl+Shift+G`.
 

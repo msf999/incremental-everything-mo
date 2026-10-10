@@ -13,6 +13,7 @@ import {
   currentIncrementalRemTypeKey,
 } from './consts';
 import { urgentPriorityLimit } from './consts'; // FORK (Deviation 9)
+import { queueSlotSwapKey, queueSwapRequestKey } from './consts'; // FORK (Deviation 16)
 import { IncrementalRem } from './incremental_rem';
 import { QueueSessionCache } from './card_priority';
 
@@ -35,6 +36,9 @@ export async function resetQueueSession(plugin: ReactRNPlugin): Promise<void> {
   await plugin.storage.setSession('skipCardHistorySave', null);
   await plugin.storage.setSession('skipIncRemHistorySave', null);
   await plugin.storage.setSession(incrementalQueueActiveKey, false);
+  // FORK (Deviation 16): a 🔄 swap never outlives its queue session.
+  await plugin.storage.setSession(queueSlotSwapKey, null);
+  await plugin.storage.setSession(queueSwapRequestKey, null);
   await plugin.storage.setSession(currentIncrementalRemTypeKey, undefined);
 
   // FORK (2026-08-14, bug-hunt #17): the review clock must not survive the

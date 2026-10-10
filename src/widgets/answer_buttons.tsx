@@ -12,6 +12,7 @@ import { priorityStampFor } from '../lib/incremental_rem/types';
 import { NextRepTime, durationToHumanReadable } from '../components/NextRepTime';
 import dayjsDuration from 'dayjs/plugin/duration';
 import { SplitButton } from '../components/buttons/SplitButton';
+import { requestAnotherIncRem } from '../lib/queue_swap'; // FORK (Deviation 16)
 
 // Granular offset picker opened by the chevrons on Next / Open Editor / Skip:
 // a number stepper + a Days/Weeks/Months unit toggle in one shared row below
@@ -49,6 +50,8 @@ import {
   incremReviewStartTimeKey,
   queueInfoBarModeId,
   isMobileDeviceKey,
+  queueSlotSwapKey, // FORK (Deviation 16)
+  QueueSlotSwap,
 } from '../lib/consts';
 import { getIncrementalRemFromRem, handleNextRepetitionClick, handleNextRepetitionManualOffset, rescheduleWithoutReview, updateReviewRemData, getRotationIntervalMs, requestQueueDashboardRefocus } from '../lib/incremental_rem';
 import { removeIncrementalRemCache, updateIncrementalRemCache } from '../lib/incremental_rem/cache';
@@ -121,6 +124,9 @@ export function AnswerButtons() {
   const mountedRef = useRef(true);
   const [isBusy, setIsBusy] = useState(false);
   useEffect(() => () => { mountedRef.current = false; }, []);
+  // FORK (Deviation 16): the rem this row currently acts on, for the 🔄 button to wait
+  // on — set each render below, right after baseData resolves.
+  const shownRemIdRef = useRef<string | undefined>(undefined);
 
   /** Runs `fn` unless another row action is in flight; otherwise drops the press. */
   const runExclusive = async (fn: () => Promise<void>) => {
@@ -180,7 +186,13 @@ export function AnswerButtons() {
     const ctx = await rp.widget.getWidgetContext<WidgetLocation.FlashcardAnswerButtons>();
     if (!ctx?.remId) return null;
 
-    const rem = await rp.rem.findOne(ctx.remId);
+    // FORK (Deviation 16, 2026-10-10): after a 🔄 swap this RemNote slot shows a
+    // different IncRem, and every action below must target the rem on screen. All
+    // per-item resets in this widget key on baseData.rem._id, so they follow too.
+    const slotSwap = await rp.storage.getSession<QueueSlotSwap | null>(queueSlotSwapKey);
+    const shownRemId =
+      slotSwap && slotSwap.slotRemId === ctx.remId && slotSwap.showRemId ? slotSwap.showRemId : ctx.remId;
+    const rem = await rp.rem.findOne(shownRemId);
     if (!rem) return null;
 
     const incRemInfo = await getIncrementalRemFromRem(rp, rem);
@@ -201,6 +213,7 @@ export function AnswerButtons() {
   }, [useLightMode, baseData?.rem?._id]);
 
   const coreData = baseData ? { ...baseData, sessionCache: sessionCacheData } : null;
+  shownRemIdRef.current = baseData?.rem?._id; // FORK (Deviation 16)
 
   const shieldStatusAsync = useTrackerPlugin(async (rp) => {
     // FORK (Deviation 13): shields disabled — skip the whole computation.
@@ -873,6 +886,33 @@ export function AnswerButtons() {
           )}
         </SplitButton>
 
+        {/* FORK (Deviation 16, 2026-10-10): 🔄 another item — set this Incremental Rem
+            aside for the session and show a different due one in this same queue slot,
+            right away: no review, no reschedule, no detour through the flashcards. */}
+        <Button
+          variant="secondary"
+          disabled={isBusy}
+          title="Another item (Opt+R): set this Incremental Rem aside for this session and show a different due one right away — no review, no reschedule"
+          onClick={() => runExclusive(async () => {
+            const result = await requestAnotherIncRem(plugin, rem._id);
+            if (result.outcome === 'none') await plugin.app.toast('No other Incremental Rem is due right now.');
+            else if (result.outcome === 'timeout') await plugin.app.toast('Could not fetch another item — please try again.');
+            else {
+              // Keep the row locked until THIS row acts on the new rem, so no action
+              // can land on the one just set aside (bounded; never fails the swap).
+              const until = Date.now() + 1500;
+              while (Date.now() < until && shownRemIdRef.current !== result.showRemId) {
+                await new Promise((r) => setTimeout(r, 50));
+              }
+            }
+          })}
+          // Icon-only: half the base button's 95px minimum, so the main row still fits
+          // on one line in the narrower Beautiful card.
+          style={{ minWidth: 48, padding: '10px 12px' }}
+        >
+          <div style={{ fontSize: 20, lineHeight: 1 }}>🔄</div>
+        </Button>
+
         <SplitButton
           variant="secondary"
           disabled={isBusy}
@@ -1145,11 +1185,11 @@ export function AnswerButtons() {
           borderRadius: '8px',
           border: '1px solid var(--rn-clr-border-primary)'
         }}>
-          <Button onClick={async () => { await plugin.widget.openPopup('reschedule', { remId: ctx.remId }); }}>
+          <Button onClick={async () => { await plugin.widget.openPopup('reschedule', { remId: rem._id }); }}>
             <div style={buttonStyles.label}>🗓️ Reschedule</div>
           </Button>
 
-          <Button onClick={async () => { await plugin.widget.openPopup('priority', { remId: ctx.remId }); }}>
+          <Button onClick={async () => { await plugin.widget.openPopup('priority', { remId: rem._id }); }}>
             <div style={buttonStyles.label}>⚡ Change Priority</div>
           </Button>
 
@@ -1414,7 +1454,7 @@ export function AnswerButtons() {
                   borderRadius: '6px',
                   transition: 'opacity 0.2s, background-color 0.2s',
                 }}
-                onClick={() => plugin.widget.openPopup('repetition_history', { remId: ctx.remId })}
+                onClick={() => plugin.widget.openPopup('repetition_history', { remId: rem._id })}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.opacity = '1';
                   e.currentTarget.style.backgroundColor = 'var(--rn-clr-background-tertiary)';

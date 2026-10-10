@@ -21,6 +21,8 @@ import {
   isolatedQueueModeId,
   powerupCode,
   currentHostDocumentIdKey,
+  queueSlotSwapKey, // FORK (Deviation 16)
+  QueueSlotSwap,
 } from '../lib/consts';
 import { setCurrentIncrementalRem } from '../lib/incremental_rem';
 import { safeRemTextToString } from '../lib/pdfUtils';
@@ -41,34 +43,51 @@ export function QueueComponent() {
     []
   );
 
+  // FORK (Deviation 16, 2026-10-10): the 🔄 "another item" swap. RemNote keeps its own
+  // rem for this slot (ctx.remId); when a swap names this slot, the widget shows the
+  // swapped-in rem instead, and everything below keys on `remId` — the rem on screen.
+  // `remId` stays undefined until the swap key has loaded (null = no swap), so a
+  // swapped slot revisited with Previous never flashes the set-aside rem first.
+  const slotSwap = useTrackerPlugin(
+    async (rp) => (await rp.storage.getSession<QueueSlotSwap | null>(queueSlotSwapKey)) ?? null,
+    []
+  );
+  const remId =
+    slotSwap === undefined
+      ? undefined
+      : ctx?.remId && slotSwap?.slotRemId === ctx.remId && slotSwap.showRemId
+        ? slotSwap.showRemId
+        : ctx?.remId;
+
   // FORK (2026-08-14, bug-hunt #18): guards the auto-advance effects below so at
   // most one of them can remove a card. Reset per item, since a fresh queue item
   // may legitimately need its own advance.
   const autoAdvancedRef = useRef(false);
   useEffect(() => {
     autoAdvancedRef.current = false;
-  }, [ctx?.remId]);
+  }, [remId]);
 
   // All hooks must run before any early return — keep this block above the
-  // `if (!ctx?.remId) return null` guard further down.
+  // `if (!remId) return null` guard further down.
   const remAndType = useTrackerPlugin(
     async (rp) => {
-      if (!ctx?.remId) return undefined;
-      const rem = await rp.rem.findOne(ctx.remId);
+      if (!remId) return undefined;
+      const rem = await rp.rem.findOne(remId);
       if (!rem) {
-        console.log('[QueueComponent] remAndType: rem not found for', ctx.remId);
+        console.log('[QueueComponent] remAndType: rem not found for', remId);
         return null;
       }
       const result = await remToActionItemType(rp, rem);
       console.log('[QueueComponent] remAndType resolved:', {
-        ctxRemId: ctx.remId,
+        slotRemId: ctx?.remId,
+        shownRemId: remId,
         type: result?.type,
         remId: result?.rem?._id,
         hasExtract: !!(result as any)?.extract,
       });
       return result;
     },
-    [ctx?.remId]
+    [remId]
   );
 
   // Optional form on purpose: the effect that turns this into `viewMode` runs
@@ -85,8 +104,8 @@ export function QueueComponent() {
   // re-tagging. The `#extractviewer` tag remains the explicit way to default a
   // hybrid to the ExtractViewer instead.
   const incRemRem = useTrackerPlugin(
-    async (rp) => (ctx?.remId ? await rp.rem.findOne(ctx.remId) : null),
-    [ctx?.remId]
+    async (rp) => (remId ? await rp.rem.findOne(remId) : null),
+    [remId]
   );
   // FORK DEVIATION (outline-first queue): upstream offers this toggle only when a
   // read point has been set on a descendant, and defaults to the Reader — so an
@@ -103,7 +122,7 @@ export function QueueComponent() {
   const offerOutlineToggle = outlineCapableType && FORK_FEATURES.pdfReader;
   // true = Outline (ExtractViewer, our default), false = Reader. Reset on card change.
   const [outlineView, setOutlineView] = useState(true);
-  useEffect(() => { setOutlineView(true); }, [ctx?.remId]);
+  useEffect(() => { setOutlineView(true); }, [remId]);
 
   // This hook signals the component's state.
   useEffect(() => {
@@ -118,21 +137,22 @@ export function QueueComponent() {
   // starts (count++ unless this is a queue→editor handoff). Unmount or remId
   // change = engagement ends (accumulated time is added to the session).
   useEffect(() => {
-    if (!ctx?.remId) return;
+    if (!remId) return;
     // FORK (Deviation 13): engagement events only feed Practiced Queues /
     // dashboards; with session analytics off nothing drains the event queue,
     // so don't produce them.
     if (!FORK_FEATURES.sessionAnalytics) return;
-    startIncRemEngagement(plugin, ctx.remId);
+    startIncRemEngagement(plugin, remId);
     return () => {
       endIncRemEngagement(plugin);
     };
-  }, [ctx?.remId, plugin]);
+  }, [remId, plugin]);
 
   useEffect(() => {
-    // The true identity of the incremental item in the queue is ALWAYS ctx.remId.
-    // remAndType tells us WHAT to display, but ctx.remId tells us WHO we are.
-    const incrementalRemId = ctx?.remId;
+    // The identity of the incremental item in the queue is `remId`: RemNote's own rem
+    // for this slot (ctx.remId), or the rem a 🔄 swap put in its place (Deviation 16).
+    // remAndType tells us WHAT to display, but remId tells us WHO we are.
+    const incrementalRemId = remId;
     setCurrentIncrementalRem(plugin, incrementalRemId);
 
     const resolvedType = remAndType?.type;
@@ -164,7 +184,7 @@ export function QueueComponent() {
     if (remAndType === null) {
       // FORK (2026-08-14, bug-hunt #18): at most ONE auto-advance per widget
       // instance. This effect and the powerup one below both derive from the same
-      // `rp.rem.findOne(ctx.remId)`: when the current item's Rem is deleted mid-
+      // `rp.rem.findOne(remId)`: when the current item's Rem is deleted mid-
       // session, `remAndType` resolves null AND `hasIncrementalPowerup` resolves
       // false, in the same render — so both fired and the queue skipped the
       // deleted item AND the next card, unreviewed. The render-level bail comes
@@ -179,7 +199,7 @@ export function QueueComponent() {
       plugin.storage.setSession(currentHostDocumentIdKey, null);
       plugin.storage.setSession(currentIncrementalRemTypeKey, undefined);
     };
-  }, [ctx?.remId, remAndType, plugin]);
+  }, [remId, remAndType, plugin]);
 
   const shouldRenderEditorForRemType = useRunAsync(async () => {
     if (remAndType?.type !== 'rem') {
@@ -234,11 +254,11 @@ export function QueueComponent() {
   // Track if this Rem still has the incremental powerup.
   // When a user presses "Dismiss", the powerup is removed and we should proactively advance.
   const hasIncrementalPowerup = useTrackerPlugin(async (rp) => {
-    if (!ctx?.remId) return true; // Default true while loading to prevent premature skips
-    const rem = await rp.rem.findOne(ctx.remId);
+    if (!remId) return true; // Default true while loading to prevent premature skips
+    const rem = await rp.rem.findOne(remId);
     if (!rem) return false;
     return await rem.hasPowerup(powerupCode);
-  }, [ctx?.remId]);
+  }, [remId]);
 
   // If the powerup goes missing while we're mounted, immediately advance the queue.
   useEffect(() => {
@@ -270,7 +290,7 @@ export function QueueComponent() {
   useEffect(() => {
     setViewMode(undefined);
     setSourceDocName(undefined);
-  }, [ctx?.remId]);
+  }, [remId]);
 
   // Load source document name for highlights
   useEffect(() => {
@@ -319,7 +339,7 @@ export function QueueComponent() {
   }, [viewMode, supportsIsolated]);
 
   // AFTER ALL HOOKS, NOW you can return early
-  if (!ctx?.remId) return null;
+  if (!remId) return null;
 
   // If the powerup is gone, this widget should NOT be rendering anything that covers the flashcard.
   if (hasIncrementalPowerup === false) return null;
@@ -450,7 +470,7 @@ export function QueueComponent() {
             // to the Reader — otherwise the PDF flashes for a frame on every card.
             incRemRem ? <ExtractViewer rem={incRemRem} plugin={plugin} /> : null
           ) : (
-            <Reader actionItem={remAndType} queueIncRemId={ctx?.remId} />
+            <Reader actionItem={remAndType} queueIncRemId={remId} />
           )
         ) : remAndType.type === 'youtube' ? (
           <VideoViewer actionItem={remAndType} />

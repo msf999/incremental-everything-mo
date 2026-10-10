@@ -175,6 +175,7 @@ import {
 } from '../lib/priority_bands';
 import { CARD_PRIORITY_CODE } from '../lib/card_priority/types';
 import { batchPriorityTargetRemIdsKey, titleCaseAcronymsId } from '../lib/consts';
+import { requestAnotherIncRem } from '../lib/queue_swap'; // FORK (Deviation 16)
 import { getIESetting } from '../lib/settings';
 
 // Opens a priority popup against one or many rems. Single-rem calls behave
@@ -3290,6 +3291,36 @@ export async function registerCommands(plugin: ReactRNPlugin) {
         return;
       }
       await plugin.queue.removeCurrentCardFromQueue();
+    }),
+  });
+
+  // FORK (Deviation 16, 2026-10-10): 🔄 "another item" from the keyboard. Same guard
+  // as Skip. On a plugin turn getCurrentCard() is empty and currentIncRemKey names the
+  // rem on screen (the swapped-in one after a swap); the swap itself is answered by
+  // the prefetch tracker in this same context (lib/queue_prefetch.ts).
+  plugin.app.registerCommand({
+    id: 'another-inc-item',
+    name: 'Another Item in Queue',
+    description:
+      'Set the current Incremental Rem aside for this session and show a different due one in its place — no review, no reschedule.',
+    keyboardShortcut: 'opt+r',
+    action: async () => runQueueActionOnce(async () => {
+      const url = await plugin.window.getURL();
+      if (!url || !url.includes('/flashcards')) {
+        await plugin.app.toast('This command only works in the queue.');
+        return;
+      }
+      const currentCard = await plugin.queue.getCurrentCard();
+      const remId =
+        currentCard?.remId || (await plugin.storage.getSession<string>(currentIncRemKey)) || undefined;
+      const rem = remId ? await plugin.rem.findOne(remId) : undefined;
+      if (!rem || !(await rem.hasPowerup(powerupCode))) {
+        await plugin.app.toast('Another Item only works on Incremental Rems, not regular flashcards.');
+        return;
+      }
+      const result = await requestAnotherIncRem(plugin, rem._id);
+      if (result.outcome === 'none') await plugin.app.toast('No other Incremental Rem is due right now.');
+      else if (result.outcome === 'timeout') await plugin.app.toast('Could not fetch another item — please try again.');
     }),
   });
 

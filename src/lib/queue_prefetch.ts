@@ -11,6 +11,7 @@ import {
   deferSpoilerIncRemsId,
 } from './consts';
 import { urgentPriorityLimit } from './consts'; // FORK (Deviation 9)
+import { queueSwapRequestKey, queueSlotSwapKey, incremReviewStartTimeKey, QueueSwapRequest, QueueSlotSwap } from './consts'; // FORK (Deviation 16)
 import { getIESetting } from './settings';
 import { getIncrementalRemFromRem, IncrementalRem, SlimIncRem } from './incremental_rem';
 import {
@@ -111,6 +112,8 @@ const REFILL_DELAY_MS = 1200;
 type PrefetchState = {
   /** `${mode}|${subQueueId}` the buffer was built for; null when never built. */
   buildKey: string | null;
+  /** FORK (Deviation 16): the info the current buffer was built for, for swap refills. */
+  info: PrefetchQueueInfo | null;
   /** Verified candidates, best-first. */
   buffer: SlimIncRem[];
   /**
@@ -172,6 +175,7 @@ type PrefetchState = {
  */
 const emptyState = (previous?: PrefetchState): PrefetchState => ({
   buildKey: null,
+  info: null,
   buffer: [],
   deferredBuffer: [],
   cleanExhausted: false,
@@ -308,6 +312,32 @@ export function confirmServed(plugin: ReactRNPlugin) {
  */
 export function pendingWasDisplayed(): boolean {
   return !!state.pending && state.seen.has(state.pending.remId);
+}
+
+/**
+ * FORK (Deviation 16, 2026-10-10): the 🔄 "another item" swap. Pops the next unseen
+ * verified candidate WITHOUT touching `pending` (RemNote's lookahead for the next
+ * slot stays what it is) and burns it immediately — the widgets display it at once,
+ * in the slot RemNote is currently showing. Counts drop as for a served item and a
+ * refill is scheduled. Returns null when nothing else is due.
+ */
+export function takeCandidateForSwap(plugin: ReactRNPlugin): SlimIncRem | null {
+  if (!state.ready) return null;
+  const takeUnseen = (list: SlimIncRem[]) => {
+    let c = list.shift();
+    while (c && state.seen.has(c.remId)) c = list.shift();
+    return c ?? null;
+  };
+  // Spoiler protection's rule, as in takePrefetchedCandidate: a held-back IncRem is
+  // only served once no unspoiled candidate is left.
+  const next =
+    takeUnseen(state.buffer) ?? (state.cleanExhausted ? takeUnseen(state.deferredBuffer) : null);
+  if (!next) return null;
+  burn(plugin, next.remId);
+  if (state.dueCount > 0) state.dueCount--;
+  if (next.priority < urgentPriorityLimit && state.urgentDueCount > 0) state.urgentDueCount--;
+  if (state.info) scheduleQueuePrefetchRefill(plugin, state.info);
+  return next;
 }
 
 function burn(plugin: ReactRNPlugin, remId: RemId) {
@@ -761,6 +791,7 @@ export async function buildQueuePrefetch(
     state.dueCount = filtered.length;
     state.urgentDueCount = filtered.filter((c) => c.priority < urgentPriorityLimit).length; // FORK (Deviation 9)
     state.buildKey = makeBuildKey(info);
+    state.info = info; // FORK (Deviation 16)
     state.ready = true;
 
     if (VERBOSE_QUEUE_INJECTION) {
@@ -830,6 +861,56 @@ export function registerPrefetchTrackers(plugin: ReactRNPlugin) {
   plugin.track(async (rp) => {
     const remId = await rp.storage.getSession<RemId>(currentIncRemKey);
     if (remId) noteIncRemDisplayed(plugin, remId);
+  });
+
+  // FORK (Deviation 16, 2026-10-10): the 🔄 "another item" request. The widgets cannot
+  // reach this module's buffer, so they post a request key; this answers it by
+  // serving the next verified candidate into the slot RemNote is currently showing.
+  // `slotRemId` is RemNote's own rem for that slot: if the slot was already swapped,
+  // the request names the rem currently shown, and the slot is read off the
+  // existing override. The request is the ONLY reactive read here — the answer key
+  // is read and written through `plugin.storage`, so answering does not re-run this
+  // tracker; the nonce guard covers a re-run that sees the same request again.
+  let lastSwapNonce: string | null = null;
+  plugin.track(async (rp) => {
+    const req = await rp.storage.getSession<QueueSwapRequest | null>(queueSwapRequestKey);
+    if (!req || req.nonce === lastSwapNonce) return;
+    lastSwapNonce = req.nonce;
+    const current = await plugin.storage.getSession<QueueSlotSwap | null>(queueSlotSwapKey);
+    const slotRemId =
+      current && current.showRemId === req.currentRemId ? current.slotRemId : req.currentRemId;
+    // The rem being set aside is on screen: consume it for the session BEFORE taking a
+    // candidate. Normally it already is (served → confirmed → seen), but a rem can reach
+    // the screen without that bookkeeping — the plugin re-activating mid-item resets the
+    // session and rebuilds the buffer with the displayed rem in it, unseen. Without this
+    // it could be "swapped in" for itself (observed in-app 2026-10-10). noteIncRemDisplayed
+    // also takes it out of the buffers and the counts if it is sitting there.
+    noteIncRemDisplayed(plugin, req.currentRemId);
+    for (const id of [req.currentRemId, slotRemId]) {
+      if (!state.seen.has(id)) burn(plugin, id);
+    }
+    let next = takeCandidateForSwap(plugin);
+    // The buffer holds only a few verified candidates. Empty while more are due
+    // (dueCount counts eligible, unseen rems) means "not verified yet", not "none":
+    // rebuild and wait for one rather than answer "nothing else due". The caller
+    // waits up to 3 s; this gives the build 2 s.
+    if (!next && state.info && state.dueCount > 0) {
+      void buildQueuePrefetch(plugin, state.info);
+      const until = Date.now() + 2000;
+      while (!next && Date.now() < until) {
+        await new Promise((r) => setTimeout(r, 100));
+        next = takeCandidateForSwap(plugin);
+      }
+    }
+    if (next) void plugin.storage.setSession(incremReviewStartTimeKey, Date.now());
+    await plugin.storage.setSession(queueSlotSwapKey, {
+      slotRemId,
+      showRemId: next?.remId ?? null,
+      nonce: req.nonce,
+    });
+    if (VERBOSE_QUEUE_INJECTION) {
+      console.log(`🔄 swap request for slot ${slotRemId}: ${next ? 'serving ' + next.remId : 'nothing else due'}`);
+    }
   });
 
   // Seed the non-session mirrors at activation so the very first GetNextCard of

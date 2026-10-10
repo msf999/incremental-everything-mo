@@ -470,6 +470,14 @@ export const queueInfoBarHeightKey = 'queue-info-bar-height';
 // FORK (Deviation 9, 2026-10-10): the queue counter's parenthesised figure counts the due
 // IncRems whose priority is BELOW this — the distribution bar's 0-band ("priority 9 and lower").
 export const urgentPriorityLimit = 10;
+// FORK (Deviation 16, 2026-10-10): the 🔄 "another item" swap. A widget posts a request
+// naming the IncRem it is showing; the index widget's prefetch tracker answers by naming
+// the due IncRem that now occupies RemNote's current plugin slot (showRemId null = none
+// available). Both are session keys; the answer doubles as the active override.
+export const queueSwapRequestKey = 'queue-swap-request';
+export const queueSlotSwapKey = 'queue-slot-swap';
+export type QueueSwapRequest = { currentRemId: string; nonce: string };
+export type QueueSlotSwap = { slotRemId: string; showRemId: string | null; nonce: string };
 export const collapseTopBarCssId = 'incremental-everything-collapse-top-bar'; // CSS registration ID
 export const incrementalQueueActiveKey = 'incremental-queue-active';
 export const activeHighlightIdKey = 'active-highlight-id-key';
