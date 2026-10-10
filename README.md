@@ -149,7 +149,7 @@ This fork disables the upstream subsystems its owner doesn't use (everything rem
 - **Hold Back Spoiler IncRems** — a setting, visible under General → Queue, off by default (on upstream).
 - Upstream's **per-type schedulers and initial intervals** (documents / videos / highlights / rems) are hidden from the settings window; the general scheduler and interval apply to every type.
 
-**Changed:** the three history sidebar tabs (Incremental / Flashcard / Visited Rems) are merged into **one "History" tab** with collapsible sections. Kept: the 📚 Inc Rems counter under document titles, the No-IncRem queue timer, Sorting Criteria, all IncRem priority tools, and repetition history (Ctrl+Shift+H).
+**Changed:** the three history sidebar tabs (Incremental / Flashcard / Visited Rems) are merged into **one "History" tab** with collapsible sections. Kept: the 📚 Inc Rems counter under document titles, the No-IncRem queue timer, Sorting Criteria, all IncRem priority tools, and repetition history (Ctrl+Shift+H). **Sorting Criteria** no longer shows *Flashcard Randomness* (only Priority Review Documents used it, and they are off), and its card ratio is titled **Incremental Rem Frequency** ("One Incremental Rem after every N flashcards") — same setting, same stored value.
 
 
 ## Settings, in one window

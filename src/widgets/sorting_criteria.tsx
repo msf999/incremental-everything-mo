@@ -18,6 +18,7 @@ import { useState, useEffect } from 'react';
 import { noIncRemTimerKey } from '../lib/consts';
 import { formatCountdown } from '../lib/utils';
 import { IE_DOCS_BASE_URL } from '../lib/settings';
+import { FORK_FEATURES } from '../lib/fork_gates'; // FORK (2026-10-10)
 
 const DOCS_PATH = 'Prioritization-%26-Sorting/#sorting-criteria';
 
@@ -60,10 +61,14 @@ const sliderValueToCards = (value: number): CardsPerRem => {
 };
 
 // Generate the display text
+// FORK (2026-10-10, owner request — "remove card references"): the ratio is how often
+// an Incremental Rem comes up between flashcards, so the labels say that, from the
+// Incremental Rem's side. The stored values and the slider are unchanged.
 const sliderValueToLabel = (value: number): string => {
-  if (value === ONLY_INC_VALUE) return 'Only Incremental Rem';
-  if (value === ONLY_FLASHCARDS_VALUE) return 'Only Flashcards';
-  return `${value} card${value !== 1 ? 's' : ''} for every incremental rem`;
+  if (value === ONLY_INC_VALUE) return 'Only Incremental Rems — no flashcards in between';
+  if (value === ONLY_FLASHCARDS_VALUE) return 'No Incremental Rems — flashcards only';
+  if (value === 1) return 'One Incremental Rem after each flashcard';
+  return `One Incremental Rem after every ${value} flashcards`;
 };
 
 const sliderTicks = (
@@ -351,7 +356,10 @@ export function SortingCriteria() {
         {sliderTicks}
       </div>
 
-      {/* Flashcard Randomness slider */}
+      {/* Flashcard Randomness slider.
+          FORK (2026-10-10, owner request): only Priority Review Documents read it, and
+          those are disabled in this fork, so the section shows only with them. */}
+      {FORK_FEATURES.priorityReviewDocs && (
       <div className="flex flex-col gap-2">
         <div>
           <label htmlFor="card-randomness" className="font-semibold">
@@ -380,12 +388,13 @@ export function SortingCriteria() {
         />
         {sliderTicks}
       </div>
+      )}
 
-      {/* Simplified Flashcard Ratio Section */}
+      {/* Simplified Flashcard Ratio Section — FORK (2026-10-10): titled by what it sets */}
       <div className="flex flex-col gap-2 ">
         <div>
           <label htmlFor="ratio" className="font-semibold">
-            Flashcard Ratio
+            Incremental Rem Frequency
           </label>
         </div>
         <div className="rn-clr-content-secondary">
