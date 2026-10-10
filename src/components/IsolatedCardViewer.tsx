@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { PluginRem, RNPlugin, RemId, ReactRNPlugin } from '@remnote/plugin-sdk';
 import { safeRemTextToString } from '../lib/pdfUtils';
-import { resolveRemTextForBreadcrumb } from '../lib/richTextRemRefs';
+import { QueueBreadcrumb } from './QueueBreadcrumb'; // FORK (2026-10-11): ancestors with RemNote's icons
 import { createRemFromHighlight } from '../lib/highlightActions';
 import { ActionItemType } from '../lib/incremental_rem/types';
 import { TypeBadge } from './TypeBadge';
@@ -13,11 +13,6 @@ interface IsolatedCardViewerProps {
   sourceDocumentId?: RemId;
   sourceType?: ActionItemType;
   onViewInContext?: () => void;
-}
-
-interface AncestorBreadcrumb {
-  text: string;
-  id: RemId;
 }
 
 // Content can be either text or an image
@@ -35,8 +30,6 @@ export function IsolatedCardViewer({
   onViewInContext
 }: IsolatedCardViewerProps) {
   const [isDarkMode, setIsDarkMode] = useState(false);
-  const [ancestors, setAncestors] = useState<AncestorBreadcrumb[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [content, setContent] = useState<RemContent>({ type: 'text', value: '' });
   const [isCreatingRem, setIsCreatingRem] = useState(false);
 
@@ -72,43 +65,6 @@ export function IsolatedCardViewer({
     return () => clearInterval(interval);
   }, []);
 
-  // Load ancestors for breadcrumb
-  useEffect(() => {
-    const loadAncestors = async () => {
-      setIsLoading(true);
-      const ancestorList: AncestorBreadcrumb[] = [];
-      let currentParent = rem.parent;
-      let depth = 0;
-      const maxDepth = 5;
-
-      while (currentParent && depth < maxDepth) {
-        try {
-          const parentRem = await plugin.rem.findOne(currentParent);
-          if (!parentRem || !parentRem.text) break;
-
-          // Pin-aware: reference *pins* in an ancestor's title collapse to a 📌
-          // marker rather than expanding into the full referenced rem's text.
-          const parentText = await resolveRemTextForBreadcrumb(plugin, parentRem.text);
-
-          ancestorList.unshift({
-            text: parentText,
-            id: currentParent
-          });
-
-          currentParent = parentRem.parent;
-          depth++;
-        } catch (error) {
-          break;
-        }
-      }
-
-      setAncestors(ancestorList);
-      setIsLoading(false);
-    };
-
-    loadAncestors();
-  }, [rem._id, plugin]);
-
   // Load rem content (text or image)
   useEffect(() => {
     const loadRemContent = async () => {
@@ -142,13 +98,6 @@ export function IsolatedCardViewer({
     };
     loadRemContent();
   }, [rem._id, rem.text, plugin]);
-
-  const handleAncestorClick = useCallback(async (ancestorId: RemId) => {
-    const ancestorRem = await plugin.rem.findOne(ancestorId);
-    if (ancestorRem) {
-      await plugin.window.openRem(ancestorRem);
-    }
-  }, [plugin]);
 
   const createRemWithParentSelection = useCallback(async (makeIncremental: boolean) => {
     if (isCreatingRem || !sourceDocumentId) return;
@@ -215,14 +164,6 @@ export function IsolatedCardViewer({
     backgroundColor: cssVar('--rn-clr-background-secondary', '#f8fafc', '#1e293b'),
   };
 
-  const breadcrumbStyle: React.CSSProperties = {
-    fontSize: '11px',
-    color: cssVar('--rn-clr-content-tertiary', '#64748b', '#94a3b8'),
-    marginBottom: sourceDocumentName ? '6px' : '0',
-    wordBreak: 'break-word',
-    lineHeight: '1.4',
-  };
-
   const sourceStyle: React.CSSProperties = {
     fontSize: '11px',
     color: cssVar('--rn-clr-content-tertiary', '#94a3b8', '#64748b'),
@@ -277,20 +218,8 @@ export function IsolatedCardViewer({
       <div style={cardStyle}>
         {/* Header with breadcrumbs */}
         <div style={headerStyle}>
-          {!isLoading && ancestors.length > 0 && (
-            <div style={breadcrumbStyle}>
-              {ancestors.map((ancestor, index) => (
-                <span
-                  key={ancestor.id}
-                  onClick={() => handleAncestorClick(ancestor.id)}
-                  style={{ cursor: 'pointer' }}
-                >
-                  {ancestor.text}
-                  {index < ancestors.length - 1 && ' › '}
-                </span>
-              ))}
-            </div>
-          )}
+          {/* FORK (2026-10-11): the ancestors, with RemNote's folder and document icons. */}
+          <QueueBreadcrumb rem={rem} plugin={plugin} style={sourceDocumentName ? { marginBottom: 6 } : undefined} />
           {sourceDocumentName && (
             <div style={sourceStyle}>
               <span>{sourceDocumentName}</span>

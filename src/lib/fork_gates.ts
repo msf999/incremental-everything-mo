@@ -114,6 +114,12 @@ export const FORK_FEATURES = {
       review-increm-in-editor command (Ctrl+Shift+E) and the 📝 accordion button.
       Option, off — owner decision 2026-10-10. */
   editorReviewTimer: false,
+  /** The queue's "← Back to isolated view" button, floating in the top-right corner of every
+      Rem and highlight shown in context. Off — owner decision 2026-10-11 ("I do not see the
+      point of it and I do not use it"). The isolated card itself is unchanged: the setting
+      still picks which items start in it, and its "View in Context" still leaves it; there is
+      just no way back for that item. */
+  isolatedViewBackButton: false,
 } as const;
 
 /**

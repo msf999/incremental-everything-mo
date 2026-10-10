@@ -334,16 +334,18 @@ export function QueueComponent() {
   }, [viewMode, remAndType, isolatedMode, supportsIsolated, isHighlightType, isolatedDefaultForHighlight, isolatedDefaultForRem]);
 
   const shouldShowIsolated = viewMode === 'isolated' && supportsIsolated;
+  // FORK (2026-10-11): the "← Back to isolated view" button is off (FORK_FEATURES).
+  const showBackToIsolated = viewMode === 'context' && supportsIsolated && FORK_FEATURES.isolatedViewBackButton;
 
   // Trigger a single spark when entering context view for items that support isolated view
   useEffect(() => {
-    if (viewMode === 'context' && supportsIsolated) {
+    if (showBackToIsolated) {
       setShowSpark(true);
       const timer = setTimeout(() => setShowSpark(false), 1800);
       return () => clearTimeout(timer);
     }
     setShowSpark(false);
-  }, [viewMode, supportsIsolated]);
+  }, [showBackToIsolated]);
 
   // AFTER ALL HOOKS, NOW you can return early
   if (!remId) return null;
@@ -367,10 +369,16 @@ export function QueueComponent() {
 
   const isolatedRem = getIsolatedRem();
 
+  // FORK (2026-10-11): a button floating in the top-right corner (below) covers the right
+  // end of ExtractViewer's breadcrumb row; the row keeps clear of it, so the crumbs fold to
+  // the width that can be seen. The isolated-view button measured 159 px wide, 12 px from
+  // the edge.
+  const topRightClearance = showBackToIsolated ? 176 : offerOutlineToggle ? 150 : 0;
+
   return (
     <div className="incremental-everything-element" style={{ height: '100%' }}>
       <div className="box-border p-2" style={{ height: `100vh`, position: 'relative', ...M1_CONTAINER_STYLE /* MOBILE-EXPERIMENT M1 */ }}>
-        {viewMode === 'context' && supportsIsolated && (
+        {showBackToIsolated && (
           <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 10 }}>
             <style>{`
               .inc-back-btn {
@@ -471,11 +479,11 @@ export function QueueComponent() {
             // terminal branch for ALL reading types, including highlight types
             // that fell through the isolated view. Null until the IncRem
             // resolves (avoids a one-frame flash).
-            incRemRem ? <ExtractViewer rem={incRemRem} plugin={plugin} /> : null
+            incRemRem ? <ExtractViewer rem={incRemRem} plugin={plugin} topRightClearance={topRightClearance} /> : null
           ) : offerOutlineToggle && outlineView ? (
             // Render nothing until the IncRem resolves rather than falling through
             // to the Reader — otherwise the PDF flashes for a frame on every card.
-            incRemRem ? <ExtractViewer rem={incRemRem} plugin={plugin} /> : null
+            incRemRem ? <ExtractViewer rem={incRemRem} plugin={plugin} topRightClearance={topRightClearance} /> : null
           ) : (
             <Reader actionItem={remAndType} queueIncRemId={remId} />
           )
@@ -486,7 +494,7 @@ export function QueueComponent() {
         ) : remAndType.type === 'video' ? (
           <NativeVideoViewer actionItem={remAndType} />
         ) : remAndType.type === 'rem' ? (
-          <ExtractViewer rem={remAndType.rem} plugin={plugin} />
+          <ExtractViewer rem={remAndType.rem} plugin={plugin} topRightClearance={topRightClearance} />
         ) : null}
       </div>
     </div>

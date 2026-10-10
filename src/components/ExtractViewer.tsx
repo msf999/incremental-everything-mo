@@ -1,11 +1,11 @@
 // components/ExtractViewer.tsx
 // UPDATED: Added filtering for powerup slots (Incremental and CardPriority)
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRef } from 'react'; // MOBILE-EXPERIMENT (M3/M4 only)
-import { PluginRem, RNPlugin, DocumentViewer, RichText, BuiltInPowerupCodes, RemId, RichTextElementRemInterface, useTrackerPlugin } from '@remnote/plugin-sdk';
+import { PluginRem, RNPlugin, DocumentViewer, RichText, BuiltInPowerupCodes, RichTextElementRemInterface, useTrackerPlugin } from '@remnote/plugin-sdk';
 import { powerupCode, allCardPriorityInfoKey, incremNotesSidebarRemIdKey, incremNotesSidebarWidgetId } from '../lib/consts';
-import { safeRemTextToString } from '../lib/pdfUtils';
+import { QueueBreadcrumb } from './QueueBreadcrumb'; // FORK (2026-10-11): ancestors with RemNote's icons
 import {
   getChildrenExcludingSlots,
   getDescendantsExcludingSlots
@@ -49,17 +49,6 @@ const M1_STYLES: Record<string, React.CSSProperties> = {
     flexShrink: 0,
     borderBottom: '1px solid rgba(127, 127, 127, 0.25)',
   },
-  crumbList: { display: 'flex', flexWrap: 'nowrap', alignItems: 'center', width: '100%', minWidth: 0, fontSize: 14, lineHeight: '20px' },
-  crumb: { display: 'flex', alignItems: 'center', flexShrink: 0 },
-  crumbText: {
-    display: 'inline-block',
-    maxWidth: 150,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-    cursor: 'pointer',
-  },
-  crumbSeparator: { margin: '0 4px' },
   section: { overflow: 'hidden', minHeight: 0, minWidth: 0, position: 'relative' },
   footer: { padding: '12px 16px', flexShrink: 0, borderTop: '1px solid rgba(127, 127, 127, 0.25)', fontSize: 12, lineHeight: '16px' },
   footerRow: { display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' },
@@ -90,12 +79,14 @@ const M4_COLOUR_CSS =
 interface ExtractViewerProps {
   rem: PluginRem;
   plugin: RNPlugin;
+  /** FORK (2026-10-11): px the breadcrumb row leaves free on its right for a button the queue floats there. */
+  topRightClearance?: number;
 }
 
-// Define the critical context structure
+// Define the critical context structure. FORK (2026-10-11): the ancestors moved to
+// components/QueueBreadcrumb.tsx, which reads and draws them itself.
 interface CriticalContext {
   hasDocumentPowerup: boolean;
-  ancestors: Array<{ text: string; fullText: string; id: RemId }>;
 }
 
 // Define the metadata structure (already deferred)
@@ -110,7 +101,7 @@ interface Metadata {
 const BATCH_SIZE = 50;
 const BATCH_DELAY_MS = 10;
 
-export function ExtractViewer({ rem, plugin }: ExtractViewerProps) {
+export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractViewerProps) {
   // FORK (2026-08-14, bug-hunt #48): NO early return here.
   //
   // This used to be `if (!rem) return null;` — placed above every hook in the
@@ -124,10 +115,8 @@ export function ExtractViewer({ rem, plugin }: ExtractViewerProps) {
   // --- STATE 1: DEFERRED METADATA (Statistics) ---
   const [metadata, setMetadata] = useState<Metadata | null>(null);
 
-  // --- STATE 2: DEFERRED CRITICAL CONTEXT (Breadcrumbs & Status) ---
+  // --- STATE 2: DEFERRED CRITICAL CONTEXT (Status) ---
   const [criticalContext, setCriticalContext] = useState<CriticalContext | null>(null);
-  const [hoveredAncestorId, setHoveredAncestorId] = useState<string | null>(null);
-  const [tooltipPos, setTooltipPos] = useState({ top: 0, left: 0 });
 
   // FORK (Deviation 11): true while THIS rem is open in the notes sidebar (the
   // ✎ Notes button sets incremNotesSidebarRemIdKey to this rem, so the key doubles
@@ -249,40 +238,10 @@ export function ExtractViewer({ rem, plugin }: ExtractViewerProps) {
       // 1. Check Document Powerup (fast)
       const hasDocumentPowerup = await rem.hasPowerup(BuiltInPowerupCodes.Document);
 
-      // 2. Get Ancestors (slow part)
-      const ancestorList: CriticalContext['ancestors'] = [];
-      let currentParent = rem.parent;
-      let depth = 0;
-      const maxDepth = 10;
-
-      while (currentParent && depth < maxDepth) {
-        try {
-          // Add a yield point here to prevent blocking if the hierarchy is deep.
-          if (depth % 2 === 0) {
-            await new Promise(resolve => setTimeout(resolve, 1));
-          }
-
-          const parentRem = await plugin.rem.findOne(currentParent);
-          if (!parentRem) break;
-
-          const parentText = await safeRemTextToString(plugin, parentRem.text || []);
-
-          ancestorList.unshift({
-            text: parentText.slice(0, 30) + (parentText.length > 30 ? '...' : ''),
-            fullText: parentText,
-            id: currentParent
-          });
-
-          currentParent = parentRem.parent;
-          depth++;
-        } catch (error) {
-          break;
-        }
-      }
-
+      // FORK (2026-10-11): the ancestor walk that fed the breadcrumb lives in
+      // components/QueueBreadcrumb.tsx now.
       setCriticalContext({
         hasDocumentPowerup,
-        ancestors: ancestorList
       });
     };
 
@@ -428,20 +387,9 @@ export function ExtractViewer({ rem, plugin }: ExtractViewerProps) {
     flashcardCount = '...'
   } = metadata || {};
 
-  // Fallback for Critical Context (Breadcrumbs/Status)
+  // Fallback for Critical Context (Status)
   const isContextLoading = !criticalContext;
-  const ancestors = criticalContext?.ancestors || [];
   const hasDocumentPowerup = criticalContext?.hasDocumentPowerup ?? false;
-
-  const handleAncestorClick = useCallback(
-    async (ancestorId: RemId) => {
-      const ancestorRem = await plugin.rem.findOne(ancestorId);
-      if (ancestorRem) {
-        await plugin.window.openRem(ancestorRem);
-      }
-    },
-    [plugin]
-  );
 
   const notesHint = (
     <div
@@ -487,11 +435,16 @@ export function ExtractViewer({ rem, plugin }: ExtractViewerProps) {
         }
       }}
     >
-      {/* Breadcrumb Section (Hidden/Placeholder while loading context). MOBILE-EXPERIMENT
-          M4: the row stays visible while loading when it carries the ↻ / ≡ buttons. */}
+      {/* Breadcrumb Section. FORK (2026-10-11): the ancestors, with RemNote's folder and
+          document icons — components/QueueBreadcrumb.tsx, which shows nothing until they are
+          read, so the row no longer hides itself while loading. MOBILE-EXPERIMENT M4: the
+          row also carries the ↻ / ≡ buttons. */}
       <div
-        className={`breadcrumb-section px-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0 h-10 flex items-center overflow-x-auto ${isContextLoading && !M4_BUTTONS ? 'opacity-0' : ''}`}
-        style={M1_INLINE_LAYOUT ? M1_STYLES.crumbRow : undefined} // MOBILE-EXPERIMENT M1
+        className="breadcrumb-section px-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0 h-10 flex items-center overflow-x-auto"
+        style={{
+          ...(M1_INLINE_LAYOUT ? M1_STYLES.crumbRow : {}), // MOBILE-EXPERIMENT M1
+          ...(topRightClearance > 0 ? { paddingRight: topRightClearance } : {}), // FORK (2026-10-11)
+        }}
       >
         {M4_BUTTONS && (
           // MOBILE-EXPERIMENT M4. In the phone app RemNote's page header covers this row
@@ -525,34 +478,7 @@ export function ExtractViewer({ rem, plugin }: ExtractViewerProps) {
             </button>
           </div>
         )}
-        {!isContextLoading && ancestors.length > 0 && (
-          <div
-            className="text-sm text-gray-600 dark:text-gray-400 flex flex-nowrap items-center w-full"
-            style={M1_INLINE_LAYOUT ? M1_STYLES.crumbList : undefined} // MOBILE-EXPERIMENT M1
-          >
-            {ancestors.map((ancestor, index) => (
-              <div
-                key={ancestor.id}
-                className="flex items-center flex-shrink-0"
-                style={M1_INLINE_LAYOUT ? M1_STYLES.crumb : undefined} // MOBILE-EXPERIMENT M1
-              >
-                <span
-                  onClick={() => handleAncestorClick(ancestor.id)}
-                  className="hover:underline cursor-pointer max-w-[150px] truncate inline-block"
-                  style={M1_INLINE_LAYOUT ? M1_STYLES.crumbText : undefined} // MOBILE-EXPERIMENT M1
-                  title={ancestor.fullText}
-                >
-                  {ancestor.text}
-                </span>
-                {index < ancestors.length - 1 && (
-                  <span className="mx-1" style={M1_INLINE_LAYOUT ? M1_STYLES.crumbSeparator : undefined /* MOBILE-EXPERIMENT M1 */}>
-                    ›
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
+        <QueueBreadcrumb rem={rem} plugin={plugin} />
       </div>
 
       {/* DocumentViewer Section (Renders immediately using rem._id). Paused

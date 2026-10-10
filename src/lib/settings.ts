@@ -871,11 +871,12 @@ export const IE_SETTINGS_SCHEMA: Record<IESettingId, SettingSpec> = {
     title: 'Use Isolated Card View in Queue for',
     description:
       // FORK (Deviation 13): reworded — this fork has no in-queue PDF/HTML reader,
-      // so items that do not use the isolated view show the Rem itself.
+      // so items that do not use the isolated view show the Rem itself. FORK (2026-10-11):
+      // the queue's "Back to isolated view" button is off, so the switch is one-way.
       'Which incremental items start in the isolated card view — a minimal card showing only ' +
       'that item\'s own text (or a highlight\'s clipping). Items that do not use it show the ' +
-      'Rem in full document context instead. You can toggle per card in the queue; this only ' +
-      'sets the initial view.',
+      'Rem in full document context instead. "View in Context" on the card switches that item ' +
+      'to the full view.',
     options: [
       { value: 'highlights', label: 'Highlights (PDF/HTML)' },
       { value: 'rems', label: 'Regular Rems' },

@@ -1,6 +1,6 @@
 # Mo's Incremental Everything
 
-> **This is a personal fork of [Incremental RemNote](https://github.com/bjsi/incremental-everything)** (formerly *Incremental Everything*) by Jamesb, Hugomarins and Jonathangimeno. All credit for the plugin itself — incremental reading, prioritization, scheduling, analytics, and everything else it does — belongs upstream; read their README and [documentation site](https://hugomarins.github.io/incremental-remnote/) first. This fork is **unlisted** on RemNote, tracks upstream (currently synced to upstream v1.0.150, commit `bb758b8` of 2026-10-08; this fork is version 1.0.160), and layers the changes described below on top.
+> **This is a personal fork of [Incremental RemNote](https://github.com/bjsi/incremental-everything)** (formerly *Incremental Everything*) by Jamesb, Hugomarins and Jonathangimeno. All credit for the plugin itself — incremental reading, prioritization, scheduling, analytics, and everything else it does — belongs upstream; read their README and [documentation site](https://hugomarins.github.io/incremental-remnote/) first. This fork is **unlisted** on RemNote, tracks upstream (currently synced to upstream v1.0.150, commit `bb758b8` of 2026-10-08; this fork is version 1.0.161), and layers the changes described below on top.
 
 This document only describes **what is different from upstream**. If a feature isn't mentioned here, it works exactly as in the original plugin.
 
@@ -76,6 +76,7 @@ Two upstream defaults collided with Chrome DevTools, which matters when RemNote 
 
 - A queue item renders **the Rem itself in the queue body**, using RemNote's real document renderer — actual formatting, powerup properties, and inline editing — not a read-only approximation.
 - An IncRem with a PDF/HTML source attached shows this outline too — the source reader is disabled entirely in this fork (see below), so there is no 📄 Read document button. Highlight-type items keep upstream's isolated view.
+- The breadcrumb above the item (in the document view and the isolated card) shows each ancestor with the **icon RemNote gives it**: a folder's or document's own emoji or coloured folder picture — e.g. **📒 Zotero › 📄 Items** — RemNote's folder picture for a folder without one, and RemNote's page icon for a document without one. It stays on one line: when the names do not fit, crumbs fold to their icon (the middle ones first, then the top one) and the item's parent is shortened with an ellipsis. Hover a crumb for its full name; click it to open it.
 - The notes sidebar **never opens on its own**. The footer under the item (type + child/descendant/flashcard counts) ends with a small **✎ Open in sidebar** button: it opens the Rem in the notes sidebar for full editing (backlink search, date pickers, etc.) and pauses the in-queue copy while it's there; the button becomes a filled-blue **✎ Show in queue** to bring it back. Close the sidebar pane itself with RemNote's own control.
 
 ### Items you've already reviewed
@@ -139,6 +140,7 @@ When several due items share a priority, the **most overdue comes first** (both 
 - Upstream's "Open Editor in New Tab" button is replaced by the in-app **Open** button.
 - The Saturday/Monday quick-reschedule dropdowns became the granular offset picker.
 - Upstream's `×1.5` / `curve` scheduler chip on the Next and Open buttons is not shown; the sublabel keeps just the next date.
+- Upstream's **← Back to isolated view** button, which floated over every item shown in context, is removed. Items still start in the isolated card according to *Use Isolated Card View in Queue for* (highlights, by default), and the card's **View in Context** still switches to the full view — there is just no way back for that item.
 - Upstream's spoiler protection (**Hold Back Spoiler IncRems**, which holds an Incremental Rem back while one of its own flashcards is due) is **off** by default here — upstream ships it on. Switch it on under General → Queue.
 - The translated READMEs (ES, PT-BR) are removed in this fork; see upstream for translations.
 
