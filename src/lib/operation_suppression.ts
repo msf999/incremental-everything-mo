@@ -109,3 +109,27 @@ export class SuppressionLease {
     await this.plugin.storage.setSession(OPERATION_ACTIVE_KEY, Date.now() + SUPPRESSION_LEASE_MS);
   }
 }
+
+// FORK (2026-10-10, reproduced live): suppression for a short action that ends by
+// advancing the queue — Next, Next with an offset, Skip with an offset, Open.
+//
+// Those actions set the flag, write, then call removeCurrentCardFromQueue, and cleared
+// the flag in a `finally`. Called from the answer-buttons widget, the queue advance
+// destroys that widget's sandbox whenever the next item is a flashcard, so the
+// `finally` never ran and the flag stayed `true`: the GlobalRemChanged listener went
+// silent, a due date the owner then changed by hand never reached the queue cache, and
+// the item was served again later showing "Already reviewed".
+//
+// Two guards: the flag is lifted BEFORE the advance (every write is done by then — the
+// keyboard path, which lives in the persistent index widget, always cleared it at about
+// that moment), and it is written as a short lease, so a context killed even earlier
+// cannot leave the listener silenced for more than a few seconds.
+export const QUEUE_ACTION_LEASE_MS = 20_000;
+
+export async function beginQueueActionSuppression(plugin: RNPlugin): Promise<void> {
+  await plugin.storage.setSession(OPERATION_ACTIVE_KEY, Date.now() + QUEUE_ACTION_LEASE_MS);
+}
+
+export async function endOperationSuppression(plugin: RNPlugin): Promise<void> {
+  await plugin.storage.setSession(OPERATION_ACTIVE_KEY, false);
+}

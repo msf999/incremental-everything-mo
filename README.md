@@ -86,7 +86,9 @@ An Incremental Rem whose next review is in the future still appears in the queue
 
 You'll see this in two situations: you pressed **Previous** to go back to something you just reviewed, or you met an item that was reviewed on another device after this queue session started (the item list is built once, at the start).
 
-**None of these buttons changes the item's schedule.** *Next* simply moves on, *Previous* steps back, and *Open* takes you to the Rem without recording a review — which is why Previous and Next look identical here. There is intentionally no way to re-review, reschedule or dismiss an item from this state; the point is that "already done" is visible and safe to click through.
+**None of these buttons changes the item's schedule.** *Next* simply moves on, *Previous* steps back, and *Open* takes you to the Rem without recording a review — which is why Previous and Next look identical here. The keyboard behaves the same way: `Opt+T` / `Cmd+→` only move on, and `Opt+X` does not dismiss from here. There is intentionally no way to re-review, reschedule or dismiss an item from this state; the point is that "already done" is visible and safe to click through.
+
+A third way to meet this row: you change an item's **Next Rep Date** by hand while it is on screen. The queue picks up the new date straight away, so the item is not served again until it is due.
 
 ### Info bar under every queue item
 

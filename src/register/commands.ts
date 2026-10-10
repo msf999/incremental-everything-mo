@@ -7,6 +7,7 @@ import {
   RichTextInterface,
   RemType,
   QueueInteractionScore,
+  QueueItemType, // FORK (2026-10-10): runNextInQueueAction's plugin-screen check
 } from '@remnote/plugin-sdk';
 import { openMasteryDrill } from '../lib/mastery_drill_launch';
 import { convertRemTree } from '../lib/markup_to_richtext';
@@ -3264,7 +3265,11 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     const currentQueueItem = await plugin.queue.getCurrentCard();
     let remId = currentQueueItem?.remId;
 
-    if (!remId) {
+    // FORK (2026-10-10, reproduced live): only while RemNote shows OUR item. On its
+    // card-less screens (finished, checkpoints) currentIncRemKey still names the last
+    // IncRem shown, and Opt+T there recorded a review of that off-screen rem and
+    // rescheduled it. Same rule as lib/queue_target.ts (UPSTREAM_ISSUES #15).
+    if (!remId && (await plugin.queue.getCurrentQueueScreenType()) === QueueItemType.Plugin) {
       remId = (await plugin.storage.getSession<string>(currentIncRemKey)) || undefined;
     }
 
@@ -3288,6 +3293,15 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     const incRemInfo = await getIncrementalRemFromRem(plugin, rem);
     if (!incRemInfo) {
       await plugin.app.toast('Could not retrieve Incremental Rem information.');
+      return;
+    }
+
+    // FORK (2026-10-10, reproduced live): on the already-reviewed row (Deviation 8) the
+    // keyboard Next does what that row's Next button does — move on, recording nothing.
+    // It used to record a second review and overwrite the due date with one counted from
+    // today: a date moved into the future by hand became +interval from now.
+    if (!currentQueueItem && Date.now() < incRemInfo.nextRepDate) {
+      await plugin.queue.removeCurrentCardFromQueue();
       return;
     }
 

@@ -63,6 +63,7 @@ import { IncrementalRem } from '../lib/incremental_rem';
 import { percentileToHslColor, calculateRelativePercentile, calculateVolumeBasedPercentile, calculateWeightedShield } from '../lib/utils';
 import { getActivePdfForIncRem, findHTMLinRem, addPageToHistory, getPageHistory, getIncrementalReadingPosition, resolveSessionBookmarkCarry } from '../lib/pdfUtils';
 import { FORK_FEATURES } from '../lib/fork_gates';
+import { beginQueueActionSuppression, endOperationSuppression } from '../lib/operation_suppression'; // FORK (2026-10-10)
 import {
   QueueDistribution,
   shouldShowQueueInfoBar,
@@ -618,7 +619,7 @@ export function AnswerButtons() {
     }
     await capturePdfPageHistoryIfNeeded();
     try {
-      await plugin.storage.setSession('plugin_operation_active', true);
+      await beginQueueActionSuppression(plugin); // FORK (2026-10-10): a lease — see operation_suppression
       const reviewResult = await updateReviewRemData(plugin, incRemInfo);
       // FORK (2026-08-14, bug-hunt #9): null means the write failed — do not
       // advance past an item that was not actually reviewed. Opening the editor
@@ -635,6 +636,9 @@ export function AnswerButtons() {
       };
       await updateIncrementalRemCache(plugin as any, updatedIncRem);
       const incRemType = await determineIncRemType(plugin, rem);
+      // FORK (2026-10-10): lift the suppression before the dispatch — the teardown below
+      // stops the finally from ever running (lib/operation_suppression.ts).
+      await endOperationSuppression(plugin);
       // Dispatch both critical operations before widget teardown can interrupt either.
       await Promise.allSettled([
         plugin.queue.removeCurrentCardFromQueue(),

@@ -35,6 +35,7 @@ import { registerRemsAsPdfKnown, registerRemsAsHtmlKnown, isHtmlSource } from '.
 import { syncPriorityBand } from '../priority_bands';
 import { getIESetting } from '../settings';
 import { PriorityChangeEvent, PRIORITY_HISTORY_COALESCE_MS } from '../priority_history';
+import { beginQueueActionSuppression, endOperationSuppression } from '../operation_suppression'; // FORK (2026-10-10)
 
 type ReviewOverrideOptions = {
   /**
@@ -429,7 +430,7 @@ export async function handleNextRepetitionClick(
   if (!incRem) return;
 
   try {
-    await plugin.storage.setSession('plugin_operation_active', true);
+    await beginQueueActionSuppression(plugin); // FORK (2026-10-10): a lease — see operation_suppression
 
     // 1. Capture the exact new data calculated by the review
     const reviewResult = await updateReviewRemData(plugin, incRem);
@@ -458,6 +459,9 @@ export async function handleNextRepetitionClick(
     // this widget sandbox, so the actual refocus is done by the persistent
     // QueueLoadCard listener in register/events.ts.
     await requestQueueDashboardRefocus(plugin, 'handleNextRepetitionClick');
+    // FORK (2026-10-10): lift the suppression before the advance — it can tear this
+    // sandbox down, and then the finally below never runs (operation_suppression).
+    await endOperationSuppression(plugin);
     await plugin.queue.removeCurrentCardFromQueue();
   } finally {
     await plugin.storage.setSession('plugin_operation_active', false);
@@ -479,7 +483,7 @@ export async function handleNextRepetitionManualOffset(
   }
 
   try {
-    await plugin.storage.setSession('plugin_operation_active', true);
+    await beginQueueActionSuppression(plugin); // FORK (2026-10-10): a lease — see operation_suppression
 
     const targetDay = dayjs().startOf('day').add(Math.max(offsetDays, 0), 'day').valueOf();
 
@@ -531,6 +535,7 @@ export async function handleNextRepetitionManualOffset(
     await updateIncrementalRemCache(plugin as any, updatedIncRem);
 
     await requestQueueDashboardRefocus(plugin, 'handleNextRepetitionManualOffset');
+    await endOperationSuppression(plugin); // FORK (2026-10-10): before the advance, see handleNextRepetitionClick
     await plugin.queue.removeCurrentCardFromQueue();
   } finally {
     await plugin.storage.setSession('plugin_operation_active', false);
@@ -550,7 +555,7 @@ export async function rescheduleWithoutReview(
   if (!incRem) return;
 
   try {
-    await plugin.storage.setSession('plugin_operation_active', true);
+    await beginQueueActionSuppression(plugin); // FORK (2026-10-10): a lease — see operation_suppression
 
     const targetDay = dayjs().startOf('day').add(Math.max(offsetDays, 0), 'day').valueOf();
 
@@ -594,6 +599,7 @@ export async function rescheduleWithoutReview(
       history: saved,
     });
 
+    await endOperationSuppression(plugin); // FORK (2026-10-10): before the advance, see handleNextRepetitionClick
     await plugin.queue.removeCurrentCardFromQueue();
   } finally {
     await plugin.storage.setSession('plugin_operation_active', false);
