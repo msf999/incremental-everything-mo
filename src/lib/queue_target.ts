@@ -1,4 +1,4 @@
-import { RNPlugin, SelectionType } from '@remnote/plugin-sdk';
+import { QueueItemType, RNPlugin, SelectionType } from '@remnote/plugin-sdk';
 import { currentIncRemKey } from './consts';
 
 /**
@@ -34,6 +34,14 @@ export interface QueueCommandTarget {
  * The queue is on an IncRem turn only when the SDK reports no current card
  * (Plugin queue items have none) AND the session points at an injected IncRem.
  * Both halves are required — see `incRemTurnRemId` above.
+ *
+ * FORK (2026-10-10, reproduced live): and a third — RemNote must actually be
+ * showing the plugin's item. `currentIncRemKey` is cleared only when the URL leaves
+ * /flashcards, so on RemNote's own card-less screens (the finished screen,
+ * checkpoints, leech prompts) it still names the LAST IncRem shown. Opt+X on the
+ * finished screen dismissed that off-screen rem and stamped a second, fabricated
+ * review into its history. Without the plugin screen there is no IncRem turn, so
+ * a command with nothing selected now has nothing to act on.
  */
 export async function resolveQueueCommandTarget(plugin: RNPlugin): Promise<QueueCommandTarget> {
     const card = await plugin.queue.getCurrentCard();
@@ -41,7 +49,9 @@ export async function resolveQueueCommandTarget(plugin: RNPlugin): Promise<Queue
     const selType = sel?.type;
 
     const currentIncRemId = await plugin.storage.getSession<string>(currentIncRemKey);
-    const incRemTurnRemId = !card ? currentIncRemId || undefined : undefined;
+    const onPluginScreen =
+        !card && (await plugin.queue.getCurrentQueueScreenType()) === QueueItemType.Plugin; // FORK
+    const incRemTurnRemId = onPluginScreen ? currentIncRemId || undefined : undefined;
 
     // The Rem behind whatever the queue is showing right now.
     const queueItemRemId = card ? card.remId : incRemTurnRemId;

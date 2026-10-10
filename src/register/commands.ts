@@ -176,6 +176,8 @@ import {
 import { CARD_PRIORITY_CODE } from '../lib/card_priority/types';
 import { batchPriorityTargetRemIdsKey, titleCaseAcronymsId } from '../lib/consts';
 import { requestAnotherIncRem } from '../lib/queue_swap'; // FORK (Deviation 16)
+import { describeTogglePlan, resolveTogglePlan } from '../lib/toggle_incremental'; // FORK (2026-10-10)
+import type { QueueCommandTarget } from '../lib/queue_target'; // FORK (2026-10-10)
 import { getIESetting } from '../lib/settings';
 
 // Opens a priority popup against one or many rems. Single-rem calls behave
@@ -3010,14 +3012,17 @@ export async function registerCommands(plugin: ReactRNPlugin) {
   // Dismiss Incremental Rem command (Ctrl+D)
   // In Queue: replicates the Dismiss button (card priority inheritance, review time, transfer to dismissed, remove powerup)
   // In Editor: dismisses the focused Incremental Rem (transfer history to dismissed, remove powerup)
-  plugin.app.registerCommand({
-    id: dismissIncRemCommandId,
-    name: 'Dismiss Incremental Rem',
-    keyboardShortcut: 'ctrl+d',
-    quickCode: 'dis',
-    action: async () => runQueueActionOnce(async () => {
+  // FORK (2026-10-10): the action body is named so the Opt+X toggle
+  // ('toggle-incremental', registered right after) runs exactly this dismissal, and
+  // it takes OPTIONAL explicit targets so the toggle can hand over the rems it
+  // decided on instead of having them resolved a second time (live testing showed
+  // the two resolutions disagreeing). Without an argument — the Dismiss command
+  // itself — it behaves exactly as upstream's. The three changed lines are marked
+  // FORK; the rest is upstream's, left at its original indentation so a future
+  // merge of upstream edits to it stays clean.
+  const dismissTargetedIncRems = async (explicit?: { queueTarget?: QueueCommandTarget; remIds?: string[] }) => {
       const url = await plugin.window.getURL();
-      const isQueue = url && url.includes('/flashcards');
+      const isQueue = url && url.includes('/flashcards') && !explicit?.remIds; // FORK: explicit rems → the selected-rems path
 
       let rem;
       let incRemInfo;
@@ -3025,7 +3030,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       if (isQueue) {
         // Queue context: an explicit selection (previewer, sidebar, …) wins over
         // the queue item — see lib/queue_target.
-        const target = await resolveQueueCommandTarget(plugin);
+        const target = explicit?.queueTarget ?? (await resolveQueueCommandTarget(plugin)); // FORK
         const { remId } = target;
 
         if (!remId) {
@@ -3125,7 +3130,9 @@ export async function registerCommands(plugin: ReactRNPlugin) {
         // Editor context: dismiss focused Incremental Rem(s)
         // Supports both single-focus and multi-select (the latter via the
         // Omnibar-resilient selection helper).
-        const selection = await getEffectiveSelection(plugin);
+        const selection = explicit?.remIds // FORK
+          ? { type: SelectionType.Rem, remIds: explicit.remIds }
+          : await getEffectiveSelection(plugin);
         const remsToDissmiss: PluginRem[] = [];
 
         if (selection?.type === SelectionType.Rem) {
@@ -3176,6 +3183,64 @@ export async function registerCommands(plugin: ReactRNPlugin) {
             ? 'Incremental Rem dismissed.'
             : `${count} Incremental Rems dismissed.`
         );
+      }
+    };
+  plugin.app.registerCommand({
+    id: dismissIncRemCommandId,
+    name: 'Dismiss Incremental Rem',
+    keyboardShortcut: 'ctrl+d', // FORK: dropped by FORK_COMMAND_OVERRIDES — Opt+X toggles instead
+    quickCode: 'dis',
+    action: async () => runQueueActionOnce(dismissTargetedIncRems),
+  });
+
+  // FORK (2026-10-10, owner request): ONE shortcut for both directions. Opt+X makes
+  // the target incremental, or dismisses it when it already is (in the queue, on the
+  // item's own turn, that records the review and advances — the Dismiss button's
+  // behaviour). A text range is always an extract, never a dismissal. The two
+  // explicit commands keep their single meaning in the omnibar ("Extract / Tag Rem",
+  // "Dismiss Rem"); their default shortcuts are removed in fork_gates.
+  //
+  // lib/toggle_incremental.ts decides what to do AND on which rems; the actions
+  // below are told exactly those rems rather than resolving their own.
+  //
+  // The cooldown is measured from the END of the previous toggle: a double press or
+  // a held key must not make a rem incremental and dismiss it again straight away.
+  const TOGGLE_COOLDOWN_MS = 700;
+  let lastToggleEndedAt = 0;
+  plugin.app.registerCommand({
+    id: 'toggle-incremental',
+    name: 'Toggle Incremental (Make / Dismiss)',
+    description:
+      'Make the Rem incremental, or dismiss it if it already is. A text selection becomes an extract.',
+    keyboardShortcut: 'opt+x',
+    action: async () => runQueueActionOnce(async () => {
+      if (Date.now() - lastToggleEndedAt < TOGGLE_COOLDOWN_MS) return;
+      // The cooldown starts only after a press that CHANGED something. A press that only
+      // showed a toast — notably the queue's "press Opt+X again to dismiss" — must let the
+      // confirming press through however quickly it follows.
+      let acted = false;
+      try {
+        const plan = await resolveTogglePlan(plugin);
+        console.log(`[Toggle] ${describeTogglePlan(plan)}`);
+        if (plan.kind === 'none') {
+          await plugin.app.toast(plan.message);
+          return;
+        }
+        acted = true;
+        if (plan.kind === 'extract') {
+          const made = await createExtract(plugin, { selection: plan.selection });
+          if (!made && plan.selection.type !== SelectionType.Text) {
+            await plugin.app.toast('Could not extract from this reader selection with the keyboard.');
+          }
+        } else if (plan.kind === 'make') {
+          await createExtract(plugin, { selection: { type: SelectionType.Rem, remIds: plan.remIds } });
+        } else if (plan.kind === 'dismissQueueTarget') {
+          await dismissTargetedIncRems({ queueTarget: plan.target });
+        } else if (plan.kind === 'dismiss') {
+          await dismissTargetedIncRems({ remIds: plan.remIds });
+        }
+      } finally {
+        if (acted) lastToggleEndedAt = Date.now();
       }
     }),
   });

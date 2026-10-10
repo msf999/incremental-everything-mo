@@ -64,6 +64,9 @@ This needs **popups allowed for RemNote** in your browser, especially with more 
 | `Opt+T` | Next item in queue (alternate binding, same as upstream's `Cmd/Ctrl+Right`) |
 | `Opt+B` | Skip — advance without recording a review |
 | `Opt+R` | 🔄 Another item — show a different due Incremental Rem now, no review |
+| `Opt+X` | **Toggle Incremental** — make the Rem (or the selected Rems) incremental, or dismiss it if it already is. A selected piece of text becomes an extract. In the queue, with nothing selected, it acts on the item on screen |
+
+**Opt+X replaces upstream's two keys** (`Opt+X` to make incremental, `Ctrl+D` to dismiss). It acts on what you have selected, else on the Rem your cursor is in — in the queue, else on the item on screen. A selection of several Rems is dismissed only when all of them are incremental; otherwise the rest are made incremental. **In the queue a dismissal needs a second Opt+X within a few seconds** — the first press only shows a toast saying so — and Opt+X does nothing on RemNote's own screens (e.g. the finished screen) or on the "Already reviewed" row. It cannot extract text from a PDF: RemNote does not tell plugins about a selection inside its PDF viewer. Both original commands are still in the omnibar ("Incremental: Extract / Tag Rem", "Incremental: Dismiss Rem"), without a key.
 
 Two upstream defaults collided with Chrome DevTools, which matters when RemNote runs in a browser tab, and were moved: **Review in Editor** `Ctrl+Shift+J` → `Ctrl+Shift+E` (a command that is off by default here now, see below), and **Toggle Ignore Tag** `Ctrl+Shift+I` → `Ctrl+Shift+G`.
 

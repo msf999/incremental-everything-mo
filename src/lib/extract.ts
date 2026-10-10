@@ -8,9 +8,12 @@
 import {
   PluginRem,
   ReactRNPlugin,
+  ReaderSelection,
+  RemSelection,
   RICH_TEXT_FORMATTING,
   RichTextInterface,
   SelectionType,
+  TextSelection,
 } from '@remnote/plugin-sdk';
 import { currentIncRemKey } from './consts';
 import { initIncrementalRem } from '../register/powerups';
@@ -23,12 +26,25 @@ import { collectSourcePins } from './source_pins';
 
 export const createExtract = async (
   plugin: ReactRNPlugin,
-  options?: { skipInitialCascade?: boolean }
+  options?: {
+    skipInitialCascade?: boolean;
+    /**
+     * FORK (2026-10-10): act on exactly this selection instead of resolving one.
+     * The Opt+X toggle (lib/toggle_incremental.ts) decides from a selection and
+     * must act on the same one. Resolving again here could pick the 30-s selection
+     * cache, or redirect to the queue item: on a flashcard turn that made the
+     * PREVIOUS item's child incremental instead of the card's rem (reproduced live).
+     * Copied, because an empty text range is rewritten in place below.
+     */
+    selection?: RemSelection | TextSelection | ReaderSelection;
+  }
 ): Promise<PluginRem | PluginRem[] | undefined> => {
-  let selection = await getEffectiveSelection(plugin);
+  let selection = options?.selection
+    ? { ...options.selection }
+    : await getEffectiveSelection(plugin);
   const url = await plugin.window.getURL();
 
-  if (url.includes('/flashcards')) {
+  if (!options?.selection && url.includes('/flashcards')) {
     const currentQueueItem = await plugin.queue.getCurrentCard();
     let isTargetingQueueContext = false;
 
@@ -148,9 +164,20 @@ export const createExtract = async (
     // Detecting via getPowerupByCode (rather than our integration setting
     // alone) ensures users with only the standalone plugin still hit the
     // preferred path.
-    const rfqPowerup = await plugin.powerup.getPowerupByCode(
-      REMOVE_FROM_QUEUE_POWERUP_CODE
-    );
+    //
+    // FORK (2026-10-10): getPowerupByCode does NOT return undefined for a code that
+    // no active plugin registers — it THROWS "Cannot find powerup removeFromQueue".
+    // With Hide-in-Queue off (this fork's default) and no standalone Hide in Queue
+    // plugin, that aborted every text extract right here: the extract rem existed,
+    // but it was never made incremental and the source was never highlighted or
+    // pinned (found live 2026-10-10). A throw now means "not registered", so the
+    // intended fallback — Remove Parent, registered unconditionally — runs.
+    let rfqPowerup: unknown = null;
+    try {
+      rfqPowerup = await plugin.powerup.getPowerupByCode(REMOVE_FROM_QUEUE_POWERUP_CODE);
+    } catch {
+      rfqPowerup = null;
+    }
     if (rfqPowerup) {
       await rem.addPowerup(REMOVE_FROM_QUEUE_POWERUP_CODE);
     } else {

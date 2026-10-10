@@ -987,7 +987,7 @@ export function AnswerButtons() {
             ]);
             console.log('[Dismiss] Both operations settled');
           })}
-          title="Dismiss (Ctrl+D): Permanently finish item by removing its Incremental power-up"
+          title="Dismiss (or Opt+X twice — the same key makes a Rem incremental): permanently finish this item by removing its Incremental power-up"
           style={{ width: MAIN_BUTTON_WIDTH }}
         >
           <div style={buttonStyles.label}>Dismiss</div>

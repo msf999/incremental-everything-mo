@@ -486,12 +486,16 @@ export const DENIED_NATIVE_SETTINGS: ReadonlySet<string> = new Set(
  */
 const FORK_COMMAND_OVERRIDES: Record<
   string,
-  { name?: string; description?: string; keyboardShortcut?: string }
+  // `keyboardShortcut: null` REMOVES the default binding (2026-10-10).
+  { name?: string; description?: string; keyboardShortcut?: string | null }
 > = {
   // De-stutter (the prefix already says "Incremental")
-  'incremental-everything': { name: 'Extract / Tag Rem' },
+  // FORK (2026-10-10): Opt+X now runs the make/dismiss TOGGLE ('toggle-incremental',
+  // register/commands.ts); this explicit command keeps its omnibar entry, unbound.
+  'incremental-everything': { name: 'Extract / Tag Rem', keyboardShortcut: null },
   'open-incremental-editor': { name: 'Open Editor' },
-  'dismiss-inc-rem': { name: 'Dismiss Rem' },
+  // FORK (2026-10-10): Ctrl+D unbound — one shortcut (Opt+X) toggles make/dismiss.
+  'dismiss-inc-rem': { name: 'Dismiss Rem', keyboardShortcut: null },
   'reschedule-incremental': { name: 'Reschedule Rem' },
   'open-inc-rem-main-view': { name: 'Open Rems Table' },
   // Say what it does, not how it's implemented
@@ -576,6 +580,8 @@ export function installForkGates(plugin: ReactRNPlugin) {
         ...(ov.description ? { description: ov.description } : {}),
         ...(ov.keyboardShortcut ? { keyboardShortcut: ov.keyboardShortcut } : {}),
       };
+      // FORK (2026-10-10): an explicit `null` removes upstream's default binding.
+      if (ov.keyboardShortcut === null) delete command.keyboardShortcut;
     }
     return origRegisterCommand(command);
   };
