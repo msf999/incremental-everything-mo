@@ -28,6 +28,7 @@ import {
   readCardsPerRem,
   readDueCount,
   readUrgentDueCount, // FORK (Deviation 9)
+  pendingWasDisplayed, // FORK (2026-10-10): displayed candidates are never rolled back
   readGates,
   resetQueuePrefetch,
   rollbackServed,
@@ -236,6 +237,25 @@ function verifyPreviousDecision(plugin: ReactRNPlugin, queueInfo: QueueInfo) {
     tookMs: prev.totalMs,
     reason: prev.reason,
   };
+
+  // FORK (2026-10-10): the queue widget's own report outranks the counters. If it
+  // has mounted for the candidate we returned, that candidate WAS shown, whatever
+  // cardsPracticed / numCardsRemaining did meanwhile (a sync refresh moves the
+  // count on its own, and RemNote can re-run its preload for a slot it already
+  // filled). Rolling a displayed rem back would serve it a second time, straight
+  // after the user finished it — "✓ Already reviewed" where the next item should
+  // be. Confirm it and let this call decide the next slot normally (no rewind).
+  if (prev.remId !== null && pendingWasDisplayed()) {
+    confirmServed(plugin);
+    if (VERBOSE_QUEUE_INJECTION) {
+      console.log(
+        `👁 GetNextCard #${prev.seq}: IncRem ${prev.remId} was reported on screen by the queue ` +
+          `widget — confirmed regardless of the counters.`,
+        ctx
+      );
+    }
+    return;
+  }
 
   if (practicedDelta === 0) {
     // Observed so far ONLY as call #1→#2 at queue open, with the IncRem cache

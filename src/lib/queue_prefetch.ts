@@ -301,6 +301,15 @@ export function confirmServed(plugin: ReactRNPlugin) {
   burn(plugin, served.remId);
 }
 
+/**
+ * FORK (2026-10-10): true when the pending candidate has been reported on screen by
+ * the queue widget (and so burned by noteIncRemDisplayed). verifyPreviousDecision
+ * treats such a candidate as shown regardless of what RemNote's counters say.
+ */
+export function pendingWasDisplayed(): boolean {
+  return !!state.pending && state.seen.has(state.pending.remId);
+}
+
 function burn(plugin: ReactRNPlugin, remId: RemId) {
   state.seen.add(remId);
   void plugin.storage
@@ -322,7 +331,17 @@ function burn(plugin: ReactRNPlugin, remId: RemId) {
  * returned item cannot be taken back.
  */
 function noteIncRemDisplayed(plugin: ReactRNPlugin, remId: RemId) {
-  if (state.seen.has(remId) || state.pending?.remId === remId) return;
+  if (state.seen.has(remId)) return;
+  if (state.pending?.remId === remId) {
+    // FORK (2026-10-10): the pending candidate is on screen — it is consumed, whatever
+    // RemNote's counters say at the next GetNextCard. Burn it now (it stays `pending`
+    // so the confirm/rollback bookkeeping completes normally), so that neither a
+    // "same slot asked again" nor a "dropped" verdict can roll a rem the user is
+    // already reading back onto the buffer and serve it a second time — the
+    // "Already reviewed right after Next" symptom. See pendingWasDisplayed.
+    burn(plugin, remId);
+    return;
+  }
   const removed =
     state.buffer.find((c) => c.remId === remId) ?? state.deferredBuffer.find((c) => c.remId === remId);
   if (!removed) return;
@@ -375,6 +394,10 @@ export function rollbackServed(): SlimIncRem | null {
   const served = state.pending;
   if (!served) return null;
   state.pending = null;
+  // FORK (2026-10-10): a candidate the queue widget has displayed is burned
+  // (noteIncRemDisplayed) and must never go back on the buffer — it was shown,
+  // so the counter bookkeeping that already dropped it stands.
+  if (state.seen.has(served.remId)) return null;
   state.buffer.unshift(served);
   state.dueCount++;
   if (served.priority < urgentPriorityLimit) state.urgentDueCount++; // FORK (Deviation 9)
