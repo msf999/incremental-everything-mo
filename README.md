@@ -1,6 +1,6 @@
 # Mo's Incremental Everything
 
-> **This is a personal fork of [Incremental RemNote](https://github.com/bjsi/incremental-everything)** (formerly *Incremental Everything*) by Jamesb, Hugomarins and Jonathangimeno. All credit for the plugin itself — incremental reading, prioritization, scheduling, analytics, and everything else it does — belongs upstream; read their README and [documentation site](https://hugomarins.github.io/incremental-remnote/) first. This fork is **unlisted** on RemNote, tracks upstream (currently synced to upstream v1.0.150, commit `bb758b8` of 2026-10-08; this fork is version 1.0.159), and layers the changes described below on top.
+> **This is a personal fork of [Incremental RemNote](https://github.com/bjsi/incremental-everything)** (formerly *Incremental Everything*) by Jamesb, Hugomarins and Jonathangimeno. All credit for the plugin itself — incremental reading, prioritization, scheduling, analytics, and everything else it does — belongs upstream; read their README and [documentation site](https://hugomarins.github.io/incremental-remnote/) first. This fork is **unlisted** on RemNote, tracks upstream (currently synced to upstream v1.0.150, commit `bb758b8` of 2026-10-08; this fork is version 1.0.160), and layers the changes described below on top.
 
 This document only describes **what is different from upstream**. If a feature isn't mentioned here, it works exactly as in the original plugin.
 
@@ -160,6 +160,7 @@ This fork disables the upstream subsystems its owner doesn't use (everything rem
 - **Priority-change history** — upstream now records a history entry every time a priority changes; off here, so the repetition history stays a list of reviews (`priorityChangeHistory`).
 - **Media tools** — Localize External Media (store linked images/audio in RemNote, single or whole tree) and Cycle Image Size (`mediaTools`).
 - **Hold Back Spoiler IncRems** — a setting, visible under General → Queue, off by default (on upstream).
+- **Priority Bands (badges in tables)** — a setting under General → Appearance, off by default. Upstream gives every Incremental Rem that can appear as a table row (one carrying a tag of yours that has properties) a hidden *PriorityBand0–9* tag for its priority range, and draws a coloured badge such as "10s" in its table cell, since plugins cannot draw inside RemNote tables. With the setting off, nothing is tagged or drawn, and both band commands — *Refresh Priority Badges (Tables)* and *Remove All Priority Band Tags* — are hidden. To clear band tags written earlier, switch the setting on, reload, run **"Incremental: Remove All Priority Band Tags"** (it asks first, and loses no data — the tags only mirror the priority), then switch it off again.
 - Upstream's **per-type schedulers and initial intervals** (documents / videos / highlights / rems) are hidden from the settings window; the general scheduler and interval apply to every type.
 
 **Changed:** the three history sidebar tabs (Incremental / Flashcard / Visited Rems) are merged into **one "History" tab** with collapsible sections. Kept: the 📚 Inc Rems counter under document titles, the No-IncRem queue timer, Sorting Criteria, all IncRem priority tools, and repetition history (Ctrl+Shift+H). **Sorting Criteria** no longer shows *Flashcard Randomness* (only Priority Review Documents used it, and they are off), and its card ratio is titled **Incremental Rem Frequency** ("One Incremental Rem after every N flashcards") — same setting, same stored value.
@@ -171,7 +172,7 @@ Every setting now lives in the plugin's own window — open it from the omnibar 
 
 The window is reorganised into **three sections** holding the 19 settings that still do something here (settings belonging to disabled subsystems are hidden, not deleted — their stored values survive):
 
-1. **General** — split into *Queue* (queue info bar, priority chip, collapse top bar, isolated card view, spoiler hold-back) and *Appearance* (priority widget in the editor, the two left-border indicators, hiding the Dismissed tag, table badges).
+1. **General** — split into *Queue* (queue info bar, priority chip, collapse top bar, isolated card view, spoiler hold-back) and *Appearance* (priority widget in the editor, the two left-border indicators, hiding the Dismissed tag, priority bands — off by default).
 2. **Priority & Scheduling** — *Priority* (default IncRem priority, step size), then *Scheduling* (initial interval, the Default Scheduler switch — Multiplier or Saturating Curve — the multiplier, and the curve's first-review and max intervals).
 3. **Advanced** — Hide-in-Queue integration, flashcard response-time limit.
 

@@ -5,6 +5,7 @@ import {
   buildPriorityBandCSS,
   computeBandPercentiles,
   logBandColorMapping,
+  priorityBandsEnabled, // FORK (2026-10-11)
 } from './priority_bands';
 import { percentileToHslColor } from './utils';
 import {
@@ -280,6 +281,9 @@ export async function registerPdfHighlightCSS(plugin: ReactRNPlugin) {
  * which has to live inside the PDF stylesheet for ordering reasons.
  */
 export async function registerHighlightBandBadgeCSS(plugin: ReactRNPlugin) {
+  // FORK (2026-10-11): no highlight badges while priority bands are off (this CSS id is
+  // also denied with the PDF tools; the check skips the percentile computation).
+  if (!(await priorityBandsEnabled(plugin))) return;
   // Highlights are badged with the priority of the IncRem extracted from them,
   // so they rank on the IncRem scale.
   const { inc } = await computeBandPercentiles(plugin);
@@ -295,7 +299,9 @@ export async function registerHighlightBandBadgeCSS(plugin: ReactRNPlugin) {
  * what gates it.
  */
 export async function registerTableBandBadgeCSS(plugin: ReactRNPlugin) {
-  const enabled = await getIESetting(plugin, showPriorityBandsInTablesId);
+  // FORK (2026-10-11): the fork's priority-bands switch (default off) comes first.
+  const enabled =
+    (await priorityBandsEnabled(plugin)) && (await getIESetting(plugin, showPriorityBandsInTablesId));
   // Both scales are emitted; the stylesheet picks per rem from the `incremental`
   // / `cardpriority` tags the rem already carries, so a table mixing IncRems and
   // flashcards colours each on the scale its own Priority Editor uses.

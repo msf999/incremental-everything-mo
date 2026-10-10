@@ -173,6 +173,7 @@ import {
   removeAllPriorityBands,
   clearBandEligibilityCache,
   syncAllHighlightBands,
+  priorityBandsEnabled, // FORK (2026-10-11)
 } from '../lib/priority_bands';
 import { CARD_PRIORITY_CODE } from '../lib/card_priority/types';
 import { batchPriorityTargetRemIdsKey, titleCaseAcronymsId } from '../lib/consts';
@@ -1821,7 +1822,10 @@ export async function registerCommands(plugin: ReactRNPlugin) {
   // writes in tracker.ts), so this exists for two cases: the first run after
   // enabling the feature, and repairing drift from a priority written by a path
   // that predates the hooks.
-  plugin.app.registerCommand({
+  // FORK (2026-10-11): registered only while the fork's priority-bands setting is on
+  // (default off; the setting needs a reload, which re-registers commands). So is the
+  // cleanup command further down.
+  if (await priorityBandsEnabled(plugin)) plugin.app.registerCommand({
     id: 'refresh-priority-bands',
     name: 'Refresh Priority Badges (Tables and PDF highlights)',
     description:
@@ -2422,7 +2426,9 @@ export async function registerCommands(plugin: ReactRNPlugin) {
   // Band cleanup — mirrors the CardPriority cleanup above. Unlike that one this
   // destroys nothing: bands are derived from the priority slots, so "Refresh
   // Priority Badges (Tables)" rebuilds them exactly.
-  await plugin.app.registerCommand({
+  // FORK (2026-10-11, owner request): hidden like the refresh command while the fork's
+  // priority-bands setting is off.
+  if (await priorityBandsEnabled(plugin)) await plugin.app.registerCommand({
     id: 'cleanup-priority-bands',
     name: 'Remove All Priority Band Tags',
     description:

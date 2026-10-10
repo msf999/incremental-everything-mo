@@ -25,7 +25,9 @@ import {
   powerupCode,
   priorityBandVerboseLogsKey,
   prioritySlotCode,
+  priorityBandsEnabledId, // FORK (2026-10-11)
 } from './consts';
+import { getIESetting } from './settings'; // FORK (2026-10-11): the priority-bands switch
 // Import from card_priority/types, a leaf module of plain constants, NOT from
 // card_priority/index. index calls syncPriorityBand, so importing it back here
 // would form a cycle — and breaking that cycle with a dynamic import() is not an
@@ -76,6 +78,31 @@ export function bandForPriority(priority: number): number {
 /** Human label for a band, e.g. 7 -> "70s". */
 export function bandLabel(band: number): string {
   return `${band * 10}s`;
+}
+
+// FORK (2026-10-11, owner request): the whole band feature — the PriorityBand0–9 tags,
+// the badge stylesheets, the bulk refresh — is off unless the fork's "Priority Bands
+// (badges in tables)" setting is on (default off). Checked at the entry of every band
+// writer below, so every caller (priority writes, Make Incremental, transfers,
+// highlight actions, the card-priority paths) is covered without editing each one.
+// removeAllPriorityBands itself is not gated, but its command is only registered while
+// the setting is on (commands.ts). The value is cached briefly — a bulk refresh calls the per-rem
+// writer thousands of times — and the setting needs a reload to change anyway.
+const BANDS_SETTING_CACHE_MS = 2000;
+let bandsSettingCache: { value: boolean; at: number } | null = null;
+
+export async function priorityBandsEnabled(plugin: RNPlugin): Promise<boolean> {
+  if (bandsSettingCache && Date.now() - bandsSettingCache.at < BANDS_SETTING_CACHE_MS) {
+    return bandsSettingCache.value;
+  }
+  let value = false;
+  try {
+    value = (await getIESetting(plugin, priorityBandsEnabledId)) === true;
+  } catch (err) {
+    console.error('[PriorityBands] could not read the priority-bands setting; treating it as off', err);
+  }
+  bandsSettingCache = { value, at: Date.now() };
+  return value;
 }
 
 /**
@@ -344,6 +371,9 @@ export async function syncPriorityBand(
     skipHighlights?: boolean;
   }
 ): Promise<BandSyncResult> {
+  // FORK (2026-10-11): nothing is read or written while priority bands are off.
+  if (!(await priorityBandsEnabled(plugin))) return { self: false, highlights: 0, eligible: false };
+
   const { priority, isInc } = await readBadgePriority(plugin, rem);
   const desired = priority === null ? null : bandForPriority(priority);
 
@@ -490,6 +520,8 @@ export async function syncPriorityBands(
   referencedIds?: Set<string>
 ): Promise<BandSyncStats> {
   const stats: BandSyncStats = { changed: 0, eligible: 0 };
+  // FORK (2026-10-11): priority bands off — no bulk pass either.
+  if (!(await priorityBandsEnabled(plugin))) return stats;
   let done = 0;
 
   for (const remId of remIds) {
@@ -638,6 +670,8 @@ export async function syncAllHighlightBands(
   /** Ids referenced by prioritised rems; those that are highlights join the pass. */
   candidateIds?: Set<string>
 ): Promise<{ scanned: number; changed: number; noPriority: number; alreadyCorrect: number }> {
+  // FORK (2026-10-11): priority bands off — highlights are not badged either.
+  if (!(await priorityBandsEnabled(plugin))) return { scanned: 0, changed: 0, noPriority: 0, alreadyCorrect: 0 };
   // Enumerated from several sources and unioned by id. The powerup route is the
   // one that reaches highlights this plugin never touched; the pdfextract tag is
   // kept as a second source so extracted highlights cannot regress if the powerup

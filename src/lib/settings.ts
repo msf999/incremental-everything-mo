@@ -69,6 +69,7 @@ import {
   hideCardPriorityTagSettingId,
   showLeftBorderForIncRemsSettingId,
   showPriorityBandsInTablesId,
+  priorityBandsEnabledId, // FORK (2026-10-11)
   showDismissedIndicatorSettingId,
   hideDismissedTagSettingId,
   showPinRingIndicatorsSettingId,
@@ -164,6 +165,7 @@ export interface IESettings {
   [hideCardPriorityTagSettingId]: boolean;
   [showLeftBorderForIncRemsSettingId]: boolean;
   [showPriorityBandsInTablesId]: boolean;
+  [priorityBandsEnabledId]: boolean; // FORK (2026-10-11)
   [showDismissedIndicatorSettingId]: boolean;
   [hideDismissedTagSettingId]: boolean;
   [showPinRingIndicatorsSettingId]: boolean;
@@ -256,6 +258,7 @@ export const IE_SETTINGS_DEFAULTS: IESettings = {
   [hideCardPriorityTagSettingId]: true,
   [showLeftBorderForIncRemsSettingId]: true,
   [showPriorityBandsInTablesId]: true,
+  [priorityBandsEnabledId]: false, // FORK (2026-10-11): priority bands are off unless switched on
   [showDismissedIndicatorSettingId]: true,
   [hideDismissedTagSettingId]: true,
   [showPinRingIndicatorsSettingId]: false,
@@ -945,6 +948,24 @@ export const IE_SETTINGS_SCHEMA: Record<IESettingId, SettingSpec> = {
       'Draws a dashed orange outline and a link glyph on an audio player whose file lives on an ' +
       'outside server instead of in RemNote, so it would break if that server moved the file. ' +
       'Run "Store linked images & audio in RemNote" on the Rem to store it; the outline then goes.',
+  },
+  // FORK (2026-10-11, owner request): the master switch for upstream's priority bands.
+  // Upstream's own row above (badge stylesheet only) is not shown in the fork's window.
+  [priorityBandsEnabledId]: {
+    kind: 'boolean',
+    group: 'editor',
+    reloadRequired: true,
+    title: 'Priority Bands (badges in tables)',
+    description:
+      'Off by default. RemNote cannot show the priority editor inside a table, so when this is on ' +
+      'the plugin gives each Incremental Rem that can appear as a table row — one carrying a tag of ' +
+      'yours that has properties — a hidden tag for its priority range (PriorityBand0 for 0–9 up to ' +
+      'PriorityBand9 for 90–100), and draws a coloured badge such as "10s" in its cell. The tag is ' +
+      'written when a priority is set or a Rem is made incremental; after switching this on, run ' +
+      '"Incremental: Refresh Priority Badges (Tables)" once to fill in the rest. While it is off, ' +
+      'nothing is tagged or drawn and both band commands are hidden. To clear band tags written ' +
+      'earlier, switch this on, reload, run "Incremental: Remove All Priority Band Tags", then ' +
+      'switch it off again.',
   },
   [showPriorityBandsInTablesId]: {
     kind: 'boolean',

@@ -563,6 +563,11 @@ export const orphanRemIdsKey = 'orphan-rem-ids-key';
 // picked up and executed by tracker.ts in the persistent index widget.
 // Setting id AND registerCSS id for the table-cell priority badges.
 export const showPriorityBandsInTablesId = 'showPriorityBandsInTables';
+// FORK (2026-10-11, owner request): the one switch for everything priority-band — the
+// PriorityBand0–9 tags, the table-cell badges, and the Refresh command. Off by default.
+// A new id rather than a flipped default on upstream's showPriorityBandsInTables, which
+// gates only the badge stylesheet and may already be stored as true in a knowledge base.
+export const priorityBandsEnabledId = 'priority-bands-enabled';
 // Bumped whenever the band→percentile mapping should be recomputed and the band
 // stylesheets re-registered (caches warmed at startup, or a badge refresh). Same
 // pattern as pdfHighlightBordersReloadKey: registerCSS is index-only, so a

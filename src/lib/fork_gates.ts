@@ -196,7 +196,7 @@ export const FORK_IE_LAYOUT: ReadonlyArray<{
       'showLeftBorderForIncRems',
       'showDismissedIndicator',
       'hideDismissedTag',
-      'showPriorityBandsInTables',
+      'priority-bands-enabled',
     ],
     blocks: [
       {
@@ -218,7 +218,9 @@ export const FORK_IE_LAYOUT: ReadonlyArray<{
           'showLeftBorderForIncRems',
           'showDismissedIndicator',
           'hideDismissedTag',
-          'showPriorityBandsInTables',
+          // 2026-10-11: the fork's master switch for priority bands (default off) replaces
+          // upstream's badge-only 'showPriorityBandsInTables' row, which is not shown.
+          'priority-bands-enabled',
         ],
       },
     ],
