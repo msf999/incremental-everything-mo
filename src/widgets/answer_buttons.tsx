@@ -591,11 +591,17 @@ export function AnswerButtons() {
     // Synchronous first, so the user-gesture token survives for window.open.
     openExternalLinkTabsWhenOpenLinkTagged();
     const skipRemDocument = shouldSkipRemDocumentForOpenEditor;
+    // FORK (2026-10-10, reproduced live — "Open does nothing after Next, then back"):
+    // resolve the item's type BEFORE the paired dispatch, as performOpenEditorFlow
+    // does. openEditorAction() without it starts with determineIncRemType — several
+    // round trips — and removeCurrentCardFromQueue tears this sandbox down first, so
+    // the queue advanced but openRem was never sent: the editor did not open.
+    const incRemType = skipRemDocument ? undefined : await determineIncRemType(plugin, rem);
     // Dispatch together: removeCurrentCardFromQueue can tear down this sandbox
     // before a later await would resolve (same reason as the Dismiss path).
     await Promise.allSettled([
       plugin.queue.removeCurrentCardFromQueue(),
-      skipRemDocument ? Promise.resolve() : openEditorAction(),
+      skipRemDocument ? Promise.resolve() : openEditorAction(incRemType),
     ]);
   };
 
