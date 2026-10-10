@@ -6,6 +6,7 @@ import { allCardPriorityInfoKey } from '../lib/consts';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { handleMobileDetectionOnStartup, shouldUseLightMode } from '../lib/mobileUtils';
+import { registerMobileExperimentCss } from '../lib/mobile_experiments'; // MOBILE-EXPERIMENT
 import { loadCardPriorityCache } from '../lib/card_priority/cache';
 import { writeCardPriorityCache } from '../lib/card_priority/persistence';
 import { checkFlashcardPrioritisationOptOut } from '../lib/card_priority/opt_out';
@@ -224,6 +225,9 @@ async function onActivate(plugin: ReactRNPlugin) {
 
   // Mobile and Web Browser Light Mode Features
   await handleMobileDetectionOnStartup(plugin);
+  // MOBILE-EXPERIMENT M5/M6 (lib/mobile_experiments.ts): labels and the reveal rule for
+  // RemNote's queue overlay. Registers nothing outside RemNote's phone and tablet apps.
+  await registerMobileExperimentCss(plugin);
 
   // The card-priority cache, and the KB-wide pretagging pass inside it, are the
   // heaviest thing the plugin does: phase 2 applies the CardPriority powerup to

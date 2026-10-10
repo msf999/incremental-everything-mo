@@ -29,8 +29,15 @@ import { safeRemTextToString } from '../lib/pdfUtils';
 import { startIncRemEngagement, endIncRemEngagement } from '../lib/queue_session';
 import { FORK_FEATURES } from '../lib/fork_gates';
 import { useIESettingOptional } from '../lib/settings';
+import { mobileExperiment } from '../lib/mobile_experiments'; // MOBILE-EXPERIMENT
 
 type ViewMode = 'isolated' | 'context';
+
+// MOBILE-EXPERIMENT M1 (lib/mobile_experiments.ts): the container's `box-border p-2` as
+// inline style, for the phone app's frame that RemNote's stylesheet never reaches.
+const M1_CONTAINER_STYLE = mobileExperiment('inlineLayout')
+  ? { boxSizing: 'border-box' as const, padding: 8 }
+  : {};
 
 export function QueueComponent() {
   const plugin = usePlugin();
@@ -362,7 +369,7 @@ export function QueueComponent() {
 
   return (
     <div className="incremental-everything-element" style={{ height: '100%' }}>
-      <div className="box-border p-2" style={{ height: `100vh`, position: 'relative' }}>
+      <div className="box-border p-2" style={{ height: `100vh`, position: 'relative', ...M1_CONTAINER_STYLE /* MOBILE-EXPERIMENT M1 */ }}>
         {viewMode === 'context' && supportsIsolated && (
           <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 10 }}>
             <style>{`

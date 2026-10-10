@@ -13,6 +13,17 @@ const CopyPlugin = require('copy-webpack-plugin');
 const isProd = process.env.NODE_ENV === 'production';
 const isDevelopment = !isProd;
 
+// FORK (2026-10-11, Deviation 17): a production build must never ship the phone
+// experiments' desktop test switch turned on — every desktop install would get them.
+if (
+  isProd &&
+  /^const RUN_ON_DESKTOP_FOR_TESTING = true;/m.test(
+    require('fs').readFileSync(path.resolve(__dirname, 'src/lib/mobile_experiments.ts'), 'utf8')
+  )
+) {
+  throw new Error('src/lib/mobile_experiments.ts: RUN_ON_DESKTOP_FOR_TESTING must be false in a production build');
+}
+
 const fastRefresh = isDevelopment ? new ReactRefreshWebpackPlugin() : null;
 
 const SANDBOX_SUFFIX = '-sandbox';

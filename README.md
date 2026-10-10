@@ -1,6 +1,6 @@
 # Mo's Incremental Everything
 
-> **This is a personal fork of [Incremental RemNote](https://github.com/bjsi/incremental-everything)** (formerly *Incremental Everything*) by Jamesb, Hugomarins and Jonathangimeno. All credit for the plugin itself — incremental reading, prioritization, scheduling, analytics, and everything else it does — belongs upstream; read their README and [documentation site](https://hugomarins.github.io/incremental-remnote/) first. This fork is **unlisted** on RemNote, tracks upstream (currently synced to upstream v1.0.150, commit `bb758b8` of 2026-10-08; this fork is version 1.0.158), and layers the changes described below on top.
+> **This is a personal fork of [Incremental RemNote](https://github.com/bjsi/incremental-everything)** (formerly *Incremental Everything*) by Jamesb, Hugomarins and Jonathangimeno. All credit for the plugin itself — incremental reading, prioritization, scheduling, analytics, and everything else it does — belongs upstream; read their README and [documentation site](https://hugomarins.github.io/incremental-remnote/) first. This fork is **unlisted** on RemNote, tracks upstream (currently synced to upstream v1.0.150, commit `bb758b8` of 2026-10-08; this fork is version 1.0.159), and layers the changes described below on top.
 
 This document only describes **what is different from upstream**. If a feature isn't mentioned here, it works exactly as in the original plugin.
 
@@ -117,6 +117,17 @@ Set it under **General → Queue → Priority Chip in Queue Top Bar**: always sh
 ### Both queue variants
 
 Everything here works in RemNote's **Compact** and **Beautiful** queue variants. In Beautiful: the priority chip sits in the top bar's action row (next to the +, ✎ and ⋯ icons) rather than in the card's corner where upstream draws its badge; the info bar under flashcards is docked just above the answer buttons, below RemNote's AI Explanation, exactly as upstream docks its own bar; and the counter reads **`N Left + M (U)`** (upstream's suffix only appears in Compact). An Incremental Rem fills the card down to the button row, and the Options row and offset picker grow the button area while the item shrinks to make room.
+
+### On the phone: blank queue documents (experimental)
+
+In RemNote's phone app some Incremental Rems showed a white page in the queue body instead of their document. The cause could not be pinned down without a phone to test on, so this version carries a set of experimental changes that apply **only in RemNote's phone app** (and its tablet app, if that identifies itself as RemNote's app) — desktop, the web app and iPad browsers are unchanged:
+
+- The queue body's layout no longer depends on RemNote's stylesheet, which does not reach the plugin on the phone (that is why its breadcrumb showed as large black text). RemNote's document now starts below the plugin's breadcrumb row instead of covering it.
+- The document is requested a moment later, once the layout has settled, and the footer's statistics are not calculated (they were hidden behind the answer buttons anyway).
+- Two buttons at the start of the breadcrumb row: **↻ Redraw** asks RemNote to draw the document again, and **≡ Text** shows a plain-text outline of the Rem that the plugin draws itself, so there is something to read even when RemNote draws nothing. A dashed box at the top of the text view lists what the plugin can see about the Rem. On a phone, RemNote's own page header covers this row whenever the document is drawn, so the buttons are reachable on a blank page — which is when they are needed.
+- A small label at the top right of the document says what RemNote drew there: **document drawn** (green, fading to faint after a few seconds), **no document page drawn (yet)**, **overlay EMPTY**, **page hidden, RemNote editor not loaded (yet)**, **RemNote shows a source page (PDF, link, media or drawing), not the outline**, **RemNote cannot find this document**, **RemNote is still loading**, or **RemNote never showed this overlay**. Problem labels appear only after a second and a half, since every normal load passes through some of these states for a moment. **No label at all** means RemNote did not create its document view for that item. On a blank page, take a screenshot of the label first, then open ≡ Text and take one of its box — opening ≡ Text replaces RemNote's view, label included.
+
+Each part can be switched off on its own in `src/lib/mobile_experiments.ts`, and every piece of code belonging to them is marked `MOBILE-EXPERIMENT`, so whatever does not help can be removed cleanly after the phone test.
 
 ### Deterministic ordering among equal priorities
 
