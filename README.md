@@ -1,6 +1,6 @@
 # Mo's Incremental Everything
 
-> **This is a personal fork of [Incremental RemNote](https://github.com/bjsi/incremental-everything)** (formerly *Incremental Everything*) by Jamesb, Hugomarins and Jonathangimeno. All credit for the plugin itself — incremental reading, prioritization, scheduling, analytics, and everything else it does — belongs upstream; read their README and [documentation site](https://hugomarins.github.io/incremental-remnote/) first. This fork is **unlisted** on RemNote, tracks upstream (currently synced to upstream v1.0.150, commit `bb758b8` of 2026-10-08; this fork is version 1.0.155), and layers the changes described below on top.
+> **This is a personal fork of [Incremental RemNote](https://github.com/bjsi/incremental-everything)** (formerly *Incremental Everything*) by Jamesb, Hugomarins and Jonathangimeno. All credit for the plugin itself — incremental reading, prioritization, scheduling, analytics, and everything else it does — belongs upstream; read their README and [documentation site](https://hugomarins.github.io/incremental-remnote/) first. This fork is **unlisted** on RemNote, tracks upstream (currently synced to upstream v1.0.150, commit `bb758b8` of 2026-10-08; this fork is version 1.0.156), and layers the changes described below on top.
 
 This document only describes **what is different from upstream**. If a feature isn't mentioned here, it works exactly as in the original plugin.
 
@@ -19,7 +19,7 @@ Rotations are whole days: anything *between* zero and a day (`2 hours`, `30m`, `
 **`Rotation: 0` is allowed and means "always due".** Each review reschedules the item to today, which is already in the past, so it comes back in every future session until you change the rotation — it is a permanent always-in-the-queue marker, not a one-off repeat. It will not reappear within the *same* session, since the queue does not show an item twice in one sitting.
 
 - **Inheritance:** when a Rem is made incremental, it inherits the Rotation of its closest incremental ancestor. Set `Rotation: 1 week` on a project note, and every extract created under it rotates weekly.
-- The **Next** and **Open Editor** buttons show the rotation-based date in their sublabel, so you can see the override is active.
+- The **Next** and **Open** buttons show the rotation-based date in their sublabel, so you can see the override is active.
 - An unparsable value (e.g. `banana`) turns those buttons amber with an `invalid rotation` warning; reviews then fall back to the normal scheduler until you fix it.
 
 ### First Added
@@ -30,27 +30,29 @@ A date property recording the day the Rem was first made incremental in this kno
 
 The answer-button row is rebuilt into seven buttons, identical on desktop and mobile:
 
-**Previous · Next · Open Editor · 🔄 · Skip · Dismiss · ⚙️ Options**
+**Previous · Next · Open · 🔄 · Skip · Dismiss · ⚙️ Options**
+
+All of them except the small 🔄 share one width (Dismiss's), chevrons included. Under **Next** and **Open** you see when the item will next be due if you press it — just the time, e.g. `5 days` or `11.4 months`.
 
 - **Previous** steps back to the last card. Going back to something you just reviewed shows it in the *already-reviewed* state described below.
 - **Next** (blue outline) — as upstream: record a review, advance.
-- **Open Editor** (green outline) — records the review **and opens the Rem in-app** (no browser tab), so you can process it immediately. Scheduling happens before navigation, so the review is never lost.
-- **🔄 Another item** — sets this Incremental Rem aside for the rest of the session (no review, no reschedule — it stays due) and **immediately shows a different due Incremental Rem in its place**. Press it again for another. Skip leaves the same way, but what follows is whatever RemNote already lined up next, usually a flashcard; 🔄 gives you another Incremental Rem now.
+- **Open** (green outline; called *Open Editor* until 1.0.156) — records the review **and opens the Rem in-app** (no browser tab), so you can process it immediately. Scheduling happens before navigation, so the review is never lost.
+- **🔄 Another item** — sets this Incremental Rem aside for the rest of the session (no review, no reschedule — it stays due) and **immediately shows a different due Incremental Rem in its place**. Press it again for another. Which one comes is the queue's own choice for its next Incremental Rem: by priority, most overdue first among equals, with your **Sorting Criteria → randomness** applied exactly as the queue applies it (at 0 you always get the strict next one; at 20%, about one press in five draws a priority-weighted pick from the whole due list instead). Skip leaves the same way, but what follows is whatever RemNote already lined up next, usually a flashcard; 🔄 gives you another Incremental Rem now.
 - **Skip** (purple outline) — advances **without recording a review or rescheduling** (the item stays due).
 - **Dismiss** (red outline) — as upstream.
 - **⚙️ Options** toggles a second row holding the power-user tools: Reschedule, Change Priority, Review Note, the Web-Clipper URL button (when the item has one), and Help. Review with Timer, Scroll to Highlight / Bookmark and Read point join the row only when their subsystems are switched on (see *Options, off by default* and *Slimmed down* below).
 
 ### Custom scheduling: the chevron offset picker
 
-**Next**, **Open Editor** and **Skip** are split buttons. Pressing the **▼ chevron** opens a picker row beneath the buttons: a −/+ stepper with a typeable number, a **Days / Weeks / Months** toggle (months are calendar-aware), a live preview of the landing date, and one Apply button that reads back your choice (e.g. *"Next in 3 weeks"*). Enter applies, Escape closes.
+**Next**, **Open** and **Skip** are split buttons. Pressing the **▼ chevron** opens a picker row beneath the buttons: a −/+ stepper with a typeable number, a **Days / Weeks / Months** toggle (months are calendar-aware), a live preview of the landing date, and one Apply button that reads back your choice (e.g. *"Next in 3 weeks"*). Enter applies, Escape closes.
 
-The chosen offset does whatever its button does: **Next** records a review at that offset, **Open Editor** does the same and opens the editor, **Skip** reschedules with **no** review recorded.
+The chosen offset does whatever its button does: **Next** records a review at that offset, **Open** does the same and opens the editor, **Skip** reschedules with **no** review recorded.
 
 A picked offset is a **one-off**. On the Multiplier scheduler the item keeps growing from the interval it already had, so *Next in 3 weeks* does not turn a 5-day item into a 3-week one — upstream's Reschedule popup is the place to set a new base interval. A Skip-with-offset likewise moves only the date and leaves the item's rhythm alone.
 
 ### `(OpenLink)` titles
 
-If a Rem's visible title ends with `(OpenLink)` (case-sensitive), **Open Editor** (and `Ctrl+G`) opens the Rem's extracted external URL(s) in browser tabs **instead of** the Rem document — one tab per URL. Without the suffix, only the Rem document opens and URLs are never auto-opened. Useful for link-queue items you want to read at the source.
+If a Rem's visible title ends with `(OpenLink)` (case-sensitive), **Open** (and `Ctrl+G`) opens the Rem's extracted external URL(s) in browser tabs **instead of** the Rem document — one tab per URL. Without the suffix, only the Rem document opens and URLs are never auto-opened. Useful for link-queue items you want to read at the source.
 
 This needs **popups allowed for RemNote** in your browser, especially with more than one URL — browsers otherwise block the second tab onwards. If popups are blocked the item is still reviewed and the queue still advances, but no tab opens and the Rem document is not opened as a fallback.
 
@@ -58,7 +60,7 @@ This needs **popups allowed for RemNote** in your browser, especially with more 
 
 | Shortcut | Action |
 |---|---|
-| `Ctrl+G` | The full Open Editor flow from the keyboard (including `(OpenLink)` handling) |
+| `Ctrl+G` | The full **Open** flow from the keyboard, including `(OpenLink)` handling (omnibar: "Incremental: Open Editor") |
 | `Opt+T` | Next item in queue (alternate binding, same as upstream's `Cmd/Ctrl+Right`) |
 | `Opt+B` | Skip — advance without recording a review |
 | `Opt+R` | 🔄 Another item — show a different due Incremental Rem now, no review |
@@ -77,11 +79,11 @@ Two upstream defaults collided with Chrome DevTools, which matters when RemNote 
 
 An Incremental Rem whose next review is in the future still appears in the queue — it is never silently skipped — but with a different, deliberately harmless set of buttons:
 
-**Previous · ✓ Already reviewed, next in 4 days · Tue, Aug 18 · Open Editor · Next**
+**Previous · ✓ Already reviewed, next in 4 days · Tue, Aug 18 · Open · Next**
 
 You'll see this in two situations: you pressed **Previous** to go back to something you just reviewed, or you met an item that was reviewed on another device after this queue session started (the item list is built once, at the start).
 
-**None of these buttons changes the item's schedule.** *Next* simply moves on, *Previous* steps back, and *Open Editor* takes you to the Rem without recording a review — which is why Previous and Next look identical here. There is intentionally no way to re-review, reschedule or dismiss an item from this state; the point is that "already done" is visible and safe to click through.
+**None of these buttons changes the item's schedule.** *Next* simply moves on, *Previous* steps back, and *Open* takes you to the Rem without recording a review — which is why Previous and Next look identical here. There is intentionally no way to re-review, reschedule or dismiss an item from this state; the point is that "already done" is visible and safe to click through.
 
 ### Info bar under every queue item
 
@@ -118,9 +120,9 @@ When several due items share a priority, the **most overdue comes first** (both 
 ## Intentionally different / removed
 
 - Upstream's green **🎯 Target Incremental Rem** boxed read-only queue view is replaced by the editable document view described above.
-- Upstream's "Open Editor in New Tab" button is replaced by the in-app Open Editor flow.
+- Upstream's "Open Editor in New Tab" button is replaced by the in-app **Open** button.
 - The Saturday/Monday quick-reschedule dropdowns became the granular offset picker.
-- Upstream's `×1.5` / `curve` scheduler chip on the Next and Open Editor buttons is not shown; the sublabel keeps just the next date.
+- Upstream's `×1.5` / `curve` scheduler chip on the Next and Open buttons is not shown; the sublabel keeps just the next date.
 - Upstream's spoiler protection (**Hold Back Spoiler IncRems**, which holds an Incremental Rem back while one of its own flashcards is due) is **off** by default here — upstream ships it on. Switch it on under General → Queue.
 - The translated READMEs (ES, PT-BR) are removed in this fork; see upstream for translations.
 

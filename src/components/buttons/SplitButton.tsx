@@ -22,7 +22,16 @@ interface SplitButtonProps {
   title?: string;
   /** Greys out and blocks the main click area (the chevron stays usable). */
   disabled?: boolean;
+  /** FORK (2026-10-10): fixed TOTAL width — main part plus chevron. Used by the queue's
+   *  answer row so every main button matches Dismiss (95 px); the chevron narrows to
+   *  COMPACT_CHEVRON_WIDTH and the main part's side padding shrinks so the longest
+   *  sublabel ("invalid rotation", 70 px at 10 px) still fits on one line. */
+  width?: number;
 }
+
+// Chevron segment widths: the default, and the compact one used with a fixed `width`.
+const CHEVRON_WIDTH = 28;
+const COMPACT_CHEVRON_WIDTH = 18;
 
 export function SplitButton({
   children,
@@ -34,6 +43,7 @@ export function SplitButton({
   style,
   title,
   disabled = false,
+  width,
 }: SplitButtonProps) {
   const [menuOpen, setMenuOpen] = React.useState(false);
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -79,8 +89,13 @@ export function SplitButton({
       ? 'rgba(255,255,255,0.3)'
       : 'var(--rn-clr-border-primary)';
 
+  const chevronWidth = width ? COMPACT_CHEVRON_WIDTH : CHEVRON_WIDTH;
+  const fixedMain: React.CSSProperties = width
+    ? { minWidth: 0, width: width - COMPACT_CHEVRON_WIDTH, paddingLeft: 3, paddingRight: 3, whiteSpace: 'nowrap' }
+    : {};
+
   return (
-    <div ref={containerRef} style={{ position: 'relative', display: 'inline-flex' }}>
+    <div ref={containerRef} style={{ position: 'relative', display: 'inline-flex', ...(width ? { width } : {}) }}>
       {/* Main button */}
       <button
         onClick={async () => { if (!disabled) await onClick(); }}
@@ -94,6 +109,7 @@ export function SplitButton({
           borderBottomRightRadius: 0,
           borderRight: 'none',
           ...style,
+          ...fixedMain,
         }}
         onMouseEnter={(e) => {
           e.currentTarget.style.transform = 'translateY(-2px)';
@@ -118,14 +134,14 @@ export function SplitButton({
           borderBottomLeftRadius: 0,
           borderLeft: `1px solid ${chevronBorderColor}`,
           minWidth: 'unset',
-          width: '28px',
+          width: `${chevronWidth}px`,
           padding: '0 4px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           ...style,
           minWidth: 'unset',
-          width: '28px',
+          width: `${chevronWidth}px`,
           padding: '0 4px',
           borderTopLeftRadius: 0,
           borderBottomLeftRadius: 0,

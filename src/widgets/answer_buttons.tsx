@@ -19,6 +19,10 @@ import { requestAnotherIncRem } from '../lib/queue_swap'; // FORK (Deviation 16)
 // the button row (same visual convention as the ⚙️ Options row). The chevron
 // picks WHICH action the chosen offset applies to.
 type OffsetUnit = 'days' | 'weeks' | 'months';
+
+// FORK (2026-10-10, owner request): Previous, Next, Open, Skip and Dismiss share Dismiss's
+// width — the base button minimum. Split buttons count their chevron inside it.
+const MAIN_BUTTON_WIDTH = 95;
 dayjs.extend(dayjsDuration);
 
 const OFFSET_UNITS: { unit: OffsetUnit; label: string }[] = [
@@ -788,9 +792,9 @@ export function AnswerButtons() {
               border: '1px solid var(--rn-clr-green, #16a34a)',
             }}
             onClick={() => runExclusive(openEditorWithoutReview)}
-            title="Open Editor: open this Rem without re-reviewing it — its schedule stays as it is"
+            title="Open: open this Rem in the editor without re-reviewing it — its schedule stays as it is"
           >
-            <div style={buttonStyles.label}>Open Editor</div>
+            <div style={buttonStyles.label}>Open</div>
           </Button>
 
           {/* Plain secondary styling, exactly like Previous: NOTHING in this row
@@ -824,6 +828,7 @@ export function AnswerButtons() {
             await plugin.queue.goBackToPreviousCard();
           })}
           title="Previous: Go back to the previous card in the queue"
+          style={{ width: MAIN_BUTTON_WIDTH }}
         >
           <div style={buttonStyles.label}>Previous</div>
         </Button>
@@ -835,9 +840,9 @@ export function AnswerButtons() {
           title="Next (Cmd+Right / Ctrl+Right, or Opt+T): Mark as reviewed, calculate next interval, and advance to next item"
           onChevronClick={() => setOffsetRowFor((v) => (v === 'next' ? null : 'next'))}
           chevronActive={offsetRowFor === 'next'}
+          width={MAIN_BUTTON_WIDTH}
           style={{
             // Outline colouring (Dismiss-style): border + font only, neutral background.
-            minWidth: '115px',
             color: 'var(--rn-clr-blue, #3b82f6)',
             border: '1px solid var(--rn-clr-blue, #3b82f6)',
             ...warningStyle,
@@ -849,7 +854,7 @@ export function AnswerButtons() {
               invalid rotation
             </div>
           ) : (
-            <div style={buttonStyles.sublabel}><NextRepTime rem={incRemInfo} /></div>
+            <div style={buttonStyles.sublabel}><NextRepTime rem={incRemInfo} bare /></div>
           )}
         </SplitButton>
 
@@ -861,9 +866,9 @@ export function AnswerButtons() {
           // (openExternalLinkTabsWhenOpenLinkTagged) still runs in the click's own
           // tick — the user-gesture token for window.open survives the wrapper.
           onClick={() => runExclusive(performOpenEditorFlow)}
+          width={MAIN_BUTTON_WIDTH}
           style={{
             // Outline colouring (Dismiss-style): border + font only, neutral background.
-            minWidth: '100px',
             color: 'var(--rn-clr-green, #16a34a)',
             border: '1px solid var(--rn-clr-green, #16a34a)',
             ...warningStyle,
@@ -871,18 +876,18 @@ export function AnswerButtons() {
           title={
             shouldSkipRemDocumentForOpenEditor
               ? 'Open external link(s) in new tab(s), then advance the queue (title ends with "(OpenLink)" — no Rem document tab)'
-              : 'Open Editor: Open this Rem in the editor, then advance (external URLs open in tabs only when the title ends with "(OpenLink)")'
+              : 'Open (Ctrl+G): open this Rem in the editor, then advance (external URLs open in tabs only when the title ends with "(OpenLink)")'
           }
           onChevronClick={() => setOffsetRowFor((v) => (v === 'editor' ? null : 'editor'))}
           chevronActive={offsetRowFor === 'editor'}
         >
-          <div style={buttonStyles.label}>Open Editor</div>
+          <div style={buttonStyles.label}>Open</div>
           {hasInvalidRotation ? (
             <div style={{ ...buttonStyles.sublabel, color: 'var(--rn-clr-yellow, #f59e0b)' }}>
               invalid rotation
             </div>
           ) : (
-            <div style={buttonStyles.sublabel}><NextRepTime rem={incRemInfo} /></div>
+            <div style={buttonStyles.sublabel}><NextRepTime rem={incRemInfo} bare /></div>
           )}
         </SplitButton>
 
@@ -922,6 +927,7 @@ export function AnswerButtons() {
           title="Skip (Opt+B): Move to the next item without recording a review or rescheduling"
           onChevronClick={() => setOffsetRowFor((v) => (v === 'skip' ? null : 'skip'))}
           chevronActive={offsetRowFor === 'skip'}
+          width={MAIN_BUTTON_WIDTH}
           style={{
             // Outline colouring (Dismiss-style): border + font only, neutral background.
             color: 'var(--rn-clr-purple, #8b5cf6)',
@@ -982,6 +988,7 @@ export function AnswerButtons() {
             console.log('[Dismiss] Both operations settled');
           })}
           title="Dismiss (Ctrl+D): Permanently finish item by removing its Incremental power-up"
+          style={{ width: MAIN_BUTTON_WIDTH }}
         >
           <div style={buttonStyles.label}>Dismiss</div>
         </Button>
@@ -1007,7 +1014,7 @@ export function AnswerButtons() {
           offsetRowFor === 'next'
             ? `Next in ${offsetValue} ${unitWord}`
             : offsetRowFor === 'editor'
-              ? `Open Editor in ${offsetValue} ${unitWord}`
+              ? `Open in ${offsetValue} ${unitWord}`
               : `Skip to ${offsetValue} ${unitWord}`;
         // Outline colouring per mode, matching the main buttons (border + font only).
         const applyStyle =
@@ -1056,7 +1063,7 @@ export function AnswerButtons() {
             }}
           >
             <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--rn-clr-content-tertiary)' }}>
-              {offsetRowFor === 'next' ? 'Next in:' : offsetRowFor === 'editor' ? 'Open Editor in:' : 'Skip to (no review):'}
+              {offsetRowFor === 'next' ? 'Next in:' : offsetRowFor === 'editor' ? 'Open in:' : 'Skip to (no review):'}
             </span>
 
             {/* Stepper: − [n] + */}

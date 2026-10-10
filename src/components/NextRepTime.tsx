@@ -11,6 +11,9 @@ export interface NextRepTimeProps {
   rem: IncrementalRem;
   /** Lead with a chip naming the scheduler that produced the interval. */
   showScheduler?: boolean;
+  /** FORK (2026-10-10, owner request): drop the leading "in " — the queue answer row's
+   *  Next / Open second line reads "5 days", not "in 5 days". */
+  bare?: boolean;
 }
 
 export function durationToHumanReadable(duration: any) {
@@ -88,7 +91,7 @@ export function NextRepTime(props: NextRepTimeProps): React.ReactElement {
           {described.chip}
         </span>
       )}
-      in {shortVersion}
+      {props.bare ? shortVersion : `in ${shortVersion}`}
     </>
   );
 }
