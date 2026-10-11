@@ -2,7 +2,7 @@
 // FORK (2026-10-11, owner request): what the queue needs to draw a Rem's icon the way
 // RemNote does — its own icon (an emoji, or one of RemNote's coloured folder and document
 // pictures), whether it is a folder, and whether it is a document. Used by
-// components/QueueHierarchy.tsx.
+// components/QueueBreadcrumb.tsx.
 //
 // Where RemNote keeps them: on the Document powerup ('o'), in two hidden properties —
 // Bullet Icon ('b', written by RemNote's emoji picker) and Is Folder ('f', "true" for a
@@ -14,7 +14,7 @@
 //     emoji;
 //   - otherwise a folder gets RemNote's folder picture (a "-dark" variant in dark mode),
 //   - and a document RemNote's document icon (owner decision: the same page icon RemNote
-//     draws in front of a flashcard's document, components/QueueHierarchy.tsx).
+//     draws in front of a flashcard's document, components/QueueBreadcrumb.tsx).
 //
 // How they are read, and why not through rem.getPowerupProperty: for a built-in powerup the
 // SDK (0.0.46) translates the property NAME into its code through its own table, which

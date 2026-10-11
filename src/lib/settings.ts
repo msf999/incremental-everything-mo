@@ -669,8 +669,10 @@ export const IE_SETTINGS_SCHEMA: Record<IESettingId, SettingSpec> = {
     max: 50,
     integer: true,
     title: 'Priority Step Size',
+    // FORK (2026-10-11): upstream's text named Ctrl+Shift; the two commands bind
+    // ctrl+opt+up / ctrl+opt+down (register/commands.ts).
     description:
-      'Step used by the quick priority increase/decrease shortcuts (Ctrl+Shift+Up/Down).',
+      'Step used by the quick priority increase/decrease shortcuts (Ctrl+Opt+Up/Down).',
   },
   [priorityEditorDisplayModeId]: {
     kind: 'dropdown',

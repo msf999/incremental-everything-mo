@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { PluginRem, RNPlugin, RemId, ReactRNPlugin } from '@remnote/plugin-sdk';
 import { safeRemTextToString } from '../lib/pdfUtils';
 import { QueueBreadcrumb } from './QueueBreadcrumb'; // FORK (2026-10-11): ancestors with RemNote's icons
+import { keepFocusWithRemNote } from '../lib/keep_focus_with_remnote'; // FORK (2026-10-11)
 import { createRemFromHighlight } from '../lib/highlightActions';
 import { ActionItemType } from '../lib/incremental_rem/types';
 import { TypeBadge } from './TypeBadge';
@@ -214,7 +215,12 @@ export function IsolatedCardViewer({
   };
 
   return (
-    <div style={containerStyle}>
+    // FORK (2026-10-11, review, reproduced live): a click anywhere on this card, its header,
+    // its text or the space around it left keyboard focus inside the plugin, where neither
+    // RemNote's shortcuts nor the plugin's reach anything (lib/keep_focus_with_remnote.ts).
+    // The content box stays natively selectable for copying, scrollbar and image included
+    // (`data-ie-selectable` below).
+    <div style={containerStyle} {...keepFocusWithRemNote}>
       <div style={cardStyle}>
         {/* Header with breadcrumbs */}
         <div style={headerStyle}>
@@ -228,7 +234,7 @@ export function IsolatedCardViewer({
         </div>
 
         {/* Main content */}
-        <div style={contentStyle}>
+        <div style={contentStyle} data-ie-selectable>
           {content.type === 'image' ? (
             <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%' }}>
               <img

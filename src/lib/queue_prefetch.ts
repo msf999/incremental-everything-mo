@@ -386,6 +386,30 @@ function noteIncRemDisplayed(plugin: ReactRNPlugin, remId: RemId) {
 }
 
 /**
+ * FORK (2026-10-11, review, reproduced live): mark rems as seen that were on screen in this
+ * session before the plugin restarted. The activation bootstrap re-runs queue entry, which
+ * empties the seen list and rebuilds the buffers (Deviation 15's re-activation residue), so
+ * such a rem could be served once more. That residue became visible with a 🔄 swap, which now
+ * survives the restart: the set-aside rem was served again, and the surviving swap showed the
+ * swapped-in rem in its place, already reviewed. Takes each rem out of the buffers and counts
+ * as noteIncRemDisplayed does, and burns it even when no buffer holds it.
+ */
+export function markShownThisSession(plugin: ReactRNPlugin, remIds: RemId[]) {
+  for (const remId of remIds) {
+    if (state.seen.has(remId)) continue;
+    const removed =
+      state.buffer.find((c) => c.remId === remId) ?? state.deferredBuffer.find((c) => c.remId === remId);
+    if (removed) {
+      state.buffer = state.buffer.filter((c) => c.remId !== remId);
+      state.deferredBuffer = state.deferredBuffer.filter((c) => c.remId !== remId);
+      if (state.dueCount > 0) state.dueCount--;
+      if (removed.priority < urgentPriorityLimit && state.urgentDueCount > 0) state.urgentDueCount--;
+    }
+    burn(plugin, remId);
+  }
+}
+
+/**
  * Commits any still-unconfirmed item at queue exit.
  *
  * Confirmation normally arrives on the FOLLOWING GetNextCard call, which never
@@ -639,9 +663,10 @@ async function verifyCandidate(
  * priority-weighted lottery, then verify the top candidates in parallel.
  *
  * The selection semantics are deliberately identical to the old inline
- * implementation — same sort key, same mode-dependent filters, same lottery,
- * same exclusion of already-seen rems — so this is a change of WHEN the work
- * happens, not WHAT it decides.
+ * implementation — same sort key, same lottery, same exclusion of already-seen
+ * rems — so this is a change of WHEN the work happens, not WHAT it decides.
+ * (FORK, 2026-10-11: one difference since — only due rems, in every mode; see the
+ * filter below.)
  */
 export async function buildQueuePrefetch(
   plugin: ReactRNPlugin,
@@ -689,7 +714,7 @@ export async function buildQueuePrefetch(
     const scope = scopeRaw;
     const scopeSet = scope ? new Set(scope) : null;
 
-    // FORK (Deviation 15 / bug-hunt #15): hoist the scope position lookup out of
+    // FORK (bug-hunt #15): hoist the scope position lookup out of
     // the sort projection. `_` is remeda, which re-runs projections per comparison
     // with no memoisation, so `scope.indexOf(...)` inside made this ~2·N·log₂N
     // linear scans of the scope array.
@@ -719,16 +744,15 @@ export async function buildQueuePrefetch(
 
     const now = Date.now();
     const excluded = state.pending ? new Set([...state.seen, state.pending.remId]) : state.seen;
+    // FORK (2026-10-11, owner decision, reproduced live): only due Incremental Rems, in
+    // every mode. Upstream served every Incremental Rem in scope in a document's Practice
+    // All and Practice in Order, due or not — and the fork shows an item that is not due
+    // with its already-reviewed row (Deviation 8), so those items could not be reviewed at
+    // all. 'in-order' keeps its document order (the sort above).
     const filtered = sorted.filter((x) => {
       if (info.subQueueId && scopeSet && !scopeSet.has(x.remId)) return false;
       if (excluded.has(x.remId)) return false;
-      switch (info.mode) {
-        case 'practice-all':
-        case 'in-order':
-          return true;
-        default:
-          return now >= x.nextRepDate;
-      }
+      return now >= x.nextRepDate;
     });
 
     // In 'in-order' mode `filtered` is in document order, not priority order, so
@@ -877,6 +901,11 @@ export function registerPrefetchTrackers(plugin: ReactRNPlugin) {
     if (!req || req.nonce === lastSwapNonce) return;
     lastSwapNonce = req.nonce;
     const current = await plugin.storage.getSession<QueueSlotSwap | null>(queueSlotSwapKey);
+    // FORK (2026-10-11, review, reproduced live): an answered request stays in session storage,
+    // and lastSwapNonce starts empty again when the plugin restarts — so the tracker's first run
+    // after a restart answered the old request once more, replacing the swap on screen (there:
+    // with "none", putting the set-aside item back). The answer carries its request's nonce.
+    if (current?.nonce === req.nonce) return;
     const slotRemId =
       current && current.showRemId === req.currentRemId ? current.slotRemId : req.currentRemId;
     // The rem being set aside is on screen: consume it for the session BEFORE taking a

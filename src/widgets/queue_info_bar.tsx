@@ -39,7 +39,6 @@ import {
 import {
   queueInfoBarModeId,
   isMobileDeviceKey,
-  incrementalQueueActiveKey,
   allIncrementalRemKey,
 } from '../lib/consts';
 import { useIESetting } from '../lib/settings';
@@ -47,6 +46,8 @@ import { IncrementalRem } from '../lib/incremental_rem';
 import { resolveQueuePriority } from '../lib/queue_priority_source';
 import { reportQueueInfoBarHeight } from '../lib/queue_info_bar_dock';
 import { calculateRelativePercentile, percentileToHslColor } from '../lib/utils';
+import { keepFocusWithRemNote } from '../lib/keep_focus_with_remnote'; // FORK (2026-10-11)
+import { useIncRemOnScreen } from '../lib/queue_screen'; // FORK (2026-10-11)
 
 function QueueInfoBar() {
   const plugin = usePlugin();
@@ -101,9 +102,10 @@ function QueueInfoBar() {
         await plugin.storage.setSession('clusterVisibleCardId', cardId);
         await plugin.storage.setSession('clusterVisibleCardLoadTime', Date.now());
         // FORK (2026-08-15, review §2.7): `clusterVisibleRemId` is NOT written here.
-        // It has zero readers anywhere in the codebase (the only other writer is the
-        // denied card_info_bar), and producing it cost a plugin.card.findOne on every
-        // card transition. The two keys above ARE read, by events.ts, to attribute a
+        // Its one reader is register/true_false.ts, wired only with `clozeTools` (off);
+        // the only other writer is the denied card_info_bar, and producing it cost a
+        // plugin.card.findOne on every card transition — write it again before enabling
+        // clozeTools. The two keys above ARE read, by events.ts, to attribute a
         // rating and a history entry to the cluster sibling actually on screen.
       } catch (e) {
         console.error('[QueueInfoBar] failed to broadcast cluster-visible signals', e);
@@ -134,15 +136,6 @@ function QueueInfoBar() {
     };
   }, [plugin]);
 
-  // While a plugin (IncRem) item is on screen its own bar is drawn by
-  // answer_buttons — bail so the two never stack. This is the same discriminator
-  // upstream's card_info_bar uses; note it is about the QUEUE ITEM, not the rem:
-  // a flashcard whose rem happens to be an IncRem still gets this bar.
-  const isIncrementalQueueActive = useTrackerPlugin(
-    (rp) => rp.storage.getSession<boolean>(incrementalQueueActiveKey),
-    []
-  );
-
   const allIncRems =
     useTrackerPlugin(
       async (rp) => (await rp.storage.getSession<IncrementalRem[]>(allIncrementalRemKey)) || [],
@@ -157,6 +150,14 @@ function QueueInfoBar() {
     false;
 
   const shouldShow = shouldShowQueueInfoBar(mode, false, isMobile);
+
+  // While a plugin (IncRem) item is on screen its own bar is drawn by
+  // answer_buttons — bail so the two never stack. Note it is about the QUEUE ITEM,
+  // not the rem: a flashcard whose rem happens to be an IncRem still gets this bar.
+  // FORK (2026-10-11): asked of RemNote's screen type rather than upstream's session
+  // flag (what card_info_bar uses), which can stay set on the flashcard after an
+  // Incremental Rem and hid this bar there (lib/queue_screen.ts).
+  const isIncrementalQueueActive = useIncRemOnScreen(shouldShow);
 
   const info = useTrackerPlugin(
     async (rp) => {
@@ -255,7 +256,8 @@ function QueueInfoBar() {
       : QUEUE_PRIORITY_NEUTRAL_COLOR;
 
   return (
-    <div ref={barRef} style={{ padding: QUEUE_INFO_BAR_OUTER_PADDING }}>
+    // FORK (2026-10-11): a click on the bar leaves keyboard focus with RemNote — lib/keep_focus_with_remnote.ts.
+    <div ref={barRef} {...keepFocusWithRemNote} style={{ padding: QUEUE_INFO_BAR_OUTER_PADDING }}>
       <div style={getQueueInfoBarStyle(priorityColor)}>
         {/* The card's band is ringed in the bar — for a card, that is its
             document's priority, the same value the toolbar chip shows. */}
@@ -265,7 +267,7 @@ function QueueInfoBar() {
             toolbar's P-chip (widgets/queue_priority_chip.tsx), which shows
             "P50 (92.5%)" and explains the source and the percentile on hover —
             one place for priority instead of two. The resolution is still done
-            here, but only to colour the bar's left border. */}
+            here, to colour the bar's left border and ring the band above. */}
         <span style={{ color: 'var(--rn-clr-content-tertiary)' }}>|</span>
         <span>
           <strong>{info.reps}</strong> Reps, <strong>{info.totalMinutes}</strong> min

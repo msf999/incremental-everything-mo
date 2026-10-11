@@ -85,6 +85,7 @@ import { handleReviewInEditorRem } from '../lib/review_actions';
 
 import { handleCardPriorityInheritance } from '../lib/card_priority/card_priority_inheritance';
 import { useIESetting } from '../lib/settings';
+import { handFocusBackToRemNote } from '../lib/keep_focus_with_remnote'; // FORK (2026-10-11)
 
 export function AnswerButtons() {
   const plugin = usePlugin();
@@ -449,6 +450,11 @@ export function AnswerButtons() {
   // (Next / Reschedule / Dismiss) — see stampNoteAndContext in lib/history_notes.
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteText, setNoteText] = useState('');
+  // FORK (2026-10-11, review, reproduced live): the note box takes keyboard focus only when the
+  // user opens it. Reopened on its own for a parked note, it took focus inside this frame the
+  // moment the item appeared, and the next shortcut (Opt+T) went into the note instead of to
+  // RemNote.
+  const [noteFocusOnOpen, setNoteFocusOnOpen] = useState(false);
   const currentRemId = baseData?.rem?._id;
   useEffect(() => {
     // New card: reset the input, then prefill from a previously parked note
@@ -466,6 +472,7 @@ export function AnswerButtons() {
       if (stale) return;
       if (parked) {
         setNoteText(parked);
+        setNoteFocusOnOpen(false); // FORK (2026-10-11): shown, not focused
         setNoteOpen(true);
       }
     });
@@ -626,6 +633,9 @@ export function AnswerButtons() {
       // without advancing is fine (and arguably what the user wants next), but
       // the queue must keep the item; updateReviewRemData has already toasted.
       if (!reviewResult) {
+        // FORK (2026-10-11, review): lift the lease first — opening the editor tears this
+        // widget down before the finally runs (lib/operation_suppression.ts).
+        await endOperationSuppression(plugin);
         await openEditorAction();
         return;
       }
@@ -667,8 +677,21 @@ export function AnswerButtons() {
     // the widget is not destroyed before the review is recorded") and the sibling
     // performOpenEditorFlow follows it. It also defeated the #9 guard: a "could not
     // save" toast surfaced after the user had already left the queue.
-    await runManualNext(offsetDays);
-    await openEditorAction(incRemType);
+    //
+    // FORK (2026-10-11, reproduced live): but not the queue ADVANCE. Awaiting all of
+    // runManualNext, which ends by removing the card, let the advance tear this widget
+    // down first: the review was recorded, the queue moved on, the editor never opened.
+    // Record the review without advancing, then send both together — performOpenEditorFlow's
+    // order. A failed write (already toasted) opens the editor and keeps the item, as there.
+    const saved = await handleNextRepetitionManualOffset(plugin, incRemInfo, offsetDays, { advanceQueue: false });
+    if (!saved) {
+      await openEditorAction(incRemType);
+      return;
+    }
+    await Promise.allSettled([
+      plugin.queue.removeCurrentCardFromQueue(),
+      openEditorAction(incRemType),
+    ]);
   };
 
   // FORK (2026-08-14, bug-hunt #52 + #59): `!== null`, not truthiness —
@@ -928,25 +951,6 @@ export function AnswerButtons() {
           <div style={{ fontSize: 20, lineHeight: 1 }}>🔄</div>
         </Button>
 
-        <SplitButton
-          variant="secondary"
-          disabled={isBusy}
-          onClick={() => runExclusive(async () => {
-            await plugin.queue.removeCurrentCardFromQueue();
-          })}
-          title="Skip (Opt+B): Move to the next item without recording a review or rescheduling"
-          onChevronClick={() => setOffsetRowFor((v) => (v === 'skip' ? null : 'skip'))}
-          chevronActive={offsetRowFor === 'skip'}
-          width={MAIN_BUTTON_WIDTH}
-          style={{
-            // Outline colouring (Dismiss-style): border + font only, neutral background.
-            color: 'var(--rn-clr-purple, #8b5cf6)',
-            border: '1px solid var(--rn-clr-purple, #8b5cf6)',
-          }}
-        >
-          <div style={buttonStyles.label}>Skip</div>
-        </SplitButton>
-
         <Button
           variant="danger"
           disabled={isBusy}
@@ -1010,13 +1014,37 @@ export function AnswerButtons() {
         >
           <div style={buttonStyles.label}>⚙️ Options</div>
         </Button>
+
+        {/* FORK (2026-10-11, owner request): Skip goes last — Previous first, Skip last. */}
+        <SplitButton
+          variant="secondary"
+          disabled={isBusy}
+          onClick={() => runExclusive(async () => {
+            await plugin.queue.removeCurrentCardFromQueue();
+          })}
+          title="Skip (Opt+B): Move to the next item without recording a review or rescheduling"
+          onChevronClick={() => setOffsetRowFor((v) => (v === 'skip' ? null : 'skip'))}
+          chevronActive={offsetRowFor === 'skip'}
+          width={MAIN_BUTTON_WIDTH}
+          style={{
+            // Outline colouring (Dismiss-style): border + font only, neutral background.
+            color: 'var(--rn-clr-purple, #8b5cf6)',
+            border: '1px solid var(--rn-clr-purple, #8b5cf6)',
+          }}
+        >
+          <div style={buttonStyles.label}>Skip</div>
+        </SplitButton>
       </div>
       )}
 
       {/* Offset picker — opened by the chevrons on Next / Open Editor / Skip.
           Number stepper + unit toggle + live landing date + one Apply button.
           Same visual convention as the ⚙️ Options row below. */}
-      {offsetRowFor && (() => {
+      {/* FORK (2026-10-11, reproduced live): `!isProcessed` — as for the ⚙️ Options panel
+          below. An item whose due date moves into the future while the picker is open (a
+          review on another device, a date changed by hand) switches to the already-reviewed
+          row, and the picker's Apply would still have recorded a review there. */}
+      {!isProcessed && offsetRowFor && (() => {
         const offsetDays = offsetToDays(offsetValue, offsetUnit);
         const landing = dayjs().startOf('day').add(offsetDays, 'day');
         const unitWord = offsetValue === 1 ? offsetUnit.slice(0, -1) : offsetUnit;
@@ -1109,6 +1137,9 @@ export function AnswerButtons() {
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') runApply();
                   if (e.key === 'Escape') setOffsetRowFor(null);
+                  // FORK (2026-10-11, review): the row closes and this field with it; hand the
+                  // keyboard back to RemNote, or the next shortcut is lost in this frame.
+                  if (e.key === 'Enter' || e.key === 'Escape') handFocusBackToRemNote();
                   e.stopPropagation();
                 }}
                 style={{
@@ -1232,7 +1263,10 @@ export function AnswerButtons() {
           )}
 
           <Button
-            onClick={() => setNoteOpen((o) => !o)}
+            onClick={() => {
+              setNoteFocusOnOpen(true); // FORK (2026-10-11): opened by the user — focus it
+              setNoteOpen((o) => !o);
+            }}
             style={{ color: noteOpen || noteText ? 'var(--rn-clr-green, #16a34a)' : undefined }}
             title="Review note: attach an observation to this repetition's history entry (saved when you press Next / Reschedule / Dismiss)"
           >
@@ -1322,7 +1356,7 @@ export function AnswerButtons() {
           <span style={{ fontSize: '13px' }}>📝</span>
           <input
             type="text"
-            autoFocus
+            autoFocus={noteFocusOnOpen}
             value={noteText}
             maxLength={MAX_NOTE_LENGTH}
             placeholder="Observation for this repetition (saved with Next / Reschedule / Dismiss)…"
@@ -1333,6 +1367,7 @@ export function AnswerButtons() {
             onKeyDown={(e) => {
               if (e.key === 'Escape') {
                 setNoteOpen(false);
+                handFocusBackToRemNote(); // FORK (2026-10-11, review): as the offset field's Escape
               }
               // Keep queue shortcuts from firing while typing.
               e.stopPropagation();

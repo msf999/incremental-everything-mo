@@ -54,8 +54,9 @@ export async function togglePdfHighlightBorders(plugin: ReactRNPlugin): Promise<
  * Registers CSS to display the incremental rem counter next to the flashcard counter.
  *
  * Renders ` + ${count}` after RemNote's native card counter (so the top bar reads
- * `1440 + 1610`). When `priorityBuckets` is provided, also appends the due IncRems'
- * priority distribution `[0-10, 11-30, 31-60, 61-100]`, e.g. `1440 + 1610 (x, y, z, u)`.
+ * `1440 + 1610`), plus — when `urgentCount` is given — the due IncRems below priority 10 in
+ * parentheses: `1440 + 1610 (1064)`. FORK: `priorityBuckets` only feeds the console line;
+ * the four-bucket distribution left the counter for the queue info bar (Deviation 14).
  *
  * @param plugin Plugin instance
  * @param count Number of due incremental rems to display

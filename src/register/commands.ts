@@ -1352,7 +1352,15 @@ export async function registerCommands(plugin: ReactRNPlugin) {
 
       // Determine context (queue vs editor) for event type
       const isQueue = url.includes('/flashcards');
-      const context = (isQueue && isTargetingQueueContext) ? 'queue' : 'editor';
+      // FORK (2026-10-11, review, reproduced live): 'queue' only while RemNote shows OUR item.
+      // On a flashcard whose Rem is an Incremental Rem, the queue context recorded a
+      // 'rescheduledInQueue' entry with a review time from the last Incremental Rem shown (168 s)
+      // and removed the flashcard from the queue unrated. The editor context reschedules the Rem
+      // and leaves the card to be rated; it also stops a reschedule from RemNote's finished
+      // screen (which reads the last Incremental Rem shown) from advancing that screen.
+      const onPluginScreen =
+        isQueue && (await plugin.queue.getCurrentQueueScreenType()) === QueueItemType.Plugin;
+      const context = (isQueue && isTargetingQueueContext && onPluginScreen) ? 'queue' : 'editor';
 
       console.log(`Opening 'reschedule' popup for remId: ${remId}, context: ${context}`);
       await plugin.widget.openPopup('reschedule', {
@@ -3024,9 +3032,11 @@ export async function registerCommands(plugin: ReactRNPlugin) {
   // it takes OPTIONAL explicit targets so the toggle can hand over the rems it
   // decided on instead of having them resolved a second time (live testing showed
   // the two resolutions disagreeing). Without an argument — the Dismiss command
-  // itself — it behaves exactly as upstream's. The three changed lines are marked
-  // FORK; the rest is upstream's, left at its original indentation so a future
-  // merge of upstream edits to it stays clean.
+  // itself — it behaves as upstream's apart from the lines marked FORK (the three that
+  // take the explicit targets, the cardSurface gate on card-priority inheritance, the
+  // priority stamp, and — 2026-10-11 — no second 'rep' for an already-reviewed item).
+  // The rest is upstream's, left at its original indentation so a future merge of
+  // upstream edits to it stays clean.
   const dismissTargetedIncRems = async (explicit?: { queueTarget?: QueueCommandTarget; remIds?: string[] }) => {
       const url = await plugin.window.getURL();
       const isQueue = url && url.includes('/flashcards') && !explicit?.remIds; // FORK: explicit rems → the selected-rems path
@@ -3076,13 +3086,17 @@ export async function registerCommands(plugin: ReactRNPlugin) {
         if (FORK_FEATURES.cardSurface) await handleCardPriorityInheritance(plugin, rem, incRemInfo);
 
         // 2/3. Record the review that is ending — ONLY on a real IncRem turn.
-        // `incremReviewStartTimeKey` is stamped when the queue injects an IncRem
+        // `incremReviewStartTimeKey` is stamped when an IncRem appears in the queue
         // and is never cleared afterwards, so on any other turn it still points
         // at an earlier item; using it here fabricated a rep whose duration was
         // the time since some unrelated IncRem was shown.
         const updatedHistory = [...(incRemInfo.history || [])];
+        // FORK (2026-10-11, owner request, reproduced live): an item already reviewed — the
+        // Deviation 8 row, reached with Previous or met after another device moved its date —
+        // is dismissed without a second 'rep' for the same sitting.
+        const alreadyReviewed = Date.now() < incRemInfo.nextRepDate;
 
-        if (isActiveIncRemTurn) {
+        if (isActiveIncRemTurn && !alreadyReviewed) {
           const startTime = await plugin.storage.getSession<number>(incremReviewStartTimeKey);
           const reviewTimeSeconds = startTime ? dayjs().diff(dayjs(startTime), 'second') : 0;
 
@@ -3252,6 +3266,45 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     }),
   });
 
+  // FORK (2026-10-11, review, reproduced live): the Incremental Rem the queue shortcuts below
+  // act on (Next, Skip, Another Item, Open) — the one RemNote shows as OUR item, named by
+  // currentIncRemKey. On a flashcard there is none, even when the card's Rem is itself an
+  // Incremental Rem (an extract with a `Question >> Answer` on it): they used to take the
+  // card's Rem for the item, so Opt+T recorded an Incremental review on it, moved its next
+  // date and dropped the card unrated (reproduced), Opt+B dropped the card and Opt+R set the
+  // Rem aside. On RemNote's card-less screens (finished, checkpoints) there is none either:
+  // currentIncRemKey still names the last Incremental Rem shown (UPSTREAM_ISSUES #15).
+  // Toasts and returns undefined when there is none.
+  const incRemIdForQueueShortcut = async (): Promise<string | undefined> => {
+    if ((await plugin.queue.getCurrentQueueScreenType()) === QueueItemType.Plugin) {
+      const remId = await plugin.storage.getSession<string>(currentIncRemKey);
+      if (remId) return remId;
+    } else if ((await plugin.queue.getCurrentCard())?.remId) {
+      await plugin.app.toast('This command works on Incremental Rems only — rate flashcards with RemNote’s own keys.');
+      return undefined;
+    }
+    await plugin.app.toast('No Incremental Rem currently active in the queue.');
+    return undefined;
+  };
+
+  // FORK (2026-10-11, review, reproduced live): after one of these shortcuts has moved the queue
+  // on, keep runQueueActionOnce's guard held until the next item has announced itself. RemNote
+  // reports the Plugin screen as soon as it shows the next Incremental Rem, but currentIncRemKey
+  // names it only once that item's widget has loaded (~0.5 s later), so a second press in
+  // between acted on the item just left. Reproduced: Opt+T, and Opt+T again the moment the next
+  // item's frame appeared — the first item was already reviewed, so the second press took the
+  // already-reviewed branch and dropped the next item unreviewed. (Auto-repeat of a held key does
+  // not reach plugin commands; two presses do.) Returns once RemNote shows something else than a
+  // plugin item, or the key names another item, or after 1.5 s.
+  const waitForNextQueueItem = async (leftRemId: string) => {
+    const until = Date.now() + 1500;
+    while (Date.now() < until) {
+      if ((await plugin.queue.getCurrentQueueScreenType()) !== QueueItemType.Plugin) return;
+      if ((await plugin.storage.getSession<string>(currentIncRemKey)) !== leftRemId) return;
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+  };
+
   // Next item in the queue action.
   // Only works in the queue with an Incremental Rem active.
   // Replicates the Next button logic: PDF page history + handleNextRepetitionClick.
@@ -3267,22 +3320,12 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       return;
     }
 
-    // Get current incremental rem
-    const currentQueueItem = await plugin.queue.getCurrentCard();
-    let remId = currentQueueItem?.remId;
-
-    // FORK (2026-10-10, reproduced live): only while RemNote shows OUR item. On its
-    // card-less screens (finished, checkpoints) currentIncRemKey still names the last
-    // IncRem shown, and Opt+T there recorded a review of that off-screen rem and
-    // rescheduled it. Same rule as lib/queue_target.ts (UPSTREAM_ISSUES #15).
-    if (!remId && (await plugin.queue.getCurrentQueueScreenType()) === QueueItemType.Plugin) {
-      remId = (await plugin.storage.getSession<string>(currentIncRemKey)) || undefined;
-    }
-
-    if (!remId) {
-      await plugin.app.toast('No Incremental Rem currently active in the queue.');
-      return;
-    }
+    // FORK (2026-10-10 / 2026-10-11, reproduced live): only the item RemNote shows as ours —
+    // see incRemIdForQueueShortcut. On RemNote's finished screen Opt+T used to record a review
+    // of the last Incremental Rem shown, and on a flashcard whose Rem is an Incremental Rem a
+    // review of that Rem.
+    const remId = await incRemIdForQueueShortcut();
+    if (!remId) return;
 
     const rem = await plugin.rem.findOne(remId);
     if (!rem) {
@@ -3306,8 +3349,9 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     // keyboard Next does what that row's Next button does — move on, recording nothing.
     // It used to record a second review and overwrite the due date with one counted from
     // today: a date moved into the future by hand became +interval from now.
-    if (!currentQueueItem && Date.now() < incRemInfo.nextRepDate) {
+    if (Date.now() < incRemInfo.nextRepDate) {
       await plugin.queue.removeCurrentCardFromQueue();
+      await waitForNextQueueItem(remId); // FORK (2026-10-11)
       return;
     }
 
@@ -3326,6 +3370,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
 
     // Advance the queue (updates SRS data + removes current card)
     await handleNextRepetitionClick(plugin, incRemInfo);
+    await waitForNextQueueItem(remId); // FORK (2026-10-11)
   });
 
   // Primary binding: Cmd+Right (Mac) / Ctrl+Right (Win/Linux).
@@ -3367,15 +3412,19 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       // command checked only the URL, so opt+B on a regular flashcard silently
       // removed a due card from the session with no review, no reschedule and no
       // feedback. Its two sibling commands already guard this way.
-      const currentCard = await plugin.queue.getCurrentCard();
-      const remId =
-        currentCard?.remId || (await plugin.storage.getSession<string>(currentIncRemKey)) || undefined;
-      const rem = remId ? await plugin.rem.findOne(remId) : undefined;
+      // FORK (2026-10-11, reproduced live): only the item RemNote shows as ours — see
+      // incRemIdForQueueShortcut. On RemNote's finished screen this used to call
+      // removeCurrentCardFromQueue() there (RemNote's screen changed) with no message, and on
+      // a flashcard whose Rem is an Incremental Rem it dropped the card unrated.
+      const remId = await incRemIdForQueueShortcut();
+      if (!remId) return;
+      const rem = await plugin.rem.findOne(remId);
       if (!rem || !(await rem.hasPowerup(powerupCode))) {
         await plugin.app.toast('Skip only works on Incremental Rems, not regular flashcards.');
         return;
       }
       await plugin.queue.removeCurrentCardFromQueue();
+      await waitForNextQueueItem(remId); // FORK (2026-10-11)
     }),
   });
 
@@ -3395,12 +3444,21 @@ export async function registerCommands(plugin: ReactRNPlugin) {
         await plugin.app.toast('This command only works in the queue.');
         return;
       }
-      const currentCard = await plugin.queue.getCurrentCard();
-      const remId =
-        currentCard?.remId || (await plugin.storage.getSession<string>(currentIncRemKey)) || undefined;
-      const rem = remId ? await plugin.rem.findOne(remId) : undefined;
+      // FORK (2026-10-11, reproduced live): as Skip above — on RemNote's finished screen this
+      // used to swap out the last Incremental Rem shown, which was not on screen.
+      const remId = await incRemIdForQueueShortcut();
+      if (!remId) return;
+      const rem = await plugin.rem.findOne(remId);
       if (!rem || !(await rem.hasPowerup(powerupCode))) {
         await plugin.app.toast('Another Item only works on Incremental Rems, not regular flashcards.');
+        return;
+      }
+      // FORK (2026-10-11, review, reproduced live): not on the already-reviewed row (Deviation 8),
+      // which has no 🔄 button either. Reached with Previous, it swapped a fresh due item into
+      // that past slot, where its review would have run as a re-review.
+      const shownIncRem = await getIncrementalRemFromRem(plugin, rem);
+      if (shownIncRem && Date.now() < shownIncRem.nextRepDate) {
+        await plugin.app.toast('This item is already reviewed — Another Item works on a due Incremental Rem.');
         return;
       }
       const result = await requestAnotherIncRem(plugin, rem._id);
@@ -3423,14 +3481,12 @@ export async function registerCommands(plugin: ReactRNPlugin) {
         return;
       }
 
-      // Get current incremental rem
-      const currentQueueItem = await plugin.queue.getCurrentCard();
-      let remId = currentQueueItem?.remId || (await plugin.storage.getSession<string>(currentIncRemKey)) || undefined;
-
-      if (!remId) {
-        await plugin.app.toast('No Incremental Rem currently active in the queue.');
-        return;
-      }
+      // FORK (2026-10-11): only the item RemNote shows as ours — see incRemIdForQueueShortcut.
+      // On RemNote's card-less screens (finished, checkpoints) Ctrl+G used to act on the last
+      // Incremental Rem shown, and on a flashcard whose Rem is an Incremental Rem it took that
+      // Rem for the item and recorded a review of it, as Opt+T did.
+      const remId = await incRemIdForQueueShortcut();
+      if (!remId) return;
 
       const rem = await plugin.rem.findOne(remId);
       if (!rem) {
@@ -3450,6 +3506,12 @@ export async function registerCommands(plugin: ReactRNPlugin) {
         return;
       }
 
+      // FORK (2026-10-11, owner request, reproduced live): on the already-reviewed row
+      // (Deviation 8) Ctrl+G does what that row's Open does — open the item and move on,
+      // recording nothing. It used to record the review again and recalculate the next
+      // date from today, as the keyboard Next did until 2026-10-10.
+      const alreadyReviewed = Date.now() < incRemInfo.nextRepDate;
+
       const titleEndsWithOpenLinkTag = await remTitleEndsWithOpenLinkTag(plugin, rem);
 
       let uniqueUrls: string[] = [];
@@ -3465,7 +3527,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       const skipRemDocument = titleEndsWithOpenLinkTag && uniqueUrls.length > 0;
       const remType = await plugin.storage.getSession<string | null>(currentIncrementalRemTypeKey);
       // FORK (2026-08-14, bug-hunt #23): gated like the Open Editor button's capturePdfPageHistoryIfNeeded — without it the keyboard paths kept writing pdfState on every advance despite the reader being disabled.
-      if (FORK_FEATURES.pdfReader && remType === 'pdf') {
+      if (FORK_FEATURES.pdfReader && remType === 'pdf' && !alreadyReviewed) {
         const pdfRem = await getActivePdfForIncRem(plugin, rem);
         if (pdfRem) {
           const currentPage = await getIncrementalReadingPosition(plugin, rem._id, pdfRem._id);
@@ -3475,7 +3537,11 @@ export async function registerCommands(plugin: ReactRNPlugin) {
         }
       }
 
-      await handleNextRepetitionClick(plugin, incRemInfo);
+      if (alreadyReviewed) {
+        await plugin.queue.removeCurrentCardFromQueue(); // FORK (2026-10-11): move on, nothing recorded
+      } else {
+        await handleNextRepetitionClick(plugin, incRemInfo);
+      }
 
       if (!skipRemDocument) {
         // FORK (2026-08-14, bug-hunt #36): the button's openEditorAction wraps this
@@ -3494,6 +3560,10 @@ export async function registerCommands(plugin: ReactRNPlugin) {
           await plugin.app.toast('Error opening document');
         }
       }
+      // FORK (2026-10-11): an (OpenLink) item stays in the queue, so the next press must not
+      // reach the item just left (waitForNextQueueItem); after opening a document this returns
+      // at once.
+      await waitForNextQueueItem(remId);
     }),
   });
 

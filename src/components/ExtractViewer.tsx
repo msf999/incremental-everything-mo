@@ -6,6 +6,7 @@ import { useRef } from 'react'; // MOBILE-EXPERIMENT (M3/M4 only)
 import { PluginRem, RNPlugin, DocumentViewer, RichText, BuiltInPowerupCodes, RichTextElementRemInterface, useTrackerPlugin } from '@remnote/plugin-sdk';
 import { powerupCode, allCardPriorityInfoKey, incremNotesSidebarRemIdKey, incremNotesSidebarWidgetId } from '../lib/consts';
 import { QueueBreadcrumb } from './QueueBreadcrumb'; // FORK (2026-10-11): ancestors with RemNote's icons
+import { keepFocusWithRemNote } from '../lib/keep_focus_with_remnote'; // FORK (2026-10-11)
 import {
   getChildrenExcludingSlots,
   getDescendantsExcludingSlots
@@ -393,6 +394,7 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
 
   const notesHint = (
     <div
+      {...keepFocusWithRemNote} // FORK (2026-10-11)
       style={{
         height: '100%',
         display: 'flex',
@@ -420,20 +422,13 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
         gridTemplateRows: 'auto 1fr auto',
         ...(M1_INLINE_LAYOUT ? M1_STYLES.root : {}), // MOBILE-EXPERIMENT M1
       }}
-      onClick={(e) => {
-        // When clicking non-interactive areas (metadata bar, empty space),
-        // redirect focus into the DocumentViewer's editable area.
-        // This prevents a "no-man's-land" focus state where neither the
-        // RemNote editor nor the parent window handles keyboard events properly.
-        const target = e.target as HTMLElement;
-        if (!target.closest('.document-viewer-section, a, button, [role="button"], input, select, textarea, [contenteditable]')) {
-          const docViewerSection = (e.currentTarget as HTMLElement).querySelector('.document-viewer-section');
-          const editable = docViewerSection?.querySelector('[contenteditable="true"]') as HTMLElement | null;
-          if (editable) {
-            editable.focus();
-          }
-        }
-      }}
+      // FORK (2026-10-11, owner request): the root onClick that stood here tried to move
+      // focus into the DocumentViewer's '[contenteditable]' after a click on empty space.
+      // It never found one: RemNote draws the document in an overlay OUTSIDE this frame,
+      // which holds only the SDK's placeholder. So a click on the breadcrumb row or the
+      // footer left keyboard focus in this frame, where neither RemNote's shortcuts nor the
+      // arrows reach anything (reproduced). Those two rows now hand focus back to RemNote
+      // instead — lib/keep_focus_with_remnote.ts.
     >
       {/* Breadcrumb Section. FORK (2026-10-11): the ancestors, with RemNote's folder and
           document icons — components/QueueBreadcrumb.tsx, which shows nothing until they are
@@ -441,6 +436,7 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
           row also carries the ↻ / ≡ buttons. */}
       <div
         className="breadcrumb-section px-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0 h-10 flex items-center overflow-x-auto"
+        {...keepFocusWithRemNote} // FORK (2026-10-11)
         style={{
           ...(M1_INLINE_LAYOUT ? M1_STYLES.crumbRow : {}), // MOBILE-EXPERIMENT M1
           ...(topRightClearance > 0 ? { paddingRight: topRightClearance } : {}), // FORK (2026-10-11)
@@ -449,7 +445,9 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
         {M4_BUTTONS && (
           // MOBILE-EXPERIMENT M4. In the phone app RemNote's page header covers this row
           // whenever the document is drawn, so in practice these are reachable exactly
-          // when it is not.
+          // when it is not. Their clicks reach the row's keepFocusWithRemNote, which hands
+          // keyboard focus back after a tap (2026-10-11, review, reproduced on desktop: a
+          // stopPropagation here kept it in the plugin).
           <div style={{ display: 'flex', gap: 6, marginRight: 10, flexShrink: 0 }}>
             <style>{M4_COLOUR_CSS}</style>
             <button
@@ -457,10 +455,7 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
               type="button"
               title="Ask RemNote to draw this document again"
               style={m4ButtonStyle(false)}
-              onClick={(e) => {
-                e.stopPropagation();
-                redrawDocument();
-              }}
+              onClick={() => redrawDocument()}
             >
               ↻ Redraw
             </button>
@@ -469,10 +464,7 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
               type="button"
               title={textView ? 'Back to RemNote’s document view' : 'Show this Rem as plain text, drawn by the plugin'}
               style={m4ButtonStyle(textView)}
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleTextView();
-              }}
+              onClick={() => toggleTextView()}
             >
               {textView ? '≡ Document' : '≡ Text'}
             </button>
@@ -524,6 +516,7 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
 
       {/* Metadata Section (Updates when metadata is ready) */}
       <div className={`metadata-section px-4 py-3 border-t flex-shrink-0 ${isMetadataLoading ? 'opacity-50' : ''}`}
+        {...keepFocusWithRemNote} // FORK (2026-10-11)
         style={{
           borderColor: '#e5e7eb',
           backgroundColor: isMetadataLoading ? 'rgba(0,0,0,0.05)' : 'transparent',

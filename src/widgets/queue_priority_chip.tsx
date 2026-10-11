@@ -23,7 +23,6 @@ import {
   queueToolbarPriorityModeId,
   allIncrementalRemKey,
   currentIncRemKey,
-  incrementalQueueActiveKey,
   isMobileDeviceKey,
   isWebPlatformKey,
   queueSessionCacheKey,
@@ -33,6 +32,8 @@ import { IncrementalRem } from '../lib/incremental_rem';
 import { resolveQueuePriority } from '../lib/queue_priority_source';
 import { calculateRelativePercentile, percentileToHslColor } from '../lib/utils';
 import { useIESetting } from '../lib/settings';
+import { keepFocusWithRemNote } from '../lib/keep_focus_with_remnote'; // FORK (2026-10-11)
+import { useQueueScreen } from '../lib/queue_screen'; // FORK (2026-10-11)
 
 /** Whether the chip shows, given the setting and the platform. */
 export function shouldShowQueuePriorityChip(
@@ -72,13 +73,12 @@ function QueuePriorityChip() {
   // walk plus ~12 SDK round trips on every card, all to produce null.
   const shouldShow = shouldShowQueuePriorityChip(mode, isWeb, isMobile);
 
-  // Which queue item is on screen. `incrementalQueueActiveKey` is the reliable
-  // discriminator: while a plugin item shows, plugin.queue.getCurrentCard() can
-  // still be reporting the previous flashcard.
-  const isIncrementalQueueActive = useTrackerPlugin(
-    (rp) => rp.storage.getSession<boolean>(incrementalQueueActiveKey),
-    []
-  );
+  // Which queue item is on screen. FORK (2026-10-11): asked of RemNote's screen type, not
+  // upstream's session flag, which can stay set on the flashcard after an Incremental Rem
+  // (lib/queue_screen.ts). getCurrentCard() answers only on a flashcard screen (the SDK's
+  // contract, and what the queue showed in testing), so on a plugin item the chip reads
+  // currentIncRemKey.
+  const queueScreen = useQueueScreen(shouldShow);
   const currentIncRemId = useTrackerPlugin(
     (rp) => rp.storage.getSession<string>(currentIncRemKey),
     []
@@ -89,10 +89,17 @@ function QueuePriorityChip() {
   useEffect(() => {
     if (!shouldShow) return; // FORK (#28)
     let isMounted = true;
+    // FORK (2026-10-11, review): a slow bridge can answer polls out of order; an older answer
+    // never replaces a newer one (as in lib/queue_screen.ts).
+    let issued = 0;
+    let applied = 0;
     const checkCard = async () => {
+      const mine = ++issued;
       try {
         const card = await plugin.queue.getCurrentCard();
-        if (isMounted) setPolledCardRemId(card?.remId);
+        if (!isMounted || mine < applied) return;
+        applied = mine;
+        setPolledCardRemId(card?.remId);
       } catch {
         /* ignore */
       }
@@ -123,9 +130,12 @@ function QueuePriorityChip() {
   const data = useTrackerPlugin(
     async (rp) => {
       if (!shouldShow) return null; // FORK (#28)
-      const remId = isIncrementalQueueActive
-        ? currentIncRemId ?? polledCardRemId
-        : polledCardRemId ?? currentIncRemId;
+      // FORK (2026-10-11, review, reproduced live): no chip when no item is on screen. This chip
+      // fell back from either source to the other (upstream's badge falls back from the card to
+      // currentIncRemKey), so on RemNote's finished screen (no card, no plugin item) it showed
+      // the last Incremental Rem's priority, and clicking it opened that Rem's priority popup.
+      const remId =
+        queueScreen === 'incRem' ? currentIncRemId : queueScreen === 'card' ? polledCardRemId : undefined;
       if (!remId) return null;
 
       const rem = await rp.rem.findOne(remId);
@@ -138,7 +148,7 @@ function QueuePriorityChip() {
       const isEditableIncRem = resolved.origin === 'own' && !resolved.fromDismissed;
       return { resolved, editRemId: isEditableIncRem ? rem._id : null };
     },
-    [isIncrementalQueueActive, currentIncRemId, polledCardRemId]
+    [queueScreen, currentIncRemId, polledCardRemId]
   );
 
   if (!shouldShow) return null;
@@ -208,13 +218,13 @@ function QueuePriorityChip() {
         padding: '0 6px',
         cursor: editRemId ? 'pointer' : 'default',
       }}
-      onClick={
-        editRemId
-          ? async () => {
-              await plugin.widget.openPopup('priority', { remId: editRemId });
-            }
-          : undefined
-      }
+      // FORK (2026-10-11): a click leaves keyboard focus with RemNote (lib/keep_focus_with_remnote.ts);
+      // the priority popup, opened after, takes focus itself.
+      onMouseDown={keepFocusWithRemNote.onMouseDown}
+      onClick={async (e) => {
+        keepFocusWithRemNote.onClick(e);
+        if (editRemId) await plugin.widget.openPopup('priority', { remId: editRemId });
+      }}
       title={lines.join('\n')}
     >
       <div

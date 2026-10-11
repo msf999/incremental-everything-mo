@@ -7,9 +7,10 @@
 // / registerCSS as own arrow-function properties on plugin.app, so they can be
 // wrapped at runtime. installForkGates() replaces them with versions that
 // silently drop any id on the deny-list assembled below from FORK_FEATURES.
-// Upstream's commands.ts / widgets.ts / menus.ts stay byte-identical to
-// upstream, so syncs merge clean; re-enabling a whole subsystem is flipping one
-// boolean here.
+// The registrations themselves stay upstream's (menus.ts is byte-identical to
+// upstream; commands.ts and widgets.ts carry fork edits of their own — see
+// CLAUDE.md's conflict map), so the deny-list never forces an edit there;
+// re-enabling a whole subsystem is flipping one boolean here.
 //
 // HARD RULES (see the fork's maintenance notes, Deviation 13, and the traps recorded
 // there): never gate registerPowerup — the CardPriority powerup is read

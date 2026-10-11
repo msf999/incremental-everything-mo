@@ -1,4 +1,4 @@
-import { AppEvents, ReactRNPlugin, RemId, PluginRem, BuiltInPowerupCodes, RichTextElementRemInterface, QueueInteractionScore } from '@remnote/plugin-sdk';
+import { AppEvents, ReactRNPlugin, RemId, PluginRem, BuiltInPowerupCodes, RichTextElementRemInterface, QueueInteractionScore, QueueItemType } from '@remnote/plugin-sdk';
 import { deferDuringNativeDrill, isNativeDrillQueue, registerNativeDrillListeners } from '../lib/mastery_drill_native';
 import { deferDuringLearnNew, registerQueueCoolingListeners } from '../lib/queue_cooling_skip';
 import * as _ from 'remeda';
@@ -21,6 +21,11 @@ import {
   dismissedPowerupCode,
   repHistorySlotCode,
   incrementalQueueActiveKey,
+  queueSlotSwapKey, // FORK (2026-10-11, Deviation 16)
+  queueSwapRequestKey, // FORK (2026-10-11, Deviation 16)
+  currentIncRemKey, // FORK (2026-10-11)
+  QueueSlotSwap, // FORK (2026-10-11)
+  queueHeldCandidateKey, // FORK (2026-10-11)
   currentIncrementalRemTypeKey,
   displayWeightedShieldId,
   sourceFloatingActiveIdKey,
@@ -80,7 +85,7 @@ import {
 import { registerQueueSessionTracking, saveCurrentSession, hasActiveSession } from '../lib/queue_session';
 import { openQueueDashboard } from '../lib/queue_dashboard';
 import { shouldUseLightMode } from '../lib/mobileUtils';
-import { primeQueuePrefetch, flushPendingServed } from '../lib/queue_prefetch';
+import { primeQueuePrefetch, flushPendingServed, markShownThisSession } from '../lib/queue_prefetch';
 import dayjs from 'dayjs';
 import { getIESetting } from '../lib/settings';
 import { recordRemChangeEvent } from '../lib/rem_change_tape';
@@ -203,7 +208,11 @@ export function registerQueueExitListener(
     // session that had already started: a scoped queue lost its scope (so GetNextCard
     // injected KB-wide) and incrementalQueueActiveKey went false, which stops
     // queue_info_bar bailing and draws a second info bar under IncRems. Both failures
-    // are silent. Nothing below this point reads the keys it clears.
+    // are silent. ⚠️ The shield save below DOES read keys this clears: originalScopeId,
+    // priorityCalcScopeRemIds, priorityCalcScopeCompletenessKey, currentSubQueueIdKey, the
+    // two seen lists and the two skip…HistorySave flags. It runs only outside Light Mode,
+    // which this fork never leaves; if Full Mode ever returns, read those keys before this
+    // reset.
     await resetQueueSession(plugin);
 
     const originalScopeId = await plugin.storage.getSession<string | null>('originalScopeId');
@@ -527,7 +536,6 @@ export function registerQueueEnterListener(
     // whose iframe cleanup may not have fired.
     await plugin.storage.setSession(incrementalQueueActiveKey, false);
     await plugin.storage.setSession(currentIncrementalRemTypeKey, undefined);
-
     resetSessionItemCounter();
     await clearSeenItems(plugin);
 
@@ -641,7 +649,9 @@ export function registerQueueEnterListener(
           dueCardsInScope = dueCardsInKB.filter(info => priorityCalcScope.has(info.remId));
 
           const scopedIncRems = allIncRems.filter(rem => priorityCalcScope.has(rem.remId));
-          incRemDocPercentiles = calculateAllPercentiles(scopedIncRems as any);
+          // FORK (2026-10-11): shared ranks for one priority, like the KB rank beside it in the
+          // queue chip (lib/utils.ts calculateRelativePercentile).
+          incRemDocPercentiles = calculateAllPercentiles(scopedIncRems as any, { sharedTies: true });
           dueIncRemsInScope = dueIncRemsInKB.filter(rem => priorityCalcScope.has(rem.remId));
 
           // Pre-filter overdue card lists for the shield (start-of-today criterion)
@@ -773,7 +783,19 @@ export function registerQueueEnterListener(
       void primeQueuePrefetch(plugin, subQueueId);
   };
 
-  plugin.event.addListener(AppEvents.QueueEnter, undefined, runQueueEnter);
+  plugin.event.addListener(AppEvents.QueueEnter, undefined, async (data: { subQueueId?: string }) => {
+    // FORK (2026-10-11, reproduced live): a 🔄 swap never outlives its queue session.
+    // resetQueueSession clears both keys on QueueExit, but leaving the queue by navigation
+    // (Open, a link, a document) fires no QueueExit, so the swap carried into the next
+    // session and, when its slot rem came up again, the queue showed the swapped-in rem in
+    // its place for the whole session (Deviation 16). Here, not in runQueueEnter: the
+    // activation bootstrap below also runs that, while the queue is open, and clearing the
+    // swap there put the set-aside item back on screen after a plugin restart.
+    await plugin.storage.setSession(queueSlotSwapKey, null);
+    await plugin.storage.setSession(queueSwapRequestKey, null);
+    await plugin.storage.setSession(queueHeldCandidateKey, null); // FORK (2026-10-11): the previous session's
+    await runQueueEnter(data);
+  });
 
   // FORK (2026-08-15, found by in-app testing): run the same pre-calculation when
   // the plugin activates while the queue is ALREADY open.
@@ -821,7 +843,25 @@ export function registerQueueEnterListener(
             Date.now() - startedAt
           }ms for the cache).`
       );
+      // FORK (2026-10-11, review, reproduced live): runQueueEnter empties the session's seen
+      // list, but this session has already shown items, and none of them may be served again
+      // (Deviation 15's restart residue): every one in the list as it stood, the one on screen
+      // now, the one RemNote holds for its next slot, and both rems of a 🔄 swap (which
+      // survives the restart). Reproduced: after a restart the held item came twice in a row,
+      // an item shown before the restart came back, and the set-aside rem of a swap came back
+      // showing the swapped-in rem, already reviewed.
+      const shown: RemId[] = (await plugin.storage.getSession<RemId[]>(seenRemInSessionKey)) || [];
       await runQueueEnter({ subQueueId: undefined });
+      const held = await plugin.storage.getSession<RemId | null>(queueHeldCandidateKey);
+      if (held) shown.push(held);
+      if ((await plugin.queue.getCurrentQueueScreenType()) === QueueItemType.Plugin) {
+        const onScreen = await plugin.storage.getSession<RemId>(currentIncRemKey);
+        if (onScreen) shown.push(onScreen);
+      }
+      const swap = await plugin.storage.getSession<QueueSlotSwap | null>(queueSlotSwapKey);
+      if (swap?.slotRemId) shown.push(swap.slotRemId);
+      if (swap?.showRemId) shown.push(swap.showRemId);
+      if (shown.length) markShownThisSession(plugin, shown);
     } catch (err) {
       console.error('[QueueEnter] activation bootstrap failed', err);
     }

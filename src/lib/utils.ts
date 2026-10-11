@@ -88,14 +88,22 @@ export function calculateRelativePercentile<T extends { priority: number; remId:
     return null;
   }
 
-  const sortedItems = _.sortBy(allItems, (x) => x.priority);
-  const index = sortedItems.findIndex((x) => x.remId === currentRemId);
-
-  if (index === -1) {
+  // FORK (2026-10-11, owner decision): one rank per priority — the share of items at least as
+  // important as this one (priority number ≤ its own), which is what the queue chip's tooltip
+  // says the number means. Upstream sorted by priority and took the item's index, so items that
+  // share a priority were ranked by their order in the cache, and a review moves an item to the
+  // end of it: on the test account the same P5 item read 1.5% before a review and 65.4% after
+  // (1,058 of 1,628 Incremental Rems were at P5, so any of them could show 0.6%–65.5%).
+  const current = allItems.find((x) => x.remId === currentRemId);
+  if (!current) {
     return null;
   }
 
-  const percentile = ((index + 1) / sortedItems.length) * 100;
+  let atLeastAsImportant = 0;
+  for (const item of allItems) {
+    if (item.priority <= current.priority) atLeastAsImportant++;
+  }
+  const percentile = (atLeastAsImportant / allItems.length) * 100;
   return Math.round(percentile * 10) / 10;
 }
 
@@ -355,7 +363,12 @@ export function computeWeightedShieldBreakdown<T extends { priority: number; rem
  * @returns A map of remId to percentile (1-100, rounded to whole number).
  */
 export function calculateAllPercentiles<T extends { priority: number; remId: string }>(
-  items: T[]
+  items: T[],
+  // FORK (2026-10-11): `sharedTies` gives every item of one priority the same rank — the share at
+  // least as important, as calculateRelativePercentile now does (the queue's Doc rank uses it).
+  // Off by default: the KB priority graph bins these ranks in 5 % steps and relies on ties
+  // spreading across the bins.
+  options?: { sharedTies?: boolean }
 ): Record<string, number> {
   if (!items || items.length === 0) {
     return {};
@@ -363,6 +376,18 @@ export function calculateAllPercentiles<T extends { priority: number; remId: str
 
   const sortedItems = _.sortBy(items, (x) => x.priority);
   const percentiles: Record<string, number> = {};
+
+  if (options?.sharedTies) {
+    let start = 0;
+    while (start < sortedItems.length) {
+      let end = start;
+      while (end + 1 < sortedItems.length && sortedItems[end + 1].priority === sortedItems[start].priority) end++;
+      const shared = Math.round(((end + 1) / sortedItems.length) * 100);
+      for (let k = start; k <= end; k++) percentiles[sortedItems[k].remId] = shared;
+      start = end + 1;
+    }
+    return percentiles;
+  }
 
   sortedItems.forEach((item, index) => {
     percentiles[item.remId] = Math.round(((index + 1) / sortedItems.length) * 100);

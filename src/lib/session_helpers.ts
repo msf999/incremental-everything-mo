@@ -42,7 +42,8 @@ export async function resetQueueSession(plugin: ReactRNPlugin): Promise<void> {
   await plugin.storage.setSession(currentIncrementalRemTypeKey, undefined);
 
   // FORK (2026-08-14, bug-hunt #17): the review clock must not survive the
-  // session. It is set on every IncRem injection and consumed by
+  // session. It is set when an IncRem appears in the queue (widgets/queue.tsx; until
+  // 2026-10-11, when GetNextCard served it) and consumed by
   // updateReviewRemData as `now - startTime`, with no clamp and no check that we
   // are still in the queue — so reviewing at 09:00, leaving, and running
   // Review-in-Editor at 14:00 stamped a five-hour reviewTimeSeconds into history

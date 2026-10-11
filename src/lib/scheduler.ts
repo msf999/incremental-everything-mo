@@ -137,6 +137,16 @@ export async function getNextSpacingDateForRem(
     return;
   }
 
+  // FORK (2026-10-11, review, reproduced live): lookback mode is never a redo here. Upstream
+  // treats an item reached with Previous as being reviewed a second time, and drops its last
+  // history entry from the history it saves. In this fork an item already reviewed in the
+  // sitting comes back on the already-reviewed row (Deviation 8), whose buttons record nothing,
+  // so a review in lookback mode is of an item NOT yet reviewed — skipped, or set aside with 🔄
+  // — and the entry dropped was its genuine previous review. Reproduced: Skip, Previous, Next
+  // replaced the item's last review with the new one. An item due again right after its
+  // review (Rotation 0) now records a second review instead of replacing the first.
+  inLookbackMode = false;
+
   const rawHistory = incrementalRemInfo.history || [];
   // In lookback mode the last interaction is the one being redone, so neither
   // scheduler may see it.

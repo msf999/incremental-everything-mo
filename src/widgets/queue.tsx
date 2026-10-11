@@ -23,6 +23,7 @@ import {
   currentHostDocumentIdKey,
   queueSlotSwapKey, // FORK (Deviation 16)
   QueueSlotSwap,
+  incremReviewStartTimeKey, // FORK (2026-10-11)
 } from '../lib/consts';
 import { setCurrentIncrementalRem } from '../lib/incremental_rem';
 import { safeRemTextToString } from '../lib/pdfUtils';
@@ -30,6 +31,7 @@ import { startIncRemEngagement, endIncRemEngagement } from '../lib/queue_session
 import { FORK_FEATURES } from '../lib/fork_gates';
 import { useIESettingOptional } from '../lib/settings';
 import { mobileExperiment } from '../lib/mobile_experiments'; // MOBILE-EXPERIMENT
+import { keepFocusWithRemNote } from '../lib/keep_focus_with_remnote'; // FORK (2026-10-11)
 
 type ViewMode = 'isolated' | 'context';
 
@@ -138,6 +140,16 @@ export function QueueComponent() {
       plugin.storage.setSession(incrementalQueueActiveKey, false);
     };
   }, [plugin]);
+
+  // FORK (2026-10-11, review, reproduced live): the review clock starts when the item
+  // appears. GetNextCard started it when it served the item, but RemNote asks for the next
+  // slot one item ahead (Deviation 15), so that was while the PREVIOUS card was still on
+  // screen, and the time spent on it was counted as this item's review: a flashcard on screen
+  // for about 28 s, then Next about 9 s into the Incremental Rem that followed, recorded 37 s.
+  // Keyed on `remId`, so a 🔄 swap restarts it as well (Deviation 16).
+  useEffect(() => {
+    if (remId) void plugin.storage.setSession(incremReviewStartTimeKey, Date.now());
+  }, [remId, plugin]);
 
   // Drive PracticedQueues IncRem count + time from explicit mount/unmount of
   // this widget rather than the QueueLoadCard heuristic. Mount = engagement
@@ -288,7 +300,8 @@ export function QueueComponent() {
   // Silently advancing hides information: you cannot tell a stale entry from an item
   // that was never in the queue. The answer buttons now detect the same condition
   // (Date.now() < incRemInfo.nextRepDate) and render an 'already processed' state —
-  // the item stays visible, showing when it is next due, with Continue / Review anyway.
+  // the item stays visible, showing when it is next due, with a schedule-neutral row
+  // (Previous · Open · Next — CLAUDE.md Deviation 8).
   // Nothing auto-advances any more, so the back-nav flag is gone with it.
 
   // Reset view mode when switching to a new rem.
@@ -377,7 +390,20 @@ export function QueueComponent() {
 
   return (
     <div className="incremental-everything-element" style={{ height: '100%' }}>
-      <div className="box-border p-2" style={{ height: `100vh`, position: 'relative', ...M1_CONTAINER_STYLE /* MOBILE-EXPERIMENT M1 */ }}>
+      <div
+        className="box-border p-2"
+        style={{ height: `100vh`, position: 'relative', ...M1_CONTAINER_STYLE /* MOBILE-EXPERIMENT M1 */ }}
+        // FORK (2026-10-11, review, reproduced live): a click in the 8 px margin around the item
+        // lands on this container, and left keyboard focus inside the plugin
+        // (lib/keep_focus_with_remnote.ts). Only a click on the container itself — the viewers
+        // inside handle their own surfaces, and the video players must keep theirs.
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget) keepFocusWithRemNote.onMouseDown(e);
+        }}
+        onClick={(e) => {
+          if (e.target === e.currentTarget) keepFocusWithRemNote.onClick(e);
+        }}
+      >
         {showBackToIsolated && (
           <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 10 }}>
             <style>{`

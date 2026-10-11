@@ -18,6 +18,7 @@ import { ActionItemType } from "../lib/incremental_rem/types";
 import { determineIncRemType } from "../lib/incRemHelpers";
 import { TypeBadge } from "../components";
 import { allIncrementalRemKey, pendingPrioritySaveKey } from "../lib/consts";
+import { calculateAllPercentiles } from "../lib/utils"; // FORK (2026-10-11)
 
 const NUM_TO_LOAD_IN_BATCH = 30;
 
@@ -67,11 +68,9 @@ export function IncrementalHistory() { // FORK (Deviation 13): exported for the 
         let cancelled = false;
         async function buildPercentiles() {
             const allIncRems = (await plugin.storage.getSession<IncrementalRem[]>(allIncrementalRemKey)) || [];
-            const sorted = [...allIncRems].sort((a, b) => a.priority - b.priority);
-            const map: Record<string, number> = {};
-            sorted.forEach((item, index) => {
-                map[item.remId] = Math.round(((index + 1) / sorted.length) * 100);
-            });
+            // FORK (2026-10-11, owner decision): one rank per priority, as the queue's priority
+            // chip shows it (calculateAllPercentiles' sharedTies).
+            const map = calculateAllPercentiles(allIncRems, { sharedTies: true });
             if (!cancelled) setPercentileMap(map);
         }
         buildPercentiles();

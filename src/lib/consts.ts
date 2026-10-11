@@ -478,6 +478,10 @@ export const queueSwapRequestKey = 'queue-swap-request';
 export const queueSlotSwapKey = 'queue-slot-swap';
 export type QueueSwapRequest = { currentRemId: string; nonce: string };
 export type QueueSlotSwap = { slotRemId: string; showRemId: string | null; nonce: string };
+// FORK (2026-10-11): the Incremental Rem last answered to RemNote's GetNextCard, which RemNote
+// holds for its next slot. Written by callbacks.ts; read only by the activation bootstrap in
+// events.ts, which marks it seen after a plugin restart (queue_prefetch.markShownThisSession).
+export const queueHeldCandidateKey = 'queue-held-candidate';
 export const collapseTopBarCssId = 'incremental-everything-collapse-top-bar'; // CSS registration ID
 export const incrementalQueueActiveKey = 'incremental-queue-active';
 export const activeHighlightIdKey = 'active-highlight-id-key';

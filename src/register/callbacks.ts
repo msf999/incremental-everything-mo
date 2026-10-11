@@ -8,7 +8,6 @@ import {
   queueCounterId,
   queueLayoutFixId,
   queueHideElementsId,
-  incremReviewStartTimeKey,
   incrementalQueueActiveKey,
   currentIncrementalRemTypeKey,
   incremNotesSidebarRemIdKey,
@@ -16,6 +15,7 @@ import {
   // match, and the queue item's pluginId falls back to the fork's own id.
   pluginIframeSelector,
   forkPluginId,
+  queueHeldCandidateKey, // FORK (2026-10-11)
 } from '../lib/consts';
 import { consumePendingScrollRequest } from '../lib/remHelpers';
 import { isNativeDrillQueue } from '../lib/mastery_drill_native';
@@ -519,9 +519,17 @@ export function registerCallbacks(plugin: ReactRNPlugin) {
         return finish(null, 'no-due-increms');
       }
 
-      // Baseline for the review-duration measurement. Fire-and-forget: nothing
-      // reads it until the user finishes the item, many seconds from now.
-      void plugin.storage.setSession(incremReviewStartTimeKey, Date.now());
+      // FORK (2026-10-11, reproduced live): remember the item RemNote now holds for its next
+      // slot. A plugin restart forgets it, and the restarted plugin served it once more for
+      // the slot after it — the same item twice in a row (the activation bootstrap in
+      // events.ts marks it seen). Fire-and-forget, like everything on this path.
+      void plugin.storage.setSession(queueHeldCandidateKey, candidate.remId);
+
+      // FORK (2026-10-11, review, reproduced live): the review clock is no longer started
+      // here. RemNote asks for this slot while the previous card is still on screen
+      // (Deviation 15), so the time spent on that card was counted as this item's review —
+      // and a re-ask of the slot after this item while it is on screen restarted its clock.
+      // The queue widget starts it when the item appears (widgets/queue.tsx).
 
       // Refill in the background while the user reads this item. The candidate
       // is NOT written to the seen list here — see confirm-then-burn in

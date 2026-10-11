@@ -906,7 +906,10 @@ export function IncRemTable({
                   }}
                   onPriorityCancel={() => setEditingPriorityRemId(null)}
                   // Review in Editor
-                  onReviewInEditor={(remId) => {
+                  // FORK (2026-10-11, owner request): no callback → no per-row icon (IncRemRow draws
+                  // it only when given one). Upstream always passed this wrapper, so with Review with
+                  // Timer off (FORK_FEATURES.editorReviewTimer) every row showed an icon that did nothing.
+                  onReviewInEditor={onReviewInEditor ? (remId) => {
                     if (onReviewInEditor) {
                       const idx = filteredAndSortedRems.findIndex(r => r.remId === remId);
                       // Queue = clicked item + everything after it
@@ -927,7 +930,7 @@ export function IncRemTable({
                         doReview();
                       }
                     }
-                  }}
+                  } : undefined}
                 />
 
                 {/* Inline row-level due-filter warning */}

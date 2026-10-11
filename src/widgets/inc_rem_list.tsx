@@ -15,6 +15,7 @@ import '../style.css';
 import '../App.css';
 import { seedPriorityForTimer } from '../lib/incremental_rem/types';
 import { FORK_FEATURES } from '../lib/fork_gates';
+import { calculateAllPercentiles } from '../lib/utils'; // FORK (2026-10-11)
 
 const INC_REM_LIST_STATE_KEY = 'inc-rem-list-state';
 
@@ -109,11 +110,10 @@ export function IncRemList() {
     const isInitialLoad = !hasLoadedOnceRef.current;
     if (isInitialLoad) setLoadingRems(true);
 
-    const sortedByPriority = [...incRems].sort((a, b) => a.priority - b.priority);
-    const percentiles: Record<string, number> = {};
-    sortedByPriority.forEach((item, index) => {
-      percentiles[item.remId] = Math.round(((index + 1) / sortedByPriority.length) * 100);
-    });
+    // FORK (2026-10-11, owner decision): one rank per priority, as the queue's priority chip
+    // shows it. Ranked by position, items of one priority read different ranks that moved
+    // after every review (the cache order).
+    const percentiles = calculateAllPercentiles(incRems, { sharedTies: true });
 
     const remsWithDetails: IncRemWithDetails[] = [];
 

@@ -28,7 +28,7 @@ import { IncrementalRem, IncrementalRep, UNREADABLE_PRIORITY_FALLBACK, priorityS
 import { FORK_FEATURES } from '../fork_gates';
 import { tryParseJson, getDailyDocReferenceForDate, sleep } from '../utils';
 import { getInitialPriority } from '../priority_inheritance';
-import { stampNoteAndContext } from '../history_notes';
+import { stampNoteAndContext, setPendingReviewNote } from '../history_notes';
 import { updateIncrementalRemCache } from './cache';
 import { mergeHistoryFromDismissed } from '../dismissed';
 import { registerRemsAsPdfKnown, registerRemsAsHtmlKnown, isHtmlSource } from '../pdfUtils';
@@ -377,6 +377,10 @@ export async function updateReviewRemData(
   // the queue on an IncRem whose Rem never received the new date or history.
   const saved = await updateSRSDataForRem(plugin, incRem.remId, nextRepDateToUse, newHistory);
   if (!saved) {
+    // FORK (2026-10-11, review): stampNoteAndContext consumed the parked review note into the
+    // entry that was not saved. Park it again, or a retry would save the review without it
+    // while the note box still shows it.
+    if (lastEntry?.notes) await setPendingReviewNote(plugin, incRem.remId, lastEntry.notes);
     await plugin.app.toast('Could not save that review — the item stays due. Please try again.');
     return null;
   }
@@ -475,11 +479,16 @@ export async function handleNextRepetitionClick(
 export async function handleNextRepetitionManualOffset(
   plugin: RNPlugin,
   incRem: IncrementalRem | undefined,
-  offsetDays: number
-) {
+  offsetDays: number,
+  // FORK (2026-10-11, reproduced live): `advanceQueue: false` records the review and stops
+  // there. The offset picker's "Open in …" needs that: advancing in here tore its widget down
+  // before it could open the editor, so the editor never opened. It then sends the advance
+  // and the editor open together itself, as performOpenEditorFlow does.
+  options?: { advanceQueue?: boolean }
+): Promise<boolean> {
   if (!incRem) {
     console.log('[handleNextRepetitionManualOffset] No incRem provided');
-    return;
+    return false;
   }
 
   try {
@@ -487,9 +496,23 @@ export async function handleNextRepetitionManualOffset(
 
     const targetDay = dayjs().startOf('day').add(Math.max(offsetDays, 0), 'day').valueOf();
 
+    // FORK (2026-10-11, review, reproduced live): record what a plain Next records. `scheduled`
+    // is the due date this review answered — it was the new landing day, so the scheduler read
+    // the review as answered early and dropped the one before it from its count
+    // (removeResponsesBeforeEarlyResponses), shortening the next intervals. And the review time,
+    // which picker reviews did not record at all. Lookback mode changes nothing here, as in
+    // getNextSpacingDateForRem (scheduler.ts).
+    const now = Date.now();
+    const scheduled = incRem.nextRepDate;
+    const daysEarlyOrLate = Math.round(((now - scheduled) / (1000 * 60 * 60 * 24)) * 10) / 10;
+    const startTime = await plugin.storage.getSession<number>(incremReviewStartTimeKey);
+
     const manualEntry: IncrementalRep = {
-      date: Date.now(),
-      scheduled: targetDay,
+      date: now,
+      scheduled,
+      wasEarly: now < scheduled,
+      daysEarlyOrLate,
+      ...(startTime ? { reviewTimeSeconds: dayjs(now).diff(dayjs(startTime), 'second') } : {}),
       interval: Math.max(offsetDays, 0),
       // FORK (#42): every other review writer records the priority at the time of
       // the rep; this one did not, so a user who reviews only via the offset
@@ -521,22 +544,31 @@ export async function handleNextRepetitionManualOffset(
     // past an item whose write failed.
     const saved = await updateSRSDataForRem(plugin, incRem.remId, targetDay, newHistory);
     if (!saved) {
+      // FORK (2026-10-11, review): keep the review note — see updateReviewRemData.
+      if (manualEntry.notes) await setPendingReviewNote(plugin, incRem.remId, manualEntry.notes);
       await plugin.app.toast('Could not save that review — the item stays due. Please try again.');
-      return;
+      return false;
     }
 
     // MANUALLY CONSTRUCT THE UPDATED OBJECT
     const updatedIncRem: IncrementalRem = {
       ...incRem,
       nextRepDate: targetDay,
-      history: newHistory,
+      // FORK (2026-10-11): `saved` — the history as written, its last entry stamped with
+      // nextRepMs — like updateReviewRemData's callers (#41); `newHistory` lacks the stamp.
+      history: saved,
     };
 
     await updateIncrementalRemCache(plugin as any, updatedIncRem);
 
+    if (options?.advanceQueue === false) {
+      await endOperationSuppression(plugin); // FORK (2026-10-11): the caller advances
+      return true;
+    }
     await requestQueueDashboardRefocus(plugin, 'handleNextRepetitionManualOffset');
     await endOperationSuppression(plugin); // FORK (2026-10-10): before the advance, see handleNextRepetitionClick
     await plugin.queue.removeCurrentCardFromQueue();
+    return true;
   } finally {
     await plugin.storage.setSession('plugin_operation_active', false);
   }
@@ -952,6 +984,36 @@ export async function registerInKnownHostIndexes(plugin: ReactRNPlugin, rem: Plu
   }
 }
 
+/**
+ * FORK (2026-10-11, owner request): the Daily Doc reference First Added should hold. A Rem
+ * made incremental again after a dismissal brings its old history back (`dismissedHistory`
+ * in initIncrementalRem); the day of its earliest dated entry is the day it was first added.
+ * Any other Rem gets today. Never throws.
+ *
+ * Sessions added by hand ('externalRep', any past date) and reviews imported from a
+ * flashcard ('importedRep') are not counted: neither says when the Rem became incremental.
+ * Reproduced: a hand-added session dated 14 Aug set First Added to August 14th on a Rem
+ * first made incremental on 11 Oct.
+ */
+async function firstAddedReference(
+  plugin: ReactRNPlugin,
+  history: IncrementalRep[] | undefined,
+  todayRef: Awaited<ReturnType<typeof getDailyDocReferenceForDate>>
+) {
+  let earliest = Infinity;
+  for (const entry of history ?? []) {
+    if (entry?.eventType === 'externalRep' || entry?.eventType === 'importedRep') continue;
+    const t = Number(entry?.date);
+    if (Number.isFinite(t) && t > 0 && t < earliest) earliest = t;
+  }
+  if (!Number.isFinite(earliest) || earliest >= dayjs().startOf('day').valueOf()) return todayRef;
+  try {
+    return (await getDailyDocReferenceForDate(plugin, new Date(earliest))) || todayRef;
+  } catch {
+    return todayRef;
+  }
+}
+
 export async function initIncrementalRem(plugin: ReactRNPlugin, rem: PluginRem, options?: { skipFlagManagement?: boolean, explicitParentId?: string, skipInitialCascade?: boolean, deferCacheUpdate?: boolean }) {
   const isAlreadyIncremental = await rem.hasPowerup(powerupCode);
 
@@ -1010,6 +1072,11 @@ export async function initIncrementalRem(plugin: ReactRNPlugin, rem: PluginRem, 
       const initialPriority = Math.min(100, Math.max(0, rawInitialPriority));
       const todayRef =
         initialInterval === 0 ? dateRef : await getDailyDocReferenceForDate(plugin, new Date());
+      // FORK (2026-10-11, owner request, reproduced live): a Rem made incremental again keeps
+      // the day it was first added (from its preserved history) instead of being reset to
+      // today — see firstAddedReference. Awaited on its own, after todayRef, for the same
+      // getDailyDoc race the comment above describes.
+      const firstAddedRef = hasExistingHistory ? await firstAddedReference(plugin, dismissedHistory, todayRef) : todayRef;
 
       await rem.addPowerup(powerupCode);
 
@@ -1055,12 +1122,13 @@ export async function initIncrementalRem(plugin: ReactRNPlugin, rem: PluginRem, 
           rem.setPowerupProperty(powerupCode, originalIncrementalDateSlotCode, todayRef)
         );
       }
-      // First Added: reuse todayRef rather than a second getDailyDocReferenceForDate
-      // call — the redundant, racy lookup the todayRef comment above warns about.
-      // Unconditional on dismissed history: First Added records when this Rem was
-      // first made incremental in this KB, not the start of a new learning session.
-      if (todayRef) {
-        slotWrites.push(rem.setPowerupProperty(powerupCode, firstAddedSlotCode, todayRef));
+      // First Added: todayRef for a new Rem (reused rather than a second, racy
+      // getDailyDocReferenceForDate call — see the todayRef comment above); for a Rem made
+      // incremental again, the day of its earliest history entry (firstAddedRef, 2026-10-11).
+      // First Added records when this Rem was first made incremental in this KB, not the
+      // start of a new learning session.
+      if (firstAddedRef) {
+        slotWrites.push(rem.setPowerupProperty(powerupCode, firstAddedSlotCode, firstAddedRef));
       }
       slotWrites.push(
         rem.setPowerupProperty(powerupCode, rotationSlotCode, [initialRotation])
