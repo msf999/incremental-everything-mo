@@ -1,4 +1,5 @@
 import { renderWidget, usePlugin, useTrackerPlugin } from '@remnote/plugin-sdk';
+import { withHoverTips } from '../components/HoverTipLayer';
 import {
   getSortingRandomness,
   setSortingRandomness,
@@ -415,4 +416,4 @@ export function SortingCriteria() {
   );
 }
 
-renderWidget(SortingCriteria);
+renderWidget(withHoverTips(SortingCriteria));

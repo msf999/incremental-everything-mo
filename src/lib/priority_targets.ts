@@ -14,7 +14,8 @@
 import { RNPlugin, ReactRNPlugin, SelectionType } from '@remnote/plugin-sdk';
 import { currentIncRemKey, powerupCode, prioritySlotCode } from './consts';
 import { CARD_PRIORITY_CODE, getCardPriorityValue } from './card_priority';
-import { getEffectiveSelection } from './editor_selection';
+import { getEffectiveSelectionWithSource } from './editor_selection';
+import { getQueueVisibleCard } from './queue_visible_card';
 
 export type PriorityTargets = {
   remIds: string[];
@@ -134,7 +135,7 @@ export async function resolvePriorityTargets(
   plugin: ReactRNPlugin
 ): Promise<PriorityTargets> {
   const url = await plugin.window.getURL();
-  const sel = await getEffectiveSelection(plugin);
+  const { selection: sel, source: selectionSource } = await getEffectiveSelectionWithSource(plugin);
   const selType = sel?.type;
 
   const selectedRemIds: string[] =
@@ -147,22 +148,36 @@ export async function resolvePriorityTargets(
   // Queue: the visible card wins unless the user explicitly selected something
   // else. Same precedence the two commands had before, just factored out.
   if (url.includes('/flashcards')) {
-    const currentQueueItem = await plugin.queue.getCurrentCard();
+    // Cluster-aware: the sibling on screen, not the cluster's anchor card.
+    const currentQueueItem = await getQueueVisibleCard(plugin);
     const currentIncRemId =
       (await plugin.storage.getSession<string>(currentIncRemKey)) || undefined;
     const queueRemId = currentQueueItem?.remId ?? currentIncRemId;
 
+    // Only a LIVE selection may outrank the card on screen, as in
+    // resolveQueueCommandTarget. The Omnibar cache outlives the previewer: edit a
+    // Rem there, close it, press Opt+P within 20 s, and the cached Rem used to win
+    // over the card, so the popup wrote to a Rem nobody was looking at.
+    const fromCache = selectionSource === 'cache';
+    const liveSelType = fromCache ? undefined : selType;
+    const liveRemIds = fromCache ? [] : selectedRemIds;
+
     const selectionTargetsQueueItem =
-      !selType ||
-      (!!queueRemId && selectedRemIds.length <= 1 && selectedRemIds[0] === queueRemId);
+      !liveSelType ||
+      (!!queueRemId && liveRemIds.length <= 1 && liveRemIds[0] === queueRemId);
 
     if (selectionTargetsQueueItem) {
       return queueRemId
         ? { remIds: [queueRemId], source: 'queue' }
         : { remIds: [], source: 'none' };
     }
-    if (selectedRemIds.length) {
-      return { remIds: selectedRemIds, source: 'selection' };
+    if (liveRemIds.length) {
+      // Names the source so a popup opening on the wrong Rem can be traced to a
+      // live selection or to getSelectedRem.
+      console.log(
+        `[PriorityTargets] ${selectionSource} selection outranks the queue item ${queueRemId ?? '(none)'}`
+      );
+      return { remIds: liveRemIds, source: 'selection' };
     }
   }
 

@@ -6,12 +6,13 @@ import {
   PluginRem,
   RemId,
 } from '@remnote/plugin-sdk';
+import { withHoverTips } from '../components/HoverTipLayer';
 import { shouldUseLightMode } from '../lib/mobileUtils';
 import { getPowerupSlotByCodeSafe } from '../lib/powerup_slot_compat';
 import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import { getIncrementalRemFromRem, initIncrementalRem, IncrementalRem } from '../lib/incremental_rem';
 import { scanBatchTargets } from '../lib/priority_targets';
-import { updateIncrementalRemCache, removeIncrementalRemCache } from '../lib/incremental_rem/cache';
+import { removeIncrementalRemCache } from '../lib/incremental_rem/cache';
 import {
   getCardPriority,
   setCardPriority,
@@ -19,9 +20,10 @@ import {
   CardPriorityInfo,
   QueueSessionCache,
   CARD_PRIORITY_CODE,
-  PRIORITY_SLOT
+  PRIORITY_SLOT,
+  estimateCardRemPercentile,
 } from '../lib/card_priority';
-import { calculateRelativePercentile, DEFAULT_PERFORMANCE_MODE, PERFORMANCE_MODE_FULL, PERFORMANCE_MODE_LIGHT } from '../lib/utils';
+import { DEFAULT_PERFORMANCE_MODE, PERFORMANCE_MODE_FULL, PERFORMANCE_MODE_LIGHT } from '../lib/utils';
 import {
   allIncrementalRemKey,
   powerupCode,
@@ -39,7 +41,7 @@ import {
   pendingCardPriorityRemovalKey,
   batchPriorityTargetRemIdsKey
 } from '../lib/consts';
-import { updateCardPriorityCache, flushLightCacheUpdates } from '../lib/card_priority/cache';
+import { publishPendingCardPriority } from '../lib/card_priority/pending_priority';
 import { writeCardPriorityCache } from '../lib/card_priority/persistence';
 import { findClosestAncestorWithAnyPriority } from '../lib/priority_inheritance';
 import { getRemCardContent, safeRemTextToString } from '../lib/pdfUtils';
@@ -49,6 +51,7 @@ import { useAcceleratedKeyboardHandler } from '../lib/keyboard_utils';
 import * as _ from 'remeda';
 import { useIESettingOptional } from '../lib/settings';
 import { FORK_FEATURES } from '../lib/fork_gates';
+import { buildUnifiedRanking, scheduledCardCount, unifiedPercentileAt } from '../lib/unified_percentile';
 
 type Scope = { remId: string | null; name: string; };
 type ScopeMode = 'all' | 'document';
@@ -333,8 +336,6 @@ function Priority() {
       return {
         scopedIncRems: [],
         scopedCardRems: [],
-        incRelPriority: 50,
-        cardRelPriority: 50,
         descendantCardCount: -1, // -1 indicates "unknown" / skipped check
         prioritySourceCounts: { manual: 0, inherited: 0, default: 0 },
       };
@@ -379,8 +380,6 @@ function Priority() {
 
     let finalScopedIncRems: IncrementalRem[];
     let finalScopedCardRems: CardPriorityInfo[];
-    let finalIncRel: number | null = null;
-    let finalCardRel: number | null = null;
     let finalPrioritySourceCounts = { manual: 0, inherited: 0, default: 0 };
 
     const safeAllIncRems = allIncRems || [];
@@ -394,8 +393,6 @@ function Priority() {
       const allCardsInScope = (scopeMode === 'all') ? safeAllCardInfos : cardRemsInScope;
       finalPrioritySourceCounts = allCardsInScope.reduce((counts, rem) => ({ ...counts, [rem.source]: (counts[rem.source] || 0) + 1 }), { manual: 0, inherited: 0, default: 0, incremental: 0 });
       finalScopedCardRems = (cardScopeType === 'prioritized' ? allCardsInScope.filter(c => c.source !== 'default') : allCardsInScope);
-      finalIncRel = (scopeMode === 'document') ? sessionCache.incRemDocPercentiles[rem._id] : calculateRelativePercentile(safeAllIncRems as any, rem._id);
-      finalCardRel = (scopeMode === 'document') ? sessionCache.docPercentiles[rem._id] : calculateRelativePercentile(safeAllCardInfos, rem._id);
 
     } else {
       // --- OPTIMIZED ASYNC FALLBACK PATH WITH COMPREHENSIVE SCOPE ---
@@ -434,8 +431,9 @@ function Priority() {
         ]);
       }
 
-      finalScopedIncRems = scopeIds ? safeAllIncRems.filter(r => scopeIds.has(r.remId)) : safeAllIncRems;
-      let tempScopedCardRems = scopeIds ? safeAllCardInfos.filter(ci => scopeIds.has(ci.remId)) : safeAllCardInfos;
+      const resolvedScopeIds = scopeIds;
+      finalScopedIncRems = resolvedScopeIds ? safeAllIncRems.filter(r => resolvedScopeIds.has(r.remId)) : safeAllIncRems;
+      let tempScopedCardRems = resolvedScopeIds ? safeAllCardInfos.filter(ci => resolvedScopeIds.has(ci.remId)) : safeAllCardInfos;
 
       finalPrioritySourceCounts = tempScopedCardRems.reduce((counts, rem) => ({ ...counts, [rem.source]: (counts[rem.source] || 0) + 1 }), { manual: 0, inherited: 0, default: 0, incremental: 0 });
 
@@ -443,14 +441,10 @@ function Priority() {
         tempScopedCardRems = tempScopedCardRems.filter(c => c.source !== 'default');
       }
       finalScopedCardRems = tempScopedCardRems;
-      finalIncRel = calculateRelativePercentile(finalScopedIncRems as any, rem._id);
-      finalCardRel = calculateRelativePercentile(finalScopedCardRems, rem._id);
     }
     return {
       scopedIncRems: finalScopedIncRems,
       scopedCardRems: finalScopedCardRems,
-      incRelPriority: finalIncRel || 50,
-      cardRelPriority: finalCardRel || 50,
       descendantCardCount: finalDescendantCardCount,
       prioritySourceCounts: finalPrioritySourceCounts,
     };
@@ -470,15 +464,35 @@ function Priority() {
     return Math.round((rank / total) * 1000) / 10; // Round to 1 decimal place
   }, [performanceMode, derivedData, rem, incAbsPriority, defaultIncPriority]);
 
+  // Among cards only, each card one element (a Rem with 3 cards counts 3): the
+  // Card Shield's universe, so it matches the flashcard bar's Card Shield %.
+  // This Rem's cards sit at the midpoint of their tie band at the slider's value.
   const cardRelPriority = useMemo(() => {
     if (performanceMode === PERFORMANCE_MODE_LIGHT || !derivedData || !rem) return 50;
     const p = cardAbsPriority ?? defaultCardPriority ?? 50;
-    const others = derivedData.scopedCardRems.filter(r => r.remId !== rem._id);
-    const countLowerOrEqual = others.reduce((acc, curr) => (curr.priority <= p ? acc + 1 : acc), 0);
-    const rank = countLowerOrEqual + 1;
-    const total = others.length + 1;
-    return Math.round((rank / total) * 1000) / 10;
+    return estimateCardRemPercentile(derivedData.scopedCardRems, rem._id, p) ?? 50;
   }, [performanceMode, derivedData, rem, cardAbsPriority, defaultCardPriority]);
+
+  /** Scheduled cards in the scope: the universe of `cardRelPriority`. */
+  const scopedCardCount = useMemo(
+    () => (derivedData?.scopedCardRems ?? []).reduce((n, c) => n + scheduledCardCount(c), 0),
+    [derivedData]
+  );
+
+  // The headline "Relative" is on the unified scale: the item among all IncRems
+  // and cards in the scope (each card one element), the scale every priority
+  // colour uses. The per-kind rank above stays in its hover text.
+  const unifiedScopeRanking = useMemo(() => {
+    if (performanceMode === PERFORMANCE_MODE_LIGHT || !derivedData) return null;
+    const ranking = buildUnifiedRanking(derivedData.scopedIncRems, derivedData.scopedCardRems);
+    return ranking.total > 0 ? ranking : null;
+  }, [performanceMode, derivedData]);
+  const incRelUnified = unifiedScopeRanking
+    ? unifiedPercentileAt(unifiedScopeRanking, incAbsPriority ?? defaultIncPriority ?? 50)
+    : null;
+  const cardRelUnified = unifiedScopeRanking
+    ? unifiedPercentileAt(unifiedScopeRanking, cardAbsPriority ?? defaultCardPriority ?? 50)
+    : null;
 
   // Synchronous Derived Data Hooks (Memoization)
   const documentScopes = useMemo(() => scopeHierarchy.filter(s => s.remId !== null), [scopeHierarchy]);
@@ -581,7 +595,7 @@ function Priority() {
     const ancestors: PluginRem[] = [];
     let current: PluginRem | undefined = rem;
     while (current?.parent) {
-      const parent = await plugin.rem.findOne(current.parent);
+      const parent: PluginRem | undefined = await plugin.rem.findOne(current.parent);
       if (parent) { ancestors.push(parent); current = parent; } else { break; }
     }
     const hierarchy: Scope[] = [{ remId: null, name: 'All KB' }];
@@ -671,30 +685,12 @@ function Priority() {
   const saveIncPriority = useCallback(async (priority: number) => {
     if (!rem) return;
 
-    // We no longer trigger direct SDK Database writes from the popup (such as setPowerupProperty).
-    // All SDK network writes are gracefully deferred to the background tracker via `pendingPrioritySaveKey`.
-    // This function now solely focuses on instantaneous optimistic cache updates.
-
-    // Construct the optimistic cache patch.
-    //
-    // FORK (2026-08-13, issue #8): the `!incRemInfo` branch used to fabricate
-    // `nextRepDate: Date.now()` and label it "Approximate". It is not
-    // approximate — it is a real, wrong value: for a rem already scheduled into
-    // the future, writing it makes the rem due immediately. A failed read is no
-    // evidence about the schedule.
-    //
-    // Only the priority actually changed here, so send only the priority.
-    // updateIncrementalRemCache merges onto the cached entry (keeping the real
-    // nextRepDate / history / rotation), and when the rem is not in the cache at
-    // all its safeParse gate skips the write — the DB side is handled by
-    // initIncrementalRem above, and the tracker inserts the real entry on its
-    // next read.
-    const optimisticIncRem: Partial<IncrementalRem> & { remId: string } = incRemInfo
-      ? { ...incRemInfo, priority }
-      : { remId: rem._id, priority };
-
-    // Fire-and-forget cache update
-    updateIncrementalRemCache(plugin, optimisticIncRem);
+    // No DB writes and no IncRem cache patch from the popup: the tracker does
+    // both, from the `pendingPrioritySaveKey` job saveAndClose posts. A cache
+    // patch here would read the ~8MB cache first, and that read's reply arrives
+    // after the popup's iframe is gone. The same job triggers the inheritance
+    // cascade, after the new value is written — triggering it from here ran it
+    // against the old value, beside the tracker's own writes.
 
     // 🔌 Conditionally update session cache
     if (performanceMode === PERFORMANCE_MODE_FULL && sessionCache && originalScopeId) {
@@ -708,72 +704,17 @@ function Priority() {
 
       plugin.storage.setSession(queueSessionCacheKey, updatedCache).catch(console.error);
     }
-
-
-    // 🌲 Cascade inherited card priorities to descendants (fire-and-forget, unconditional)
-    // Changing an IncRem priority can affect descendant card rems with source 'inherited'
-    // (cards that inherit from this IncRem because no closer card priority anchor exists).
-    // Always triggered regardless of derivedData — that hook may not have resolved yet when
-    // the user saves quickly. Cost is just a setSession write; tracker.ts is protected by
-    // cascadeRunning serialization and returns instantly for leaf rems with no descendants.
-    // Unconditional: the tracker's cascade watcher applies the
-    // flashcard-prioritisation gate, and the cascade no longer needs Full Mode —
-    // without the card-priority cache it resolves has-cards per rem instead.
-    plugin.storage.setSession('pendingInheritanceCascade', rem._id).catch(console.error);
-  }, [rem, incRemInfo, plugin, sessionCache, originalScopeId, performanceMode]); // 🔌 Add performanceMode
+  }, [rem, plugin, sessionCache, originalScopeId, performanceMode]); // 🔌 Add performanceMode
 
   const saveCardPriority = useCallback(async (priority: number) => {
     if (!rem) return;
 
-    // 1. Optimistic Updates (FIRST for responsiveness)
+    // The new value reaches the card-priority displays through the pending key
+    // (publishPendingCardPriority — one setSession, which survives the teardown),
+    // and the cache through the tracker. Patching the cache from here needed a
+    // read of the ~8MB cache whose reply arrived after the popup was gone.
+    publishPendingCardPriority(plugin, rem._id, priority, 'manual');
 
-    // Construct Optimistic Info to avoid DB reads (fixes Close Lag & Race Condition)
-    const optimisticInfo: CardPriorityInfo | null = cardInfo ? {
-      ...cardInfo,
-      priority: priority,
-      source: 'manual',
-      lastUpdated: Date.now()
-    } : {
-      // Fallback if we somehow didn't have cardInfo but are saving (e.g. inheritance only)
-      remId: rem._id,
-      priority: priority,
-      source: 'manual',
-      lastUpdated: Date.now(),
-      cardCount: 1, // approximate
-      dueCards: 0,
-      kbPercentile: 0
-    };
-
-    // 🔌 Only do cache updates in 'full' mode
-    if (performanceMode === PERFORMANCE_MODE_FULL) {
-      // DANGEROUS TO USE INTERNAL RAM CACHE LOCALLY BECAUSE WIDGET IFRAME WILL DIE!
-      // Must directly write to global Session Storage before closing!
-      try {
-        const currentCache = await plugin.storage.getSession<CardPriorityInfo[]>(allCardPriorityInfoKey) || [];
-        const existingIndex = currentCache.findIndex(i => i.remId === rem._id);
-        const newCache = [...currentCache];
-        if (existingIndex !== -1) {
-          newCache[existingIndex] = optimisticInfo;
-        } else {
-          newCache.push(optimisticInfo);
-        }
-        await writeCardPriorityCache(plugin, newCache);
-        console.log(`[Priority] Fast optimistic push cross-iframe succeeded for ${rem._id}`);
-      } catch (err) {
-        console.error("Fast cache set failed", err);
-      }
-
-      if (sessionCache && originalScopeId) {
-        // Minimal lag: rely on global refresh or previous logic without blocking
-      }
-    }
-
-    // 🔔 Signal refresh for listeners (e.g. display widget) in ALL modes
-    // This ensures that even in Light Mode, the display widget updates its color immediately.
-    plugin.storage.setSession(cardPriorityCacheRefreshKey, Date.now()).catch(console.error);
-
-
-    // 2. Critical Writes (Fire and Forget)
     // Signal events.ts to allow this update even if in queue (Global Context Survivor)
     try {
       const manualRems = await plugin.storage.getSession<string[]>('manual_priority_pending_rems') || [];
@@ -785,18 +726,13 @@ function Priority() {
       console.error(err);
     }
 
-    // Notice: We NO LONGER perform `rem.addPowerup` or `setCardPriority` here!
-    // The intensive SDK writes and event wrapping have been successfully deferred 
-    // to the persistent background tracker via `pendingPrioritySaveKey` in saveAndClose.
-
-    // 🌲 Cascade inherited card priorities to descendants
-    // This instructs the tracker to eventually trigger the inheritance cascade.
-    plugin.storage.setSession('pendingInheritanceCascade', rem._id).catch(console.error);
-
-  }, [rem, plugin, sessionCache, originalScopeId, performanceMode, cardInfo, hasCardPriorityPowerup]); // 🔌 Add performanceMode
+    // `rem.addPowerup`, `setCardPriority`, the cache write and the inheritance
+    // cascade all run in the background tracker, from the `pendingPrioritySaveKey`
+    // job saveAndClose posts.
+  }, [rem, plugin]);
 
   // Convert an inherited card priority to manual without changing its numeric value.
-  // saveCardPriority alone only patches the session cache; the SOURCE_SLOT in the DB
+  // saveCardPriority alone only publishes the pending value; the SOURCE_SLOT in the DB
   // is only written by the background tracker watching pendingPrioritySaveKey. Without
   // this dual write, the optimistic 'manual' flip is immediately overwritten the next
   // time getCardPriority reads SOURCE_SLOT from the DB.
@@ -807,18 +743,18 @@ function Priority() {
     //    DB write propagates back via useTrackerPlugin (see the auto-clear effect).
     setConvertedToManual(true);
 
-    // 2. Optimistic cache update + descendant cascade trigger.
+    // 2. Pending value for the card-priority displays.
     saveCardPriority(cardInfo.priority).catch(console.error);
 
-    // 3. Persist source='manual' to the DB via the background tracker.
-    //    triggerCascade=false because saveCardPriority already scheduled one.
+    // 3. Persist source='manual' to the DB via the background tracker, which
+    //    also runs the descendant cascade once the source is written.
     plugin.storage.setSession(pendingPrioritySaveKey, {
       remId: rem._id,
       incPriority: null,
       cardPriority: cardInfo.priority,
       cardSource: 'manual',
       needsAddPowerup: !hasCardPriorityPowerup,
-      triggerCascade: false,
+      triggerCascade: true,
       event: 'popup',
     }).catch(console.error);
   }, [rem, cardInfo, hasCardPriorityPowerup, saveCardPriority, plugin]);
@@ -870,11 +806,14 @@ function Priority() {
     const incChanged = showIncSection && incP !== incRemInfo?.priority;
     const cardChanged = (showCardSection || showInheritanceSection) && cardP !== cardInfo?.priority;
 
-    // 1. Fire-and-Forget Optimistic Saves (For UI responsiveness / Cache consistency)
-    if (showIncSection) {
+    // 1. Fire-and-Forget Optimistic Saves (For UI responsiveness)
+    // Only for what changed: the pending card value outranks the cache until the
+    // tracker's write stamps a newer lastUpdated, and an unchanged value sends
+    // no job — so publishing it would show, say, an inherited value as manual.
+    if (incChanged) {
       saveIncPriority(incP).catch(console.error);
     }
-    if (showCardSection || showInheritanceSection) {
+    if (cardChanged) {
       saveCardPriority(cardP).catch(console.error);
     }
 
@@ -1308,9 +1247,15 @@ function Priority() {
                   <span>Loading relative priority...</span>
                 ) : (
                   <>
-                    <span>Relative: <strong>{incRelPriority}%</strong></span>
+                    <span style={{ cursor: 'help' }} title={`Among IncRems only: ${incRelPriority}% of ${scopedIncRems.length.toLocaleString()}`}>
+                      Relative: <strong>{incRelUnified ?? incRelPriority}%</strong>
+                    </span>
                     <span style={{ color: 'var(--rn-clr-content-tertiary)' }}>•</span>
-                    <span style={{ color: 'var(--rn-clr-content-tertiary)' }}>{scopedIncRems.length.toLocaleString()} items</span>
+                    <span style={{ color: 'var(--rn-clr-content-tertiary)' }}>
+                      {unifiedScopeRanking
+                        ? `${unifiedScopeRanking.total.toLocaleString()} IncRems + cards`
+                        : `${scopedIncRems.length.toLocaleString()} items`}
+                    </span>
                   </>
                 )}
               </div>
@@ -1425,9 +1370,15 @@ function Priority() {
                       <span>Loading relative priority...</span>
                     ) : (
                       <>
-                        <span>Relative: <strong>{cardRelPriority}%</strong></span>
+                        <span style={{ cursor: 'help' }} title={`Among cards only: ${cardRelPriority}% of ${scopedCardCount.toLocaleString()} cards`}>
+                          Relative: <strong>{cardRelUnified ?? cardRelPriority}%</strong>
+                        </span>
                         <span style={{ color: 'var(--rn-clr-content-tertiary)' }}>•</span>
-                        <span style={{ color: 'var(--rn-clr-content-tertiary)' }}>{scopedCardRems.length.toLocaleString()} cards</span>
+                        <span style={{ color: 'var(--rn-clr-content-tertiary)' }}>
+                          {unifiedScopeRanking
+                            ? `${unifiedScopeRanking.total.toLocaleString()} IncRems + cards`
+                            : `${scopedCardCount.toLocaleString()} cards`}
+                        </span>
                       </>
                     )}
                   </div>
@@ -1448,8 +1399,27 @@ function Priority() {
                       </div>
                       <div className="text-xs" style={{ color: 'var(--rn-clr-content-tertiary)' }}>
                         {cardInfo?.source === 'inherited' ? 'Inherits from' : 'Ancestor'} • {ancestorPriorityInfo.levelDescription}
+                        {!ancestorPriorityInfo.anchored && ' • itself inherited, no anchor above'}
                       </div>
                     </div>
+                  </div>
+                )}
+
+                {/* `null` = the walk finished and found nothing (`undefined` is still
+                    loading). An 'inherited' source with nothing above it is a leftover
+                    from an anchor that was removed or moved away — say so instead of
+                    leaving "inherited" unexplained. */}
+                {performanceMode === PERFORMANCE_MODE_FULL && ancestorPriorityInfo === null && cardInfo?.source === 'inherited' && (
+                  <div
+                    className="p-2 rounded text-xs"
+                    style={{
+                      backgroundColor: 'var(--rn-clr-background-primary)',
+                      border: '1px solid var(--rn-clr-border-primary)',
+                      color: 'var(--rn-clr-content-tertiary)',
+                    }}
+                  >
+                    No ancestor holds a priority anymore — this inherited value has lost its anchor.
+                    Convert it to manual to keep it, or run "Update all inherited Card Priorities" to reset orphans to the default.
                   </div>
                 )}
               </>
@@ -1523,9 +1493,15 @@ function Priority() {
                   <span>Loading relative priority...</span>
                 ) : (
                   <>
-                    <span>Relative: <strong>{cardRelPriority}%</strong></span>
+                    <span style={{ cursor: 'help' }} title={`Among cards only: ${cardRelPriority}% of ${scopedCardCount.toLocaleString()} cards`}>
+                      Relative: <strong>{cardRelUnified ?? cardRelPriority}%</strong>
+                    </span>
                     <span style={{ color: 'var(--rn-clr-content-tertiary)' }}>•</span>
-                    <span style={{ color: 'var(--rn-clr-content-tertiary)' }}>{scopedCardRems.length.toLocaleString()} cards</span>
+                    <span style={{ color: 'var(--rn-clr-content-tertiary)' }}>
+                      {unifiedScopeRanking
+                        ? `${unifiedScopeRanking.total.toLocaleString()} IncRems + cards`
+                        : `${scopedCardCount.toLocaleString()} cards`}
+                    </span>
                   </>
                 )}
               </div>
@@ -1560,4 +1536,4 @@ function Priority() {
   );
 }
 
-renderWidget(Priority);
+renderWidget(withHoverTips(Priority));

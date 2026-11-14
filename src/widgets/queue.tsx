@@ -5,10 +5,12 @@ import {
   useTrackerPlugin,
   WidgetLocation,
 } from '@remnote/plugin-sdk';
-import { useEffect, useRef, useState } from 'react';
+import { withHoverTips } from '../components/HoverTipLayer';
+import React, { useEffect, useRef, useState } from 'react';
 import { Reader } from '../components/Reader';
 import { VideoViewer } from '../components/Video';
 import { VideoExtractViewer } from '../components/VideoExtractViewer';
+import { LocalVideoViewer } from '../components/LocalVideoViewer';
 import { NativeVideoViewer } from '../components/NativeVideoViewer';
 import { ExtractViewer } from '../components/ExtractViewer';
 import { IsolatedCardViewer } from '../components/IsolatedCardViewer';
@@ -19,6 +21,9 @@ import {
   forkPluginId,
   activeHighlightIdKey,
   isolatedQueueModeId,
+  IsolatedQueueMode,
+  defaultVideoPlayerId,
+  DefaultVideoPlayer,
   powerupCode,
   currentHostDocumentIdKey,
   queueSlotSwapKey, // FORK (Deviation 16)
@@ -132,6 +137,15 @@ export function QueueComponent() {
   // true = Outline (ExtractViewer, our default), false = Reader. Reset on card change.
   const [outlineView, setOutlineView] = useState(true);
   useEffect(() => { setOutlineView(true); }, [remId]);
+
+  // RemNote video Rems can play in the plugin's player or RemNote's: the
+  // setting picks one per card, and the card's switch button overrides it.
+  const defaultVideoPlayer = useIESettingOptional(defaultVideoPlayerId);
+  const [videoPlayer, setVideoPlayer] = useState<DefaultVideoPlayer | null>(null);
+  // FORK (Deviation 16): keyed on the rem SHOWN (a 🔄 swap changes it within one slot) — upstream: ctx?.remId.
+  useEffect(() => { setVideoPlayer(null); }, [remId]);
+  // Undefined while the setting loads: render nothing rather than the wrong player.
+  const activeVideoPlayer = videoPlayer ?? defaultVideoPlayer;
 
   // This hook signals the component's state.
   useEffect(() => {
@@ -514,9 +528,36 @@ export function QueueComponent() {
             <Reader actionItem={remAndType} queueIncRemId={remId} />
           )
         ) : remAndType.type === 'youtube' ? (
-          <VideoViewer actionItem={remAndType} />
+          !remAndType.nativeAvailable ? (
+            <VideoViewer actionItem={remAndType} />
+          ) : activeVideoPlayer === undefined ? null : activeVideoPlayer === 'remnote' ? (
+            <NativeVideoViewer
+              actionItem={remAndType}
+              url={remAndType.url}
+              onSwitchPlayer={() => setVideoPlayer('plugin')}
+            />
+          ) : (
+            <VideoViewer actionItem={remAndType} onSwitchPlayer={() => setVideoPlayer('remnote')} />
+          )
         ) : remAndType.type === 'youtube-highlight' ? (
-          <VideoExtractViewer actionItem={remAndType} />
+          // An extract opens in the plugin's player, which stops at its end,
+          // whatever the default player for whole videos.
+          remAndType.nativeAvailable && videoPlayer === 'remnote' ? (
+            <NativeVideoViewer
+              actionItem={remAndType}
+              url={remAndType.url}
+              segment={{ start: remAndType.startTime, end: remAndType.endTime }}
+              extractId={remAndType.extract._id}
+              onSwitchPlayer={() => setVideoPlayer('plugin')}
+            />
+          ) : (
+            <VideoExtractViewer
+              actionItem={remAndType}
+              onSwitchPlayer={remAndType.nativeAvailable ? () => setVideoPlayer('remnote') : undefined}
+            />
+          )
+        ) : remAndType.type === 'local-video' || remAndType.type === 'local-video-highlight' ? (
+          <LocalVideoViewer actionItem={remAndType} />
         ) : remAndType.type === 'video' ? (
           <NativeVideoViewer actionItem={remAndType} />
         ) : remAndType.type === 'rem' ? (
@@ -527,4 +568,4 @@ export function QueueComponent() {
   );
 }
 
-renderWidget(QueueComponent);
+renderWidget(withHoverTips(QueueComponent));

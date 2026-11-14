@@ -34,9 +34,13 @@ Displayed below flashcards in the queue (and, in the Beautiful queue variant, [d
 
 In RemNote's **Beautiful** queue variant the bar no longer follows the end of the card. It stays docked just above the answer buttons, so it is always in the same place, however long the card is. RemNote's AI **Explanation** panel moves up to make room: the order from top to bottom is Explanation → Card Info Bar → answer buttons. When a typed answer has been graded, the bar also moves up to leave room for RemNote's **↵ Enter** tab over the suggested button. In the *Compact* variant the bar stays under the card, as before.
 
+On a **phone**, RemNote puts the answer buttons below the card instead of inside it, so the bar docks at the bottom of the card itself, right above them. The order is the same.
+
 ![The answer side of a card in the Beautiful queue: the AI Explanation panel, then the Card Info Bar with priority, shields and FSRS figures, then the four answer buttons](assets/card-info-bar-docked-answer.png){ width="900" }
 
 ![The question side of a card in the Beautiful queue: the Card Info Bar docked just above the Reveal Answer button, well below the card text](assets/card-info-bar-docked-question.png){ width="900" }
+
+![The Card Info Bar on an iPhone in dark mode, docked at the bottom of the card, just above the Forgot, Hard, Got it and Instant buttons](assets/card-info-bar-docked-phone.jpg){ width="320" }
 
 ### 1.2. Queue Toolbar Priority
 Installed directly into the native RemNote Queue Toolbar, this widget guarantees that the **absolute priority** of the current item (both Flashcards and Incremental Rems) is persistently visible during review.
@@ -51,6 +55,8 @@ Unlike the *Card Info Bar*, which in the Compact queue lives at the bottom of fl
 #### In the Beautiful queue variant { #beautiful-queue-variant }
 
 In RemNote's **Beautiful** queue variant (Queue Menu → *Queue Variant*) the badge sits in the **top-right corner of the card**, in the blank space above the breadcrumbs, rather than in the top bar — the card layout itself is unchanged. The *No Inc Rem* countdown moves there with it. Switching back to *Compact* returns both to the toolbar.
+
+The corner area is only as wide as what it shows: the badge, or the badge and the countdown while a *No Inc Rem* timer runs. Clicks beside it reach the card, and the [regular-queue Mastery Drill's bar](History-Queue-Dashboard-and-Mastery-Drill.md#regular-queue-drill) keeps its buttons clear of it.
 
 
 ### 1.3. Answer Buttons Info Bar
@@ -95,6 +101,8 @@ A compact PDF dropdown that appears in the Reader's top bar, just to the right o
 A detailed popup covering **every card of one Rem**, enriched with FSRS analytics. Open it via the 🔬 button on the [Card Info Bar](#11-card-info-bar), or press `Ctrl+Shift+H` on the Rem — in the queue *or* in the editor. Press `Esc` to close.
 
 ![Flashcard Repetition History Popup](assets/flashcard-rep-history-2.png){ width="900" }
+
+On a list or set card, the section also has an [Items panel](Reviewing-Items-in-the-Queue.md#multi-line-items-panel) explaining why the card is due and what it tests next.
 
 Each card's section also carries its [Forgetting Curve](Reviewing-Items-in-the-Queue.md#forgetting-curve) — the card's history replayed into the retrievability FSRS predicts, with a forecast per answer button and the stability each repetition bought. It follows the **Display FSRS DSR Stats** setting.
 
@@ -211,6 +219,7 @@ A distinct widget that serves as a **chronological log** of all your Incremental
 - Each entry also shows an **item-type badge** — 📄 PDF, 🖍️ PDF Extract, 📑 PDF Note, 🌐 Web, 🔖 Web Extract, ▶️ YouTube, ✂️ Video Extract, 🎬 Video or 📝 Rem — the same labels the [IncRem List & Main View](#51-increm-list-main-view) uses, so you can tell at a glance whether a line in the log was a PDF page you read or a note you extracted. It is resolved in the background for the rows on screen and appears a moment after the list does; entries whose Rem no longer exists simply have none.
 - Each entry also shows a **priority badge** (colored by KB-wide percentile) — click it to edit the IncRem's priority with an inline slider, without leaving the sidebar.
 - Searchable by text content; shows "seen X ago" (reviews), "created X ago" (creation events), or "dismissed X ago" (standalone dismissals).
+- Click an entry to open the Rem; **Shift+click** opens it in a new pane beside your current document.
 - Useful companion to the [History and Final Drill](https://www.remnote.com/plugins/final_drill_and_history) plugin.
 
 ![Incremental Rem History Widget showing Created and Reviewed badges](assets/incremental-history-created.png){ width="400" }
@@ -225,6 +234,7 @@ A chronological log of the Rems you have navigated to in the Editor. Helps you q
 - Tracks up to 200 items, filtered by the current Knowledge Base.
 - Searchable by text content with multi-word query support.
 - Each entry can be expanded and edited inline in the sidebar.
+- Click an entry to open the Rem; **Shift+click** opens it in a new pane beside your current document.
 
 📖 **Full documentation:** [Visited Rem History](History-Queue-Dashboard-and-Mastery-Drill.md#visited-rem-history)
 
@@ -238,7 +248,7 @@ A chronological log of the Rems you have navigated to in the Editor. Helps you q
 Records the chronological history of every flashcard reviewed in the queue (cluster-aware: each sibling in a card cluster is logged individually as it becomes visible).
 
 - Searchable by both front and back text of cards.
-- Click any entry to open the Rem in the Editor.
+- Click any entry to open the Rem in the Editor; **Shift+click** opens it in a new pane beside your current document.
 - Holds up to 999 entries, filtered by current Knowledge Base.
 - Each entry shows a **priority badge** next to the rating badge — click it to edit the card's priority with an inline slider, without leaving the sidebar.
 
@@ -399,21 +409,17 @@ Plots your daily [Priority Shield](Prioritization-&-Sorting.md#priority-shield) 
 
 **Features:**
 
-- **Logical Organization**: Graphs are grouped by scope, **Knowledge Base-wide first** (Card, then IncRem), then **Document-level** (Card, then IncRem) — the widest and most-consulted view opens first, and Cards lead each pair.
-- **Visual Separator**: A horizontal divider clearly distinguishes between KB-wide and Document data for better scanability.
+- **Three charts per scope**, each titled by who it counts:
+    - **Priority Shield — IncRems + Cards:** absolute, relative and weighted values, over stacked universe bands (Cards, IncRems, and Dismissed Rems on top). Days before v1.0.193 are rebuilt from the other two charts: the lower of their absolute values and their summed universes, drawn as a thinner dashed line.
+    - **Card Shield — Cards only:** absolute, relative and weighted values, and the card universe (each card counts as one item).
+    - **IncRem Shield — IncRems only:** the absolute value, over the IncRem universe with Dismissed Rems stacked on top.
+- **Scope tabs**: In a document queue, the popup opens with two tabs, Knowledge Base and the document, on the document tab; **←** / **→** switch between them.
 - **Interactive Drag-to-Zoom**: Click and drag horizontally on any graph to zoom into a specific date range. A **Reset Data Range** button appears in the top-right corner to return to the full view.
-- **Optimize Priorities Zoom**: A dedicated button automatically scales the absolute and relative priority Y-Axes to perfectly frame the visible data in your current zoom window. Highly beneficial for viewing subtle metric changes over time!
-- **Scoped Scaling**: The Y-axis (Universe Size) for each chart automatically scales based on the visible data range, ensuring a clear view of your progress even in the Knowledge Base charts.
-- **Card universe is per card**: on the Card charts each card counts as one item, so a Rem owning N cards contributes N — the same universe the [Weighted Shield](Prioritization-&-Sorting.md#weighted-shield) and its popup use, and cards in a paused deck are included. Points stored before v1.0.65 used a per-Rem-with-cards universe, so expect a one-time step on the day you upgraded to it. The IncRem charts are Rem-based by design.
-- **Dismissed Rems Tracking (IncRem Graphs):** The IncRem shield graphs track your process progression with a stacked area chart:
-    - **Green Line**: Your active Incremental Rems universe.
-    - **Black Dashed Line**: Your *Total Universe* (IncRems + items marked with the `dismissed` powerup).
-    - **Yellow Area**: The visual volume of your dismissed material.
-- **Detailed Tooltips**: Hover over any IncRem graph to see a breakdown of your Incremental Rems, Dismissed Rems, Total Universe, and an calculated **Processing Percentage** metric showing exactly how much of your total universe has been successfully dismissed.
+- **Optimize Priorities Zoom**: A dedicated button scales the absolute and relative priority Y-axes to frame the visible data in your current zoom window.
+- **Scoped Scaling**: The Universe Size axis of each chart scales to the visible data range.
+- **Detailed Tooltips**: Hover over any chart for that day's values in the colours of their lines, including the two sides behind the Priority Shield and a **Processing Percentage** on the IncRem chart.
 
-![priority-shield-cards](assets/uploaded/206bcc27-a186-42be-9d52-66afccc16b9e.png){ width="1000" }
-
-![Priority Shield Graph Zoom](assets/priority-shield-graph-zoom.gif){ width="800" }
+Try it with example data in the [interactive demo](Prioritization-&-Sorting.md#priority-shield-history).
 
 📖 **Full documentation:** [Priority Shield History](Prioritization-&-Sorting.md#priority-shield-history)
 
@@ -469,7 +475,7 @@ Lets you manually override the next review date, adjust priority and choose the 
 ### 6.2. Parent Selector
 **Access:** Highlight text in a PDF or web page → click the puzzle piece icon → "Create Incremental Rem"
 
-A hierarchical tree selector that lets you choose where to place a new extract. Supports keyboard navigation (arrow keys, Enter to select), inline child creation via the `+` button, and automatic priority inheritance from the chosen parent. Expanded branches show **H1–H6 badges** and can list headings first or filter down to headings only; `L` reselects the last/suggested destination.
+A hierarchical tree selector that lets you choose where to place a new extract. Supports keyboard navigation (arrow keys, Enter to select), inline child creation via the `+` button, and automatic priority inheritance from the chosen parent. Expanded branches show **H1–H6 badges** and can list headings first or filter down to headings only; `L` reselects the last/suggested destination. `E` (**📍 Pick in editor**) closes the list and opens a small floating card instead, so you can [pick the parent in the editor](Create-Incremental-Rem-from-PDF-Highlights.md#pick-in-editor) and confirm with `Opt+Shift+Enter`. The popup's height follows your screen size.
 
 ![Creat Inc Rem parent selection](assets/uploaded/9cbcdd80-b782-4dcc-b033-cda82fc91be8.gif)
 
@@ -505,6 +511,7 @@ A **floating** picker (it doesn't cover the editor like a popup) that finds Rems
 - **Cloze-aware insertion:** a reference inserted while the cursor/selection is inside a cloze stays *inside* the cloze instead of breaking it.
 - **Accent-insensitive** (`navegacao interior` → `Navegação Interior`) and **selection-aware** (selected text seeds the box and is replaced by the reference on insert, like native `[[`).
 - Each result row shows a **type badge**, the Rem's **back text**, and a short **`root / … / parent` breadcrumb**; a **Concepts only** toggle narrows the list.
+- **Movable:** drag the title row to move the box; it opens at the cursor again next time.
 
 📖 **Full documentation:** [Find Rem — Reference or Open](Utilities-Finding-and-Navigating.md#find-rem-reference-or-open) · root-cause explainer: [Search / Linkage Diagnostics](Troubleshooting.md#search-linkage-diagnostics-debug-widget)
 
@@ -518,21 +525,25 @@ A centered **modal** popup that renders the **PDF or web article behind a hovere
 - **Source-aware:** only opens for **PDF/HTML highlights**, **PDF source documents**, and **HTML article sources**. Hovering a plain Rem and pressing the key does nothing (just a toast), so it's always safe to trigger.
 - **Auto-scroll to highlight:** for highlights, the embedded reader scrolls to the highlighted passage once it mounts (retried a few times while the PDF engine initializes).
 - **🔖 Scroll to Highlight button** in the header re-centers on the highlight after you've scrolled around the document.
+- **🪟 Open in Another Window button** in the header shows the source in another RemNote window ([details](Utilities-Finding-and-Navigating.md#open-in-another-window)). Desktop app only.
+- **🧭 Follow the Queue in another window button** in the header makes another RemNote window show the sources of the queue's cards ([details](Utilities-Finding-and-Navigating.md#follow-the-queue)). Desktop app only, and only while a queue is open.
 - **Queue-safe:** uses a modal overlay (not a pane), so the queue, your position, and the rating buttons stay intact underneath.
+- **Screen-fitted height:** 80% of the display's height (600–1500 px), measured when the plugin loads.
 
 📖 **Full documentation:** [Open Source in Popup](Utilities-Finding-and-Navigating.md#open-source-in-popup)
 
 ### 6.6. Source Popup (floating, non-blocking)
 **Trigger:** **Hover** a reference pin → press `Opt+Shift+O` / `Alt+Shift+O` (command: `Open Hovered Source in Floating Window`)
 
-The **non-blocking** sibling of 6.5: the *same* reader, but opened as a **floating window on the right portion of the screen (≈48% width)** instead of a centered modal. Because it has no backdrop, the **card/editor stays visible beside it** — built for the case where you want to glance back and forth between the source and the card without the close/reopen churn a modal forces.
+The **non-blocking** sibling of 6.5: the *same* reader, but opened as a **floating window on the right portion of the screen (40% width)** instead of a centered modal. Because it has no backdrop, the **card/editor stays visible beside it** — built for the case where you want to glance back and forth between the source and the card without the close/reopen churn a modal forces.
 
 **Differences from the modal (6.5):**
 
 - **Stays open while you use the PDF:** clicking into the reader to **highlight, select text, or click existing highlights** does **not** dismiss it (the click-outside-to-close behavior is disabled — clicks land in the reader's iframe).
 - **Auto-closes on card advance:** when the queue loads the next card, the floating window closes itself so a previous source never lingers.
 - **Esc closes it without closing the queue:** the plugin "steals" the Esc key while the float is open, so RemNote's queue doesn't act on it. (When focus is inside the PDF iframe, the reader handles Esc itself; use `✕` there.)
-- **Fixed size:** RemNote floating widgets aren't user-resizable; the window opens at ≈48% viewport width, anchored top-right.
+- **Movable:** drag the header (not its buttons) to move the window; the next one opens at the last position, for the rest of the session.
+- **Fixed size:** RemNote floating widgets aren't user-resizable; the window opens at 40% viewport width and 80% of the display's height, anchored top-right.
 
 Shares the source-detection and 🔖 Scroll to Highlight behaviors with 6.5.
 
@@ -670,6 +681,28 @@ The front door to the persistent review document, one per scope.
 
 📖 **Full documentation:** [Priority Queue](Priority-Review-Document.md#the-priority-queue-popup)
 
+### 6.15. Cycle Image Size Confirmation and Size Bar
+**Trigger:** `Opt+Shift+G` / `Alt+Shift+G` (command: `Cycle Image Size`, quick code `cis`).
+
+- **Confirmation popup:** appears before a press that would change images you have sized, or more images than the *Cycle Image Size: Ask Above* setting. It shows thumbnails of the images with their current sizes.
+- **Size bar:** a floating bar at the bottom-right showing the size just set, the number of images changed and any skipped. Click a size to go straight to it. It hides 4 seconds after the last press.
+
+📖 **Full documentation:** [Cycle Image Size](Utilities-Cleaning-Up.md#cycle-image-size)
+
+### 6.16. Duplicate Web Page Warning
+**Trigger:** making a Rem Incremental when another Incremental or Dismissed Rem has the same web page as a source.
+
+Offers to open the existing Rem, make the Rem Incremental anyway, or cancel. With several Rems selected, it can also skip the duplicates.
+
+📖 **Full documentation:** [Duplicate web page warning](Getting-Started.md#duplicate-web-page-warning)
+
+### 6.17. Incremental Rems by Website Popup
+**Trigger:** command `Incremental Rems by Website` (quick code `irw`).
+
+Lists websites with their Incremental and Dismissed counts, then the Rems of the chosen website, with a filter box at both levels.
+
+📖 **Full documentation:** [Incremental Rems by Website](Utilities-Finding-and-Navigating.md#incremental-rems-by-website)
+
 ## 7. Mastery Drill
 
 ### 7.1. Mastery Drill Popup
@@ -683,6 +716,7 @@ A focused sub-queue of flashcards rated *Forgot* or *Hard*, designed for deliber
 - **Old Items Warning**: cards lingering past the configured threshold (default 7 days) are flagged; clear them with a single click.
 - **Clear Queue**: empty the entire drill at any time.
 - **List Cards**: lists every card in the drill with a status saying whether RemNote can still show it, and removes the ones it cannot. See [Card List](History-Queue-Dashboard-and-Mastery-Drill.md#card-list).
+- **In the regular queue**, the drill bar under the queue's top bar carries the same queue tools (counts, List Cards, Clear Queue, Clear Low Priority, Clear Old, Remove from Drill), without the per-card editing buttons. See [The regular-queue drill](History-Queue-Dashboard-and-Mastery-Drill.md#regular-queue-drill).
 
 📖 **Full documentation:** [Mastery Drill](History-Queue-Dashboard-and-Mastery-Drill.md#mastery-drill)
 

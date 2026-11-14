@@ -25,6 +25,9 @@ Reach a Rem, a source or a figure that RemNote’s own search will not surface.
 - [Find Rem — Reference or Open](Utilities-Finding-and-Navigating.md#find-rem-reference-or-open)
 - [Open Source in Popup](Utilities-Finding-and-Navigating.md#open-source-in-popup)
 - [Filter a Document by Images](Utilities-Finding-and-Navigating.md#filter-a-document-by-images)
+- [Incremental Rems by Website](Utilities-Finding-and-Navigating.md#incremental-rems-by-website)
+- [Readable Breadcrumbs in Rem Preview](Utilities-Finding-and-Navigating.md#readable-breadcrumbs-in-rem-preview)
+- [Copy Rem ID](Utilities-Finding-and-Navigating.md#copy-rem-id)
 
 ## [Queue Display](Utilities-Queue-Display.md)
 
@@ -47,18 +50,27 @@ Mark a statement as true or false with one command, and make that kind of questi
 
 - [What a True/False card looks like](Utilities-True-or-False-Cards.md#what-it-looks-like)
 - [Mark as True (`tft`) / Mark as False (`tff`) — New](Utilities-True-or-False-Cards.md#mark-as-true-or-false)
+- [Judge by Emoji (`tfj`) — New](Utilities-True-or-False-Cards.md#judge-by-emoji)
 - [Remove Marking (`tfx`)](Utilities-True-or-False-Cards.md#remove-marking)
 - [Importing True/False cards from text (`tfc`)](Utilities-True-or-False-Cards.md#importing-from-text)
 - [In a Card Cluster](Utilities-True-or-False-Cards.md#card-clusters)
 
+## [Multiple-Choice Cards](Utilities-Multiple-Choice-Cards.md)
+
+Additions to RemNote's own multiple-choice cards in the queue.
+
+- [Scissors — New](Utilities-Multiple-Choice-Cards.md#scissors)
+- [True/False answer sheet — New](Utilities-Multiple-Choice-Cards.md#answer-sheet)
+
 ## [Cleaning Up](Utilities-Cleaning-Up.md)
 
-Clear out Rems an import left behind, audit disabled cards, store the images and audio a Rem only links to, and size imported images that show cropped in the queue.
+Clear out Rems an import left behind, audit disabled cards, store the images and audio a Rem only links to, size imported images that show cropped in the queue, and repair references that show "Loading".
 
 - [Delete Empty Extra Card Detail Rems](Utilities-Cleaning-Up.md#delete-empty-extra-card-detail-rems)
 - [Card Enablement Audit](Utilities-Cleaning-Up.md#card-enablement-audit)
 - [Store Linked Images & Audio in RemNote](Utilities-Cleaning-Up.md#store-linked-images-audio)
 - [Cycle Image Size (`Opt+Shift+G`) — New](Utilities-Cleaning-Up.md#cycle-image-size)
+- [Repair Broken References — New](Utilities-Cleaning-Up.md#repair-broken-references)
 
 ## [Under the Hood](Utilities-Under-the-Hood.md)
 

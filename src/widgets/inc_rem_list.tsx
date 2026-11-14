@@ -1,11 +1,12 @@
 import { ReactRNPlugin, renderWidget, usePlugin, useTrackerPlugin } from '@remnote/plugin-sdk';
+import { withHoverTips } from '../components/HoverTipLayer';
 import React, { useState, useRef } from 'react';
 import { allIncrementalRemKey, popupDocumentIdKey, powerupCode, prioritySlotCode } from '../lib/consts';
 import { IncrementalRem } from '../lib/incremental_rem';
 import { getIncrementalRemFromRem, setIncRemPriority } from '../lib/incremental_rem';
 import { updateIncrementalRemCache } from '../lib/incremental_rem/cache';
 import { buildDocumentScope } from '../lib/scope_helpers';
-import { extractText, determineIncRemType, getTotalTimeSpent, getBreadcrumbText } from '../lib/incRemHelpers';
+import { extractText, determineIncRemType, openIncRemForReview, getTotalTimeSpent, getBreadcrumbText } from '../lib/incRemHelpers';
 import { safeRemTextToString } from '../lib/pdfUtils';
 import { getNextSpacingDateForRem } from '../lib/scheduler';
 import { getSortingRandomness } from '../lib/sorting';
@@ -242,6 +243,11 @@ export function IncRemList() {
     await plugin.storage.setSession('editor-review-timer-rem-id', remId);
     await plugin.storage.setSession('editor-review-timer-start', Date.now());
     await plugin.storage.setSession('editor-review-timer-interval', interval);
+    // A same-day repeat keeps the date in force (Ignore Same-Day Reviews).
+    await plugin.storage.setSession(
+      'editor-review-timer-date-override',
+      scheduleData?.sameDayRepeat ? scheduleData.newNextRepDate : undefined
+    );
     await plugin.storage.setSession('editor-review-timer-priority', seedPriorityForTimer(incRemInfo));
     await plugin.storage.setSession('editor-review-timer-rem-name', remName || 'Unnamed Rem');
     await plugin.storage.setSession('editor-review-timer-from-queue', false);
@@ -250,12 +256,7 @@ export function IncRemList() {
     await plugin.app.toast(`⏱️ Timer started for: ${remName}`);
 
     // Open the rem in the editor
-    const incRemType = await determineIncRemType(plugin, rem);
-    if (incRemType === 'pdf-note') {
-      await rem.openRemAsPage();
-    } else {
-      await plugin.window.openRem(rem);
-    }
+    await openIncRemForReview(plugin, rem);
 
     await plugin.widget.closePopup();
   };
@@ -290,4 +291,4 @@ export function IncRemList() {
   );
 }
 
-renderWidget(IncRemList);
+renderWidget(withHoverTips(IncRemList));

@@ -7,6 +7,7 @@ import {
     useSessionStorageState,
     useLocalStorageState,
 } from "@remnote/plugin-sdk";
+import { withHoverTips } from "../components/HoverTipLayer";
 import '../style.css';
 import '../App.css';
 import { timeSince, formatStabilityDays } from "../lib/utils";
@@ -35,6 +36,7 @@ import {
 } from "../lib/authoritative_aggregates";
 import { computeMonthlyShieldCatchUp, MonthlyShieldCatchUp } from "../lib/shield_history";
 import { CardForgettingCurve } from "../components/CardForgettingCurve";
+import { CardSchedulerLabel } from "../components/OtherSchedulers";
 import { practicedQueuesVisibleKey, showQueueDashboardCurveId } from "../lib/consts";
 import {
     CALIBRATION_PERIOD_LABELS,
@@ -808,6 +810,11 @@ function PracticedQueues() {
                         <CardForgettingCurve
                             cardId={showPreviousCurve ? activeSession.prevCardId : activeSession.currentCardId}
                             title={`${showPreviousCurve ? 'Previous' : 'Current'} Card — Forgetting Curve`}
+                            subtitle={
+                                <CardSchedulerLabel
+                                    cardId={showPreviousCurve ? activeSession.prevCardId : activeSession.currentCardId}
+                                />
+                            }
                             height={220}
                             headerRight={
                                 canShowPreviousCurve && (
@@ -960,31 +967,31 @@ function PracticedQueues() {
 function MonthlyShieldCatchUpPanel({ refreshKey }: { refreshKey: number }) {
     const plugin = usePlugin();
     const [data, setData] = useState<{
-        kbIncRem: MonthlyShieldCatchUp | null;
+        kbUnified: MonthlyShieldCatchUp | null;
         kbCard: MonthlyShieldCatchUp | null;
-        docIncRem: MonthlyShieldCatchUp | null;
+        docUnified: MonthlyShieldCatchUp | null;
         docCard: MonthlyShieldCatchUp | null;
     } | null>(null);
 
     useEffect(() => {
         let cancelled = false;
         (async () => {
-            const [kbIncRem, kbCard, docIncRem, docCard] = await Promise.all([
-                computeMonthlyShieldCatchUp(plugin, 'incRem', 'kb'),
+            const [kbUnified, kbCard, docUnified, docCard] = await Promise.all([
+                computeMonthlyShieldCatchUp(plugin, 'unified', 'kb'),
                 computeMonthlyShieldCatchUp(plugin, 'card', 'kb'),
-                computeMonthlyShieldCatchUp(plugin, 'incRem', 'doc'),
+                computeMonthlyShieldCatchUp(plugin, 'unified', 'doc'),
                 computeMonthlyShieldCatchUp(plugin, 'card', 'doc'),
             ]);
-            if (!cancelled) setData({ kbIncRem, kbCard, docIncRem, docCard });
+            if (!cancelled) setData({ kbUnified, kbCard, docUnified, docCard });
         })();
         return () => { cancelled = true; };
     }, [plugin, refreshKey]);
 
     if (!data) return null;
     const rows: { scopeIcon: string; scopeLabel: string; kindLabel: string; entry: MonthlyShieldCatchUp }[] = [];
-    if (data.kbIncRem) rows.push({ scopeIcon: '🌐', scopeLabel: 'KB', kindLabel: 'IncRem', entry: data.kbIncRem });
+    if (data.kbUnified) rows.push({ scopeIcon: '🌐', scopeLabel: 'KB', kindLabel: 'Priority', entry: data.kbUnified });
     if (data.kbCard) rows.push({ scopeIcon: '🌐', scopeLabel: 'KB', kindLabel: 'Cards', entry: data.kbCard });
-    if (data.docIncRem) rows.push({ scopeIcon: '📄', scopeLabel: 'Doc', kindLabel: 'IncRem', entry: data.docIncRem });
+    if (data.docUnified) rows.push({ scopeIcon: '📄', scopeLabel: 'Doc', kindLabel: 'Priority', entry: data.docUnified });
     if (data.docCard) rows.push({ scopeIcon: '📄', scopeLabel: 'Doc', kindLabel: 'Cards', entry: data.docCard });
     if (rows.length === 0) return null;
 
@@ -1366,4 +1373,4 @@ function QueueSessionItem({ session, onDelete, isLive, thresholds }: { session: 
     )
 }
 
-renderWidget(PracticedQueues);
+renderWidget(withHoverTips(PracticedQueues));

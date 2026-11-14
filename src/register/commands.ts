@@ -12,9 +12,21 @@ import {
 import { openMasteryDrill } from '../lib/mastery_drill_launch';
 import { convertRemTree } from '../lib/markup_to_richtext';
 import { aiTranscribeHighlight, restoreHighlightBeforeAi } from '../lib/ai_ocr';
-import { pinSourceQuote } from '../lib/pdf_source_pins';
+import { pinSourceQuote, pinSourceQuotesInTree } from '../lib/pdf_source_pins';
+import { toggleFollowQueueSources } from '../lib/follow_queue_sources';
 import { localizeMediaInRems } from '../lib/localize_media';
+import { openUpscaleImage } from '../lib/upscale_image';
 import { showMessageDialog } from '../lib/message_dialog';
+import {
+  addVideoTranscript,
+  describeTranscript,
+  shouldTidy,
+  tidyTranscript,
+  transcriptTargetForRem,
+  TranscriptTarget,
+} from '../lib/video_transcript';
+import { TranscriptSource } from '../lib/youtube_transcript';
+import { chooseLocalVideo, localVideoTitle, setCardVideo, setLocalVideo } from '../lib/local_video';
 import { markRemsAsFreshlyCreated } from '../lib/incRemHelpers';
 import { isHintNode } from '../lib/richTextSanitize';
 import {
@@ -36,8 +48,10 @@ import {
   aiTranscribeHighlightCommandId,
   restoreHighlightBeforeAiCommandId,
   pinSourceQuoteCommandId,
+  pinSourceQuotesInTreeCommandId,
   localizeMediaCommandId,
   localizeMediaTreeCommandId,
+  upscaleImageCommandId,
   currentIncrementalRemTypeKey,
   incremReviewStartTimeKey,
   allCardPriorityInfoKey,
@@ -47,6 +61,8 @@ import {
   priorityCalcScopeRemIdsKey,
   sourceFloatingTargetKey,
   sourceFloatingActiveIdKey,
+  sourceFloatingPositionKey,
+  sourceFloatingDefaultPosition,
   preservedHistoryPowerupCode,
   priorityBandColorsReloadKey,
   priorityBandVerboseLogsKey,
@@ -54,7 +70,12 @@ import {
   enableFlashcardPrioritisationId,
   hasImagePowerupName,
   cardEnablementAnchorKey,
+  parentPickConfirmCommandId,
+  parentPickCancelCommandId,
+  parentPickActiveIdKey,
+  parentPickConfirmRequestKey,
 } from '../lib/consts';
+import { endParentPick } from '../lib/parent_pick';
 import { computeWeightedShieldBreakdown, formatDuration } from '../lib/utils';
 import {
   planPreserveHistoryAndRemove,
@@ -71,20 +92,20 @@ import { CardPriorityInfo, expandCardInfosToCards, isPerCardDue } from '../lib/c
 import { IncrementalRem as IncrementalRemType } from '../lib/incremental_rem/types';
 import { buildDocumentScope } from '../lib/scope_helpers';
 import { initIncrementalRem } from './powerups';
-import { getIncrementalRemFromRem, handleNextRepetitionClick, getCurrentIncrementalRem, requestQueueDashboardRefocus } from '../lib/incremental_rem';
-import { removeIncrementalRemCache } from '../lib/incremental_rem/cache';
-import { IncrementalRep } from '../lib/incremental_rem/types';
-import { safeRemTextToString, getIncrementalReadingPosition, addPageToHistory, registerRemsAsPdfKnown, getActivePdfForIncRem, getAllPDFsInRem, getDescendantsToDepth, getRemCardContent, resolveSourcePopupTarget } from '../lib/pdfUtils';
+import { getIncrementalRemFromRem, getCurrentIncrementalRem, requestQueueDashboardRefocus } from '../lib/incremental_rem';
+import {
+  queueNextRepetition,
+  captureQueueReviewSeconds,
+  enqueueReviewJob,
+  enqueueReviewJobs,
+  newReviewJobId,
+} from '../lib/incremental_rem/review_jobs';
+import { safeRemTextToString, registerRemsAsPdfKnown, getActivePdfForIncRem, getAllPDFsInRem, getDescendantsToDepth, getRemCardContent, resolveSourcePopupTarget } from '../lib/pdfUtils';
 import { getHoveredReference } from './events';
 import { practicePriorityQueue, findPriorityQueueDoc, isQueueOpen } from '../lib/priority_review_document/queue_doc';
 import { flashcardHistorySpec, clearHistoryShard } from '../lib/history_shards';
-import { transferToDismissed } from '../lib/dismissed';
-import { addToIncrementalHistory, addDismissalToIncrementalHistory } from '../lib/history_utils';
 import { FORK_FEATURES } from '../lib/fork_gates';
 import { runQueueActionOnce } from '../lib/action_guard';
-import { priorityStampFor } from '../lib/incremental_rem/types';
-import { handleCardPriorityInheritance } from '../lib/card_priority/card_priority_inheritance';
-import dayjs from 'dayjs';
 import {
   getOperatingSystem,
   getPlatform,
@@ -103,7 +124,11 @@ import {
   updateAllCardPriorities,
   setCardPriority,
 } from '../lib/card_priority';
-import { loadCardPriorityCache, rereadCardPriorityCacheWhenCardsExist, updateCardPriorityCache } from '../lib/card_priority/cache';
+import { createOpTimer, OpTimer } from '../lib/op_timer';
+import dayjs from 'dayjs';
+import { createTurnQueue } from '../lib/turn_queue';
+import { holdCardPriorityCacheEntry, loadCardPriorityCache, rereadCardPriorityCacheWhenCardsExist } from '../lib/card_priority/cache';
+import { loadIncrementalRemCache } from '../lib/incremental_rem/cache';
 import {
   isHiddenSlotMigrated,
   isVisiblePrioritySlotRetired,
@@ -125,8 +150,8 @@ import { handleReviewInEditorRem } from '../lib/review_actions';
 import { remTitleEndsWithOpenLinkTag, extractExternalHttpUrlsFromRem } from '../lib/open_editor_link_tag';
 import { determineIncRemType } from '../lib/incRemHelpers';
 import { resolveQueueCommandTarget } from '../lib/queue_target';
-import { cycleImageSizes, resolveImageSizeTargets } from '../lib/image_size_cycle';
-import { IMAGE_SIZE_STEP_LABEL } from '../lib/image_sizing';
+import { getQueueVisibleCard } from '../lib/queue_visible_card';
+import { pressCycleImageSize } from '../lib/image_size_session';
 import {
   setRemReadPoint,
   isDescendantOf,
@@ -159,6 +184,12 @@ import {
   getEffectiveSelection,
 } from '../lib/editor_selection';
 import { createExtract } from '../lib/extract';
+import {
+  confirmNoDuplicateSource,
+  registerRemPagesIfTracked,
+  SOURCE_SITES_POPUP,
+  websiteOfRem,
+} from '../lib/duplicate_source';
 import { bulletizeSelection } from '../lib/bulletize';
 import {
   inlinizeListSelection,
@@ -180,7 +211,13 @@ import { batchPriorityTargetRemIdsKey, titleCaseAcronymsId } from '../lib/consts
 import { requestAnotherIncRem } from '../lib/queue_swap'; // FORK (Deviation 16)
 import { describeTogglePlan, resolveTogglePlan } from '../lib/toggle_incremental'; // FORK (2026-10-10)
 import type { QueueCommandTarget } from '../lib/queue_target'; // FORK (2026-10-10)
+// FORK (10297b3 sync): upstream's Next and Dismiss bodies became background review jobs
+// (lib/incremental_rem/review_jobs.ts) and dropped these imports. The fork's keyboard Next
+// (runNextInQueueAction) and Ctrl+G still save first and advance after, so they keep them.
+import { handleNextRepetitionClick } from '../lib/incremental_rem';
+import { addPageToHistory, getIncrementalReadingPosition } from '../lib/pdfUtils';
 import { getIESetting } from '../lib/settings';
+import { copyTextToClipboard } from '../lib/clipboard';
 
 // Opens a priority popup against one or many rems. Single-rem calls behave
 // exactly as before; multi-rem calls hand the full id list to the widget through
@@ -345,6 +382,14 @@ export async function registerCommands(plugin: ReactRNPlugin) {
   });
 
   await plugin.app.registerCommand({
+    id: upscaleImageCommandId,
+    name: 'Upscale image with ChatGPT',
+    description: "Regenerate the focused rem's image at a higher resolution (Local Media Bridge + Codex CLI), compare, replace.",
+    quickCode: 'upi',
+    action: async () => openUpscaleImage(plugin),
+  });
+
+  await plugin.app.registerCommand({
     id: localizeMediaTreeCommandId,
     name: 'Store linked images & audio in RemNote (with descendants)',
     action: async () => runLocalizeMedia(true),
@@ -357,6 +402,17 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     keyboardShortcut: 'opt+shift+q',
     action: async () => {
       await pinSourceQuote(plugin);
+    },
+  });
+
+  // Same, for every Quote Rem in the focused Rem's subtree (the Rem included).
+  await plugin.app.registerCommand({
+    id: pinSourceQuotesInTreeCommandId,
+    name: 'Pin Source Quote (Quote Rems in descendants)',
+    quickCode: 'psqd',
+    keyboardShortcut: 'ctrl+opt+shift+q',
+    action: async () => {
+      await pinSourceQuotesInTree(plugin);
     },
   });
 
@@ -510,7 +566,15 @@ export async function registerCommands(plugin: ReactRNPlugin) {
 
       const timeStr = formatDuration(Math.round(outcome.totalReviewSeconds)) || '0s';
       const ok = confirm(
-        `🔀 Transfer Incremental data to parent\n\n` +
+        outcome.mode === 'finish'
+          ? `🔀 Finish an interrupted transfer\n\n` +
+              `From: "${outcome.sourceName}"\n` +
+              `To:   "${outcome.destinationName}"\n\n` +
+              `An earlier transfer already moved this Rem's data onto the parent but stopped ` +
+              `before removing it from here, so both Rems carry the same history ` +
+              `(${outcome.history.length} entr(ies)). All of them are on the parent.\n\n` +
+              `"${outcome.sourceName}" stops being an Incremental Rem. Its text and children are untouched.\n\nContinue?`
+          : `🔀 Transfer Incremental data to parent\n\n` +
           `From: "${outcome.sourceName}"\n` +
           `To:   "${outcome.destinationName}"\n\n` +
           `• ${outcome.history.length} history entr(ies) move across` +
@@ -522,6 +586,12 @@ export async function registerCommands(plugin: ReactRNPlugin) {
           (outcome.hasReadingState ? `• Reading state (pages / read points) moves too\n` : '') +
           (outcome.destinationDismissedReps > 0
             ? `• ${outcome.destinationDismissedReps} dismissed entr(ies) already on the parent are revived and kept\n`
+            : '') +
+          (outcome.schedulerChange
+            ? `\n⚠️ The scheduler changes: this Rem uses ${outcome.schedulerChange.from}, ` +
+              `the parent will use ${outcome.schedulerChange.to}. The scheduler comes from the ` +
+              `Rem's type and does not move with the data — change it in the Reschedule popup ` +
+              `(Ctrl+J) on the parent afterwards if needed.\n`
             : '') +
           `\n"${outcome.sourceName}" stops being an Incremental Rem. Its text and children are untouched.\n\nContinue?`
       );
@@ -543,9 +613,12 @@ export async function registerCommands(plugin: ReactRNPlugin) {
 
       try {
         await executeTransferIncRemToParent(plugin, outcome, { advanceQueue });
-        await plugin.app.toast(
-          `✅ Incremental data moved to "${outcome.destinationName}".`
-        );
+        const doneMessage =
+          outcome.mode === 'finish'
+            ? `✅ Interrupted transfer finished — "${outcome.sourceName}" is no longer Incremental.`
+            : `✅ Incremental data moved to "${outcome.destinationName}".`;
+        console.log(`[TransferIncRem] ${doneMessage}`);
+        await plugin.app.toast(doneMessage);
       } catch (e) {
         console.error('[TransferIncRem] Error:', e);
         await plugin.app.toast('❌ Error during the transfer — see console.');
@@ -645,12 +718,36 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     },
   });
 
-  const createClozeDeletion = async (): Promise<{
+  type ClozeResult = {
     clozeRem: PluginRem;
     parentRem: PluginRem;
     autoPriority: ClozeAutoPriorityInfo;
-  } | undefined> => {
-      const selection = await plugin.editor.getSelection();
+  };
+
+  // Clozes made in quick succession from one Rem overlap. Each must see the previous one's
+  // highlight in the parent's text, or its own write erases it, and the previous one's tag, or
+  // both count the same earlier clozes and get the same priority.
+  const takeClozeTurn = createTurnQueue();
+
+  const createClozeDeletion = async (): Promise<ClozeResult | undefined> => {
+    const timer = createOpTimer();
+    // Read at the key press, since the selection moves on while this press waits its turn.
+    const selectionRead = plugin.editor.getSelection();
+    const turn = takeClozeTurn();
+    try {
+      await turn.ready;
+      timer.lap('wait');
+      return await createClozeInTurn(await selectionRead, turn.release, timer);
+    } finally {
+      turn.release();
+    }
+  };
+
+  const createClozeInTurn = async (
+    selection: Awaited<ReturnType<typeof plugin.editor.getSelection>>,
+    releaseTurn: () => void,
+    timer: OpTimer
+  ): Promise<ClozeResult | undefined> => {
       if (!selection || selection.type !== SelectionType.Text) return;
       if (selection.range.start === selection.range.end) {
         await plugin.app.toast('Please select some text to create a cloze deletion.');
@@ -660,9 +757,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       const rem = await plugin.rem.findOne(selection.remId);
       if (!rem) return;
 
-      // Compute auto-priority BEFORE creating the new cloze rem, so the count of existing
-      // cloze-extract children reflects only prior clozes (not the one we're about to create).
-      const autoPriority = await computeClozeAutoPriority(plugin, rem);
+      timer.lap('read');
 
       const r_start = Math.min(selection.range.start, selection.range.end);
 
@@ -996,23 +1091,30 @@ export async function registerCommands(plugin: ReactRNPlugin) {
         if (!clozeRem) return;
 
         await clozeRem.setText(buildChildText());
+        // Before the parent's own write below, as this one changes the parent too.
         await clozeRem.setParent(rem);
+        timer.lap('create');
 
-        let clozeExtractTag = await plugin.rem.findByName(['cloze-extract'], null);
-        if (!clozeExtractTag) {
-          clozeExtractTag = await plugin.rem.createRem();
-          if (clozeExtractTag) await clozeExtractTag.setText(['cloze-extract']);
-        }
-        if (clozeExtractTag) await clozeRem.addTag(clozeExtractTag._id);
+        const tagClozeChild = async (existingTagId: string | null) => {
+          let clozeExtractTagId = existingTagId;
+          if (!clozeExtractTagId) {
+            const newTag = await plugin.rem.createRem();
+            if (newTag) {
+              await newTag.setText(['cloze-extract']);
+              clozeExtractTagId = newTag._id;
+            }
+          }
+          if (clozeExtractTagId) await clozeRem.addTag(clozeExtractTagId);
 
-        // 2. Apply the Remove Parent powerup to the cloze rem so its parent is hidden
-        // from queue display only when this specific cloze is the current card.
-        // Tagging the parent with Remove from Queue (the previous behavior) would
-        // also hide it for sibling/descendant flashcards (e.g. descriptor children),
-        // breaking their context. Scoping the effect to the cloze itself avoids that.
-        await clozeRem.addPowerup(REMOVE_PARENT_POWERUP_CODE);
+          // Apply the Remove Parent powerup to the cloze rem so its parent is hidden
+          // from queue display only when this specific cloze is the current card.
+          // Tagging the parent with Remove from Queue (the previous behavior) would
+          // also hide it for sibling/descendant flashcards (e.g. descriptor children),
+          // breaking their context. Scoping the effect to the cloze itself avoids that.
+          await clozeRem.addPowerup(REMOVE_PARENT_POWERUP_CODE);
+        };
 
-        // 3. Mark selected text in parent with yellow highlight + red font.
+        // Mark selected text in parent with yellow highlight + red font.
         // Uses the same section-relative positions (sect_r_start/sect_r_end).
         const processParentSection = (richText: RichTextInterface, localStart: number, localEnd: number): RichTextInterface => {
           const arr: any[] = [];
@@ -1052,21 +1154,31 @@ export async function registerCommands(plugin: ReactRNPlugin) {
           return arr;
         };
 
+        // The new Rem and this mark are what the user is waiting for, so they come before every
+        // read and write that only the priority needs. It also means a second Alt+Z pressed
+        // soon after reads the parent with this mark in place.
         if (isBack) {
           await rem.setBackText(processParentSection(backText, sect_r_start, sect_r_end));
         } else {
           await rem.setText(processParentSection(frontText, sect_r_start, sect_r_end));
         }
+        timer.lap('parentMark');
 
-        // Apply the auto-priority computed at the top (before the new cloze existed,
-        // so the existing-cloze count was correct).
-        await setCardPriority(plugin, clozeRem, autoPriority.priority, 'manual', false, { event: 'cloze' });
+        // Before tagging the new cloze, so that the count covers only earlier ones.
+        const autoPriority = await computeClozeAutoPriority(plugin, rem, timer);
+        timer.lap('priority');
+
+        await tagClozeChild(autoPriority.clozeExtractTagId);
+        timer.lap('tag');
+        releaseTurn();
+
+        await setCardPriority(plugin, clozeRem, autoPriority.priority, 'manual', false, { event: 'cloze', isNewRem: true, timer });
         // The new cloze card cannot be read yet, but its facts are known: due now,
         // created now, never shown. Writing them keeps the entry usable by the
         // Priority Queue's cooling (which reads the per-card arrays, not the
         // counts); the deferred re-read then replaces them with the real card.
         const clozeCreatedAt = Date.now();
-        await updateCardPriorityCache(plugin, clozeRem._id, true, {
+        holdCardPriorityCacheEntry(plugin, {
           remId: clozeRem._id,
           priority: autoPriority.priority,
           source: 'manual',
@@ -1079,6 +1191,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
           cardsCreatedAt: [clozeCreatedAt],
         } as any);
         rereadCardPriorityCacheWhenCardsExist(plugin, clozeRem._id);
+        console.log(`[Cloze] pressed at ${dayjs(timer.startedAt).format('HH:mm:ss.SSS')}, created in ${timer.report()}`);
 
         return { clozeRem, parentRem: rem, autoPriority };
       } finally {
@@ -1124,6 +1237,34 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     },
   });
 
+  // "Pick in editor" (lib/parent_pick.ts). The card holds the target and the
+  // outside-the-IncRem confirmation, so the shortcut only asks it to act.
+  // opt+shift+enter because mod+shift+enter is RemNote's Add Portal.
+  plugin.app.registerCommand({
+    id: parentPickConfirmCommandId,
+    name: 'Place Pending Rem Here',
+    quickCode: 'pph',
+    description: 'Create the Rem waiting for a parent under the Rem that has the cursor',
+    keyboardShortcut: 'opt+shift+enter',
+    action: async () => {
+      if (!(await plugin.storage.getSession<string>(parentPickActiveIdKey))) {
+        await plugin.app.toast('No Rem is waiting for a parent. Use 📍 Pick in editor in the Select Parent popup first.');
+        return;
+      }
+      await plugin.storage.setSession(parentPickConfirmRequestKey, Date.now());
+    },
+  });
+
+  plugin.app.registerCommand({
+    id: parentPickCancelCommandId,
+    name: 'Cancel Parent Pick',
+    quickCode: 'cpp',
+    description: 'Drop the Rem waiting for a parent picked in the editor',
+    action: async () => {
+      await endParentPick(plugin);
+    },
+  });
+
   // Floating (non-blocking) variant: same source viewer, but opened to the right
   // side of the screen so the queue/editor stays visible for peeking back and
   // forth. Auto-closes on card advance (see QueueLoadCard listener in events.ts).
@@ -1157,19 +1298,30 @@ export async function registerCommands(plugin: ReactRNPlugin) {
         pageIndex: target.pageIndex,
       });
 
-      // Anchor to the top-right portion of the screen (size is set in the widget
-      // registration). The 4th arg `closeWhenClickOutside: false` is essential:
+      // Anchor to the top-right portion of the screen, or wherever the user last
+      // dragged it (size is set in the widget registration). The 4th arg `closeWhenClickOutside: false` is essential:
       // PDFWebReader renders in a sandboxed iframe, so clicking inside it counts
       // as a click "outside" the widget and would otherwise close the float —
       // preventing highlighting / selecting / clicking highlights in the PDF.
       // The float is closed instead via its ✕ button or the QueueLoadCard listener.
+      const position =
+        (await plugin.storage.getSession<{ top: number; right: number }>(sourceFloatingPositionKey)) ||
+        sourceFloatingDefaultPosition;
       const id = await plugin.window.openFloatingWidget(
         'pdf_source_floating',
-        { top: 48, right: 24 },
+        position,
         undefined,
         false
       );
       await plugin.storage.setSession(sourceFloatingActiveIdKey, id);
+    },
+  });
+
+  plugin.app.registerCommand({
+    id: 'follow-queue-sources',
+    name: "Follow the Queue's Sources in This Window",
+    action: async () => {
+      await toggleFollowQueueSources(plugin);
     },
   });
 
@@ -1509,6 +1661,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
 
       // 3. Ensure the focused Rem is an incremental Rem, initializing it if necessary.
       if (!(await rem.hasPowerup(powerupCode))) {
+        if (!(await confirmNoDuplicateSource(plugin, [rem])).length) return;
         await initIncrementalRem(plugin, rem);
       }
 
@@ -1565,11 +1718,13 @@ export async function registerCommands(plugin: ReactRNPlugin) {
   //
   // Two-step, reviewable flow for turning a flattened PDF-highlight list into a
   // proper outline: (1) inlinize inserts "\n• " before each detected enumerator
-  // so you can eyeball the split; (2) break-to-children turns each "• " line
-  // into a child rem after snapshotting the original for restore.
+  // so you can eyeball the split (run again to toggle blank-line spacing without
+  // bullets); (2) break-to-children turns each item line into a child rem after
+  // snapshotting the original for restore.
   plugin.app.registerCommand({
     id: 'inlinize-detected-list',
     name: 'Inlinize Detected List',
+    keyboardShortcut: 'ctrl+shift+F8',
     quickCode: 'inl',
     action: async () => {
       await inlinizeListSelection(plugin);
@@ -1825,6 +1980,20 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     },
   });
 
+  // Same reasoning for the IncRem cache, which startup also serves from a saved
+  // copy (lib/incremental_rem/persistence.ts): the command re-reads every IncRem.
+  plugin.app.registerCommand({
+    id: 'refresh-increm-cache',
+    name: 'Refresh IncRem Cache',
+    description:
+      'Re-reads every Incremental Rem from the database, ignoring the saved copy, and rebuilds both the cache and the saved copy from it.',
+    action: async () => {
+      await plugin.app.toast('Rebuilding the IncRem cache from the database…');
+      const loaded = await loadIncrementalRemCache(plugin, { forceCold: true });
+      await plugin.app.toast(`IncRem cache rebuilt: ${loaded.length} Incremental Rems.`);
+    },
+  });
+
   // Backfill / repair for the table-cell priority badges. The band tags are kept
   // current by the write paths (setCardPriority and the three IncRem priority
   // writes in tracker.ts), so this exists for two cases: the first run after
@@ -1950,6 +2119,18 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       'Create Incremental Rems from a JSON file, including full repetition history, priority and Created date.',
     action: async () => {
       await plugin.widget.openPopup('import_increm_history');
+    },
+  });
+
+  // Import the Global Default Scheduler's settings and the cards on other schedulers,
+  // from a JSON file written by scripts/export_scheduler_cards.py
+  plugin.app.registerCommand({
+    id: 'import-scheduler-cards',
+    name: 'Import RemNote Scheduler Data',
+    description:
+      "Fill the plugin's FSRS settings from your Global Default Scheduler, and label the cards on other schedulers so Card Analytics and FSRS Calibration can leave them out.",
+    action: async () => {
+      await plugin.widget.openPopup('import_scheduler_cards');
     },
   });
 
@@ -2225,18 +2406,193 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     },
   });
 
+  // The transcript of a whole YouTube video or a Video Extract
+  // (lib/video_transcript.ts): the queue item, else the focused Rem, else the
+  // Rem under an Editor Review (RemNote's video page has no focused Rem), else
+  // a Rem open in a pane. A note under a video or an extract counts as that
+  // video or extract.
+  const addTranscriptCommand = async (source: TranscriptSource) => {
+    const candidates: string[] = [];
+    if ((await plugin.window.getURL()).includes('/flashcards')) {
+      const queueTarget = (await resolveQueueCommandTarget(plugin)).remId;
+      if (queueTarget) candidates.push(queueTarget);
+    } else {
+      const focused = await plugin.focus.getFocusedRem();
+      if (focused) candidates.push(focused._id);
+      const reviewed = await plugin.storage.getSession<string>(editorReviewTimerRemIdKey);
+      if (reviewed) candidates.push(reviewed);
+      candidates.push(...(await plugin.window.getOpenPaneRemIds()));
+    }
+
+    let target: TranscriptTarget | null = null;
+    for (const id of candidates) {
+      const rem = await plugin.rem.findOne(id);
+      target = rem ? await transcriptTargetForRem(plugin, rem) : null;
+      if (target) break;
+    }
+    if (!target) {
+      await showMessageDialog(plugin, {
+        title: 'No video here',
+        message: 'Add Video Transcript works on a YouTube video or a Video Extract, or a note inside one.',
+        detail: 'Focus the video or extract (or a note under it), or run the command on it in the queue.',
+        tone: 'info',
+      });
+      return;
+    }
+
+    const what = target.range ? "the extract's transcript" : 'the transcript';
+    await plugin.app.toast(
+      source === 'audio'
+        ? `🎙️ Transcribing the audio for ${what}${target.range ? '' : ' (can take minutes)'}…`
+        : `📜 Fetching ${what}…`
+    );
+    try {
+      const written = await addVideoTranscript(plugin, target, source);
+      const blocks = written.remIds.length;
+      let tidied = '';
+      if (await shouldTidy(plugin, written)) {
+        await plugin.app.toast(`✨ Tidying ${blocks} block${blocks > 1 ? 's' : ''} with Claude…`);
+        try {
+          await tidyTranscript(plugin, written);
+          tidied = ', tidied';
+        } catch (e) {
+          console.warn('[VideoTranscript] Could not tidy:', e);
+          tidied = ', not tidied';
+        }
+      }
+      await plugin.app.toast(
+        `✓ 📜 Added ${blocks} block${blocks > 1 ? 's' : ''} (${describeTranscript(written.transcript)}${tidied})`
+      );
+    } catch (e) {
+      console.error('[VideoTranscript]', e);
+      await showMessageDialog(plugin, {
+        title: 'Transcript failed',
+        message: e instanceof Error ? e.message : String(e),
+        tone: 'error',
+      });
+    }
+  };
+
   plugin.app.registerCommand({
-    id: 'debug-video',
-    name: 'Debug Video Detection',
+    id: 'add-video-transcript',
+    name: 'Add Video Transcript',
+    description:
+      "Add the transcript of a YouTube video, or of a Video Extract's range, from the video's captions " +
+      '(from its audio when it has none and Whisper is set up)',
+    quickCode: 'avt',
+    action: () => addTranscriptCommand('auto'),
+  });
+
+  plugin.app.registerCommand({
+    id: 'add-video-transcript-audio',
+    name: 'Add Video Transcript from Audio',
+    description:
+      "Transcribe a YouTube video's audio, or a Video Extract's range of it, with Whisper on this computer, " +
+      'even when the video has captions',
+    quickCode: 'avta',
+    action: () => addTranscriptCommand('audio'),
+  });
+
+  // Local videos (lib/local_video.ts): the helper's macOS dialog picks a folder
+  // or a file, which it places in a video library.
+  const localVideoFailure = (e: unknown) =>
+    showMessageDialog(plugin, {
+      title: 'Local video',
+      message: e instanceof Error ? e.message : String(e),
+      tone: 'error',
+    });
+
+  plugin.app.registerCommand({
+    id: 'import-local-videos',
+    name: 'Import Local Videos',
+    description:
+      'Pick a folder of videos on this computer and import it as a document of Incremental Rems, one per video',
+    quickCode: 'ilv',
+    action: async () => {
+      try {
+        const focused = await plugin.focus.getFocusedRem();
+        await plugin.app.toast('📂 Choose the folder in the dialog…');
+        const picked = await chooseLocalVideo('folder', 'Choose a folder of videos to import');
+        if (!picked) return;
+        await plugin.widget.openPopup('local_video_import', {
+          ...picked,
+          parentId: focused?._id,
+          parentName: focused ? await safeRemTextToString(plugin, focused.text) : undefined,
+        });
+      } catch (e) {
+        await localVideoFailure(e);
+      }
+    },
+  });
+
+  plugin.app.registerCommand({
+    id: 'incremental-rems-by-website',
+    name: 'Incremental Rems by Website',
+    description: 'List your Incremental and Dismissed Rems by the website of their source, starting at the focused Rem\'s website',
+    quickCode: 'irw',
+    action: async () => {
+      const domain = await websiteOfRem(plugin, await plugin.focus.getFocusedRem());
+      await plugin.widget.openPopup(SOURCE_SITES_POPUP, { domain });
+    },
+  });
+
+  plugin.app.registerCommand({
+    id: 'link-local-video',
+    name: 'Link Local Video',
+    description: 'Pick a video file on this computer for the focused Rem, and make the Rem Incremental',
+    quickCode: 'llv',
     action: async () => {
       const rem = await plugin.focus.getFocusedRem();
       if (!rem) {
-        await plugin.app.toast('Please focus on a rem first');
+        await plugin.app.toast('Focus the Rem the video belongs to first.');
         return;
       }
-      await plugin.widget.openPopup('video_debug', {
-        remId: rem._id,
-      });
+      try {
+        if (!(await confirmNoDuplicateSource(plugin, [rem])).length) return;
+        await plugin.app.toast('🎞️ Choose the video in the dialog…');
+        const file = await chooseLocalVideo('file', 'Choose a video for this Rem');
+        if (!file) return;
+        await setLocalVideo(rem, file);
+        const name = localVideoTitle(file.path);
+        if (!rem.text?.length) await rem.setText([name]);
+        const wasIncremental = await rem.hasPowerup(powerupCode);
+        if (!wasIncremental) await initIncrementalRem(plugin, rem);
+        await plugin.app.toast(`🎞️ Linked “${name}”${wasIncremental ? '' : ', and made it Incremental'}`);
+      } catch (e) {
+        await localVideoFailure(e);
+      }
+    },
+  });
+
+  // A video that explains a flashcard, on the card's own Rem: shown under the
+  // answer after Show Answer (widgets/card_video.tsx) and under the Rem's title
+  // in the editor. The Rem stays as it is: nothing is made Incremental.
+  plugin.app.registerCommand({
+    id: 'link-local-video-card-extra',
+    name: 'Link Local Video as Card Extra',
+    description: 'Pick a video file on this computer that explains the focused flashcard, shown with its answer',
+    quickCode: 'llce',
+    action: async () => {
+      const rem = await plugin.focus.getFocusedRem();
+      if (!rem) {
+        await plugin.app.toast('Focus the flashcard the video explains first.');
+        return;
+      }
+      try {
+        await plugin.app.toast('🎞️ Choose the video in the dialog…');
+        const file = await chooseLocalVideo('file', 'Choose the video that explains this card');
+        if (!file) return;
+        await setCardVideo(rem, file);
+        const name = localVideoTitle(file.path);
+        const hasCards = (await rem.getCards()).length > 0;
+        await plugin.app.toast(
+          hasCards
+            ? `🎞️ “${name}” will show with this card's answer`
+            : `🎞️ Linked “${name}”: it will show with the answer once this Rem has a flashcard`
+        );
+      } catch (e) {
+        await localVideoFailure(e);
+      }
     },
   });
 
@@ -2665,7 +3021,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       if (!remId) {
         const url = await plugin.window.getURL();
         if (url.includes('/flashcards')) {
-          const card = await plugin.queue.getCurrentCard();
+          const card = await getQueueVisibleCard(plugin);
           if (card) {
             remId = card.remId;
           } else {
@@ -2947,7 +3303,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       }
 
       // Pull the prioritized universes from the session cache and compute breakdowns
-      // for both Incremental Rems and Cards. Respect the queue's seen-in-session lists
+      // for the Priority Shield (IncRems + Cards) and for Cards. Respect the queue's seen-in-session lists
       // when present so this matches what the in-queue tooltip shows.
       const [allIncRems, allCardInfos, seenRemIds, seenCardIds, cachedScopeIds] = await Promise.all([
         plugin.storage.getSession<IncrementalRemType[]>(allIncrementalRemKey).then((v) => v ?? []),
@@ -2974,36 +3330,55 @@ export async function registerCommands(plugin: ReactRNPlugin) {
         }
       }
 
-      const groups: { title: string; itemLabel: string; kb: any; doc: any }[] = [];
+      const groups: { title: string; itemLabel: string; kb: any; doc: any; odds?: any }[] = [];
 
       const scope = docScope;
-      if (allIncRems.length > 0) {
-        const docItems = scope ? allIncRems.filter((r) => scope.has(r.remId)) : [];
+      // Per-CARD bucketing: one item per card, so the deciles, due counts and
+      // the headline value are over cards (matching the Card Priority × Memory
+      // Analytics tab) instead of over Rems-with-cards.
+      const nowMs = Date.now();
+      const perCardDuePredicate = (item: {
+        remId: string;
+        nextRepetitionTime?: number | null;
+        paused?: boolean;
+      }) =>
+        isPerCardDue(item, nowMs) && !seenCardSet.has(item.remId);
+      const allCardItems = expandCardInfosToCards(allCardInfos);
+      const docCardItems = scope
+        ? expandCardInfosToCards(allCardInfos.filter((c) => scope.has(c.remId)))
+        : [];
+      const docIncRems = scope ? allIncRems.filter((r) => scope.has(r.remId)) : [];
+
+      // The Priority Shield's joint universe: IncRems and cards, one element each.
+      const joint = (incRems: IncrementalRemType[], cards: typeof allCardItems) => [
+        ...incRems.map((r) => ({ priority: r.priority, remId: r.remId, due: incRemDuePredicate(r) })),
+        ...cards.map((c) => ({ priority: c.priority, remId: c.remId, due: perCardDuePredicate(c) })),
+      ];
+      const jointKb = joint(allIncRems, allCardItems);
+      const jointDoc = scope ? joint(docIncRems, docCardItems) : [];
+      const jointDue = (x: { due: boolean }) => x.due;
+
+      if (jointKb.length > 0) {
         groups.push({
-          title: 'Incremental Rems',
-          itemLabel: 'IncRem',
-          kb: computeWeightedShieldBreakdown(allIncRems, incRemDuePredicate),
-          doc: docItems.length > 0 ? computeWeightedShieldBreakdown(docItems, incRemDuePredicate) : null,
+          title: 'Priority (IncRems + Cards)',
+          itemLabel: 'Priority',
+          kb: computeWeightedShieldBreakdown(jointKb, jointDue),
+          doc: jointDoc.length > 0 ? computeWeightedShieldBreakdown(jointDoc, jointDue) : null,
+          // The queue draws IncRems on their own, so the odds panel gets the
+          // IncRem universe rather than the joint one.
+          odds: allIncRems.length > 0
+            ? {
+                kind: 'incRem',
+                kb: computeWeightedShieldBreakdown(allIncRems, incRemDuePredicate).sortedItems,
+                doc: docIncRems.length > 0
+                  ? computeWeightedShieldBreakdown(docIncRems, incRemDuePredicate).sortedItems
+                  : undefined,
+              }
+            : undefined,
         });
       }
 
-      if (allCardInfos.length > 0) {
-        // Per-CARD bucketing: expand each CardPriorityInfo into one item per
-        // card so the deciles, due counts and the headline shield value are
-        // computed over cards (matching the Card Priority × Memory Analytics
-        // tab) instead of over rems-with-cards.
-        const nowMs = Date.now();
-        const perCardDuePredicate = (item: {
-          remId: string;
-          nextRepetitionTime?: number | null;
-          paused?: boolean;
-        }) =>
-          isPerCardDue(item, nowMs) && !seenCardSet.has(item.remId);
-
-        const allCardItems = expandCardInfosToCards(allCardInfos);
-        const docCardItems = scope
-          ? expandCardInfosToCards(allCardInfos.filter((c) => scope.has(c.remId)))
-          : [];
+      if (allCardItems.length > 0) {
         groups.push({
           title: 'Cards',
           itemLabel: 'Cards',
@@ -3015,7 +3390,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       }
 
       // Use the wide variant only when there's something to put side-by-side
-      // (both Incremental Rems and Cards). Otherwise the standard narrow popup
+      // (both Priority and Cards). Otherwise the standard narrow popup
       // is enough and avoids a half-empty wide canvas.
       const popupId = groups.length >= 2 ? 'weighted_shield_popup_wide' : 'weighted_shield_popup';
       await plugin.widget.openPopup(popupId, {
@@ -3042,7 +3417,6 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       const isQueue = url && url.includes('/flashcards') && !explicit?.remIds; // FORK: explicit rems → the selected-rems path
 
       let rem;
-      let incRemInfo;
 
       if (isQueue) {
         // Queue context: an explicit selection (previewer, sidebar, …) wins over
@@ -3067,82 +3441,55 @@ export async function registerCommands(plugin: ReactRNPlugin) {
           return;
         }
 
-        incRemInfo = await getIncrementalRemFromRem(plugin, rem);
-        if (!incRemInfo) {
-          await plugin.app.toast('Could not retrieve Incremental Rem information.');
-          return;
-        }
-
         // Was the queue actually reviewing THIS rem as an IncRem when Ctrl+D was
         // pressed? Only then did a review happen that deserves a 'rep' entry.
         // Dismissing a rem opened in the previewer (or selected anywhere else)
         // during a flashcard turn is a pure lifecycle change, exactly like the
         // editor branch below.
-        const isActiveIncRemTurn = target.isActiveIncRemTurn;
-
-        // Replicate the Dismiss button logic from answer_buttons.tsx
-        // 1. Handle card priority inheritance
-        // FORK (Deviation 13): card surface disabled — see answer_buttons Dismiss.
-        if (FORK_FEATURES.cardSurface) await handleCardPriorityInheritance(plugin, rem, incRemInfo);
-
-        // 2/3. Record the review that is ending — ONLY on a real IncRem turn.
-        // `incremReviewStartTimeKey` is stamped when an IncRem appears in the queue
+        //
+        // `incremReviewStartTimeKey` is stamped when the queue injects an IncRem
         // and is never cleared afterwards, so on any other turn it still points
-        // at an earlier item; using it here fabricated a rep whose duration was
-        // the time since some unrelated IncRem was shown.
-        const updatedHistory = [...(incRemInfo.history || [])];
+        // at an earlier item; reading it there would fabricate a rep whose
+        // duration was the time since some unrelated IncRem was shown.
+        const isActiveIncRemTurn = target.isActiveIncRemTurn;
         // FORK (2026-10-11, owner request, reproduced live): an item already reviewed — the
         // Deviation 8 row, reached with Previous or met after another device moved its date —
-        // is dismissed without a second 'rep' for the same sitting.
-        const alreadyReviewed = Date.now() < incRemInfo.nextRepDate;
+        // is dismissed without a second 'rep' for the same sitting. (10297b3 sync: upstream's
+        // body no longer reads the IncRem here — the dismissal runs as a review job — so the
+        // fork reads it for this check.)
+        const incRemInfo = await getIncrementalRemFromRem(plugin, rem);
+        const alreadyReviewed = !!incRemInfo && Date.now() < incRemInfo.nextRepDate;
+        const recordsRep = isActiveIncRemTurn && !alreadyReviewed;
+        const reviewTimeSeconds = recordsRep ? (await captureQueueReviewSeconds(plugin)) ?? 0 : 0;
 
-        if (isActiveIncRemTurn && !alreadyReviewed) {
-          const startTime = await plugin.storage.getSession<number>(incremReviewStartTimeKey);
-          const reviewTimeSeconds = startTime ? dayjs().diff(dayjs(startTime), 'second') : 0;
+        // Same as the Dismiss button: card priority, the move to Dismissed and
+        // the powerup removal run in the tracker (lib/incremental_rem/review_jobs.ts).
+        // FORK: the job runner there gates the card-priority step on FORK_FEATURES.cardSurface
+        // (Deviation 13) and stamps the rep through priorityStampFor (#13).
+        await enqueueReviewJob(plugin, {
+          id: newReviewJobId(rem._id),
+          kind: 'dismiss',
+          remId: rem._id,
+          rep: recordsRep ? { reviewTimeSeconds } : undefined, // FORK: recordsRep (upstream: isActiveIncRemTurn)
+          cardPriorityInheritance: true,
+          confirmedAt: Date.now(),
+        });
 
-          const currentRep: IncrementalRep = {
-            date: Date.now(),
-            scheduled: incRemInfo.nextRepDate,
-            reviewTimeSeconds: reviewTimeSeconds,
-            eventType: 'rep',
-            // FORK (#13): see priorityStampFor — never stamp a placeholder priority.
-            ...priorityStampFor(incRemInfo),
-          };
-
-          updatedHistory.push(currentRep);
-        }
-
-        // 4. Transfer history to dismissed powerup
-        await transferToDismissed(plugin, rem, updatedHistory);
-
-        // 4b. Record the dismissal in the Incremental History widget
-        await addToIncrementalHistory(plugin, rem._id, { dismissed: true });
-
-        // 5. Remove from session cache
-        await removeIncrementalRemCache(plugin, rem._id);
-
-        // 6. Remove incremental powerup AND conditionally advance queue simultaneously.
-        // removePowerup destroys the widget sandbox on the next microtask,
-        // so both IPC messages must be sent in the same tick if targeting queue.
         // Only a real IncRem turn is advanced: on a flashcard turn the card on
         // screen is a different item that is still due, so dropping it would
         // silently eat a scheduled review.
         if (isActiveIncRemTurn) {
           // Like "Next", dismissing the queue card means we've left the rem —
-          // restore the dashboard. Flag BEFORE the destructive call (consumed by
-          // the persistent QueueLoadCard listener once the next card loads).
+          // restore the dashboard. Flag BEFORE advancing (consumed by the
+          // persistent QueueLoadCard listener once the next card loads).
           await requestQueueDashboardRefocus(plugin, 'dismiss-command');
-          await Promise.allSettled([
-            rem.removePowerup(powerupCode),
-            plugin.queue.removeCurrentCardFromQueue(true),
-          ]);
+          await plugin.queue.removeCurrentCardFromQueue(true);
         } else {
-          await rem.removePowerup(powerupCode);
           // No queue advance here, so nothing on screen changes — confirm which
-          // rem was actually dismissed.
+          // rem was dismissed.
           const name = await safeRemTextToString(plugin, rem.text);
           const short = name.length > 40 ? name.slice(0, 40) + '…' : name;
-          await plugin.app.toast(
+          void plugin.app.toast(
             short ? `Incremental Rem dismissed: "${short}"` : 'Incremental Rem dismissed.'
           );
         }
@@ -3184,22 +3531,25 @@ export async function registerCommands(plugin: ReactRNPlugin) {
           return;
         }
 
-        for (const r of remsToDissmiss) {
-          incRemInfo = await getIncrementalRemFromRem(plugin, r);
-          if (incRemInfo) {
-            // Transfer existing history to dismissed (no new rep entry needed)
-            await transferToDismissed(plugin, r, incRemInfo.history || []);
-          }
-          // Log a standalone dismissal in the Incremental History widget
-          await addDismissalToIncrementalHistory(plugin, r._id);
-          // Remove from session cache
-          await removeIncrementalRemCache(plugin, r._id);
-          // Remove incremental powerup
-          await r.removePowerup(powerupCode);
-        }
+        // No review is ending here, so no rep entry: the history moves to
+        // Dismissed as it is. One job per rem, drained by the tracker with a
+        // single cache write for the whole selection.
+        const confirmedAt = Date.now();
+        await enqueueReviewJobs(
+          plugin,
+          remsToDissmiss.map((r) => ({
+            id: newReviewJobId(r._id),
+            kind: 'dismiss' as const,
+            remId: r._id,
+            // Same anchor as every other Dismiss: the Incremental powerup takes
+            // the priority with it, so the cardPriority tag must keep it.
+            cardPriorityInheritance: true,
+            confirmedAt,
+          }))
+        );
 
         const count = remsToDissmiss.length;
-        await plugin.app.toast(
+        void plugin.app.toast(
           count === 1
             ? 'Incremental Rem dismissed.'
             : `${count} Incremental Rems dismissed.`
@@ -3567,6 +3917,44 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     }),
   });
 
+  // ─── Copy Rem ID ─────────────────────────────────────────────────────────
+  // For pointing an AI agent (MCP) or a debug tool at a Rem. Selected Rems win
+  // (one ID per line), then the Rem with the caret, then the card in the queue.
+  plugin.app.registerCommand({
+    id: 'copy-rem-id',
+    name: 'Copy Rem ID',
+    description: 'Copies the ID of the focused Rem (or of each selected Rem, one per line) to the clipboard.',
+    keyboardShortcut: 'ctrl+opt+i',
+    quickCode: 'id',
+    action: async () => {
+      let remIds: string[] = [];
+      const sel = await getEffectiveSelection(plugin);
+      if (sel?.type === SelectionType.Rem && sel.remIds?.length) {
+        remIds = sel.remIds;
+      } else if (sel?.type === SelectionType.Text && sel.remId) {
+        remIds = [sel.remId];
+      } else {
+        const focused = await plugin.focus.getFocusedRem();
+        if (focused) {
+          remIds = [focused._id];
+        } else if ((await plugin.window.getURL()).includes('/flashcards')) {
+          const card = await plugin.queue.getCurrentCard();
+          if (card?.remId) remIds = [card.remId];
+        }
+      }
+
+      if (remIds.length === 0) {
+        await plugin.app.toast('No Rem focused or selected.');
+        return;
+      }
+      await copyTextToClipboard(
+        plugin,
+        remIds.join('\n'),
+        remIds.length === 1 ? 'Rem ID' : `${remIds.length} Rem IDs`
+      );
+    },
+  });
+
   // ─── Copy / Paste Rem Sources ────────────────────────────────────────────
   // Designed for the PDF-split workflow: give multiple IncRems the same PDF
   // source so the page-range widget can assign each rem a different page range.
@@ -3682,6 +4070,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
             await registerRemsAsPdfKnown(plugin, source._id, [target._id]);
           }
         }
+        await registerRemPagesIfTracked(plugin, target);
       }
 
       const remLabel = targetRems.length === 1 ? '1 Rem' : `${targetRems.length} Rems`;
@@ -4444,47 +4833,19 @@ export async function registerCommands(plugin: ReactRNPlugin) {
   });
 
   // Imported images keep the size they arrived with, which the queue's image
-  // canvas can show as a zoomed crop. Each press moves the unsized images of the
-  // target Rem and three levels below it one step along Fit, Large, Medium and
-  // back to Original; images the user has sized are never touched.
+  // canvas can show as a zoomed crop, and a size chosen in the editor is not
+  // always the one wanted in the queue. Each press moves the images of the target
+  // Rem and three levels below it one step along Fit, Large, Medium, Small and
+  // back to Original; lib/image_size_session.ts asks first when that would change
+  // sizes the user chose, or more images than the Ask Above setting.
   plugin.app.registerCommand({
     id: 'cycle-image-size',
-    name: 'Cycle Image Size (Fit / Large / Medium / Original)',
+    name: 'Cycle Image Size (Fit / Large / Medium / Small / Original)',
     description:
-      'Sizes the images of the focused Rem (or the current card) and three levels below it that were never sized in RemNote. Press again to move to the next size.',
+      'Sizes the images of the focused Rem (or the current card) and three levels below it. Press again to move to the next size; Original puts back the sizes they had. Asks first before changing images you have sized.',
     keyboardShortcut: 'opt+shift+g',
     quickCode: 'cis',
-    action: async () => {
-      try {
-        const targets = await resolveImageSizeTargets(plugin);
-        if (targets.length === 0) {
-          await plugin.app.toast('No Rem focused and no card on screen.');
-          return;
-        }
-        const result = await cycleImageSizes(plugin, targets);
-        const notes = [
-          result.userSized > 0 ? `${result.userSized} already sized by you` : '',
-          result.protectedImages > 0 ? `${result.protectedImages} occlusion/highlight` : '',
-          result.unmeasurable > 0 ? `${result.unmeasurable} could not be measured` : '',
-          result.failed > 0 ? `${result.failed} Rem(s) failed` : '',
-        ].filter(Boolean);
-        const skipped = notes.length > 0 ? ` Skipped: ${notes.join(', ')}.` : '';
-        if (!result.step) {
-          await plugin.app.toast(`No unsized images found here.${skipped}`);
-          return;
-        }
-        await plugin.app.toast(
-          `Images → ${IMAGE_SIZE_STEP_LABEL[result.step]} (${result.changed} changed).${skipped}`
-        );
-      } catch (error) {
-        console.error('[ImageSize] command failed', error);
-        await showMessageDialog(plugin, {
-          title: 'Could not resize the images',
-          message: error instanceof Error ? error.message : String(error),
-          tone: 'error',
-        });
-      }
-    },
+    action: () => pressCycleImageSize(plugin),
   });
 
 }

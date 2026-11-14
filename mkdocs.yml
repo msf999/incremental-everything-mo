@@ -98,7 +98,11 @@ nav:
       - "Repetition History & Statistics": Repetition-History-and-Statistics.md
       - Study Dashboard: Study-Dashboard.md
     - 6. Integrations:
+      - Chrome Companion Extension: Chrome-Companion-Extension.md
+      - Companion Privacy Policy: Companion-Privacy-Policy.md
       - Logos Bible Software: Logos-Bible-Software-Integration.md
+      - Local Media Bridge: Local-Media-Bridge.md
+      - Priority Bridge for Other Plugins: Priority-Bridge-for-Other-Plugins.md
     - 7. Utilities:
       - Overview: Utilities.md
       - Text & Lists: Utilities-Text-and-Lists.md
@@ -106,6 +110,7 @@ nav:
       - Finding & Navigating: Utilities-Finding-and-Navigating.md
       - Queue Display: Utilities-Queue-Display.md
       - True or False Cards: Utilities-True-or-False-Cards.md
+      - Multiple-Choice Cards: Utilities-Multiple-Choice-Cards.md
       - Cleaning Up: Utilities-Cleaning-Up.md
       - Under the Hood: Utilities-Under-the-Hood.md
     - 8. Essential References:

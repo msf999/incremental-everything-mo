@@ -49,6 +49,10 @@ The only per-row channel is `registerCSS` keyed on `data-rem-tags`, which is pre
 
 In both the Compact and the Beautiful queue, the back of a basic card is rendered inside the question Rem as `span.rn-fill-in-blank.rn-fill-in-blank--revealed`, after the ` → ` delimiter (saved DOM, 2026-10-03). Beautiful's `.queue-beautiful-basic-card-answer-line` class exists only on the block variant; short cards use an inline span that carries no class, only `data-test="Beautiful Queue Basic Card Answer Line"`. So `.rn-question-rem[data-queue-rem-container-tags~="slug"] .rn-fill-in-blank--revealed` is the selector that styles an answer in every case (`src/register/true_false.ts`).
 
+The delimiter is a sibling before the answer: `span.rn-clr-content-tertiary` before the answer wrapper in Beautiful, a span with no class attribute before the fill-in-the-blank in Compact (`app.asar` 1.29.1, saved DOM).
+
+Part of a text node can't be selected, but specific characters can be hidden: put a font first in the stack whose `unicode-range` covers only them and whose glyphs are empty and zero-width. Chrome uses it for emoji too (rendered in headless Chrome, 2026-10-31). The host page sets no CSP, so a `data:` font loads from `registerCSS`. Their line box stays, since CSS can't tell the text is invisible.
+
 The question Rem's bullet is `absolute left-[-24px]`: a border or background on `.rn-question-rem` needs about 36px of left padding to clear it.
 
 ## Card Cluster cards carry no tags and no Rem ids
@@ -60,3 +64,41 @@ The only hook is the class `cluster-answer-container`, put on the wrapper of the
 ## Text import cannot name a powerup
 
 Pasting `#[[TFT]]` (RemNote's flashcards-from-text syntax) resolves the name among ordinary Rems only. With a powerup of that name registered, it still creates a plain tag Rem. The plain tag slugifies to the same `data-rem-tags` value, so CSS keyed on the slug applies either way; converting it to the powerup takes a command (`convertPlainTags` in `src/register/true_false.ts`). Observed 2026-10-03.
+
+## A document pane's scroller, and pinning a DocumentAboveToolbar widget
+
+Measured Oct 8 2026 from a pane's DOM:
+
+```
+div#tile__document.rn-pane__body          <- the scroller (overflow-y-scroll)
+  div.w-full.h-full.relative
+    div.document-inner-container          <- overflow-hidden
+      div.fade-in-first-load.relative     <- one per DocumentAboveToolbar widget
+        div > iframe[data-plugin-id]
+      div.rn-document-wrapper             <- the document
+```
+
+`position: sticky` on the widget's wrapper does nothing by itself: `overflow: hidden` makes `.document-inner-container` the wrapper's scroll container, and that box never scrolls. Setting it to `overflow: clip` keeps the clipping without creating a scroll container, so the wrapper sticks to `#tile__document`. Shipped in v1.0.152 for the Editor Review Timer (`EDITOR_REVIEW_TIMER_STICKY_CSS` in `src/register/widgets.ts`).
+
+The PDF viewer does not render this location at all; only the "Notes" view of the Rem does.
+
+## Sticky headers are a fixed layer, not document flow
+
+Read from the 1.28 bundle (`renderStickyBar`) and a pane's DOM, Oct 9 2026. The parent Rems RemNote keeps visible while their descendants scroll are rendered inside `.rn-editor` as:
+
+```
+div.fixed.h-full.pointer-events-none.z-[6000]   <- inline translateY(<top of the scroller>), width, clip-path; .invisible when empty
+  div.relative.w-full.h-full
+    div.rn-sticky-header.absolute.z-[6000]      <- inline top: <extraOffsetFromTop || 0>, width, translateX; data-portalid-sticky-header
+```
+
+So anything a plugin pins to the top of the pane is painted over by them. `.rn-sticky-header` is the stable hook: it is absolutely positioned, so a `margin-top` adds to its inline `top` and moves the whole stack down. A Rem turns sticky when it passes the top of the scroller, whatever the margin, so it is hidden behind the pinned element for that last stretch.
+
+Shipped in v1.0.153 (`src/lib/editor_review_timer_sticky.ts`): the Editor Review Timer reports its height through a session key and the index widget registers the margin. DocumentAboveToolbar's widget context has a `documentId` but no pane id, so the offset cannot be per pane; the tallest reported timer is used.
+
+## Telling a widget's instances apart
+
+Read from the 1.28.57 bundle, Oct 26 2026. Every instance of a widget gets the same iframe `src` (`…?widgetName=<file>&pluginId=<id>`), and DocumentAboveToolbar's context carries no pane id, so neither CSS nor the context distinguishes the copies in a split view. `plugin.widget.getDimensions(widgetInstanceId)` does: the host looks the id up among **this plugin's** active instances and returns that iframe's `getBoundingClientRect()`. It returns `undefined` once the instance is destroyed, and a zero rect while its pane is `display:none` (a background tab). The id is a global sequential **number** (the bridge validates it with zod), while `getWidgetContext()` types it as a string, so coerce it. An empty `height: 'auto'` widget's iframe carries an inline `height: 0px`, so `iframe:not([style*="height: 0px"])` selects the copies that render something.
+
+Used in v1.0.167 (`src/lib/editor_review_timer_primary.ts`): the timer's instances list their ids in a session key, and only the top-most, then left-most visible one renders. The sticky-header margin skips panes whose timer iframe is 0px tall.
+

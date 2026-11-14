@@ -30,6 +30,10 @@ import {
   videoExtractUrlSlotCode,
   videoExtractStartSlotCode,
   videoExtractEndSlotCode,
+  localVideoPowerupCode,
+  localVideoLibrarySlotCode,
+  localVideoPathSlotCode,
+  cardVideoPowerupCode,
   hasImagePowerupCode,
   hasImagePowerupName,
   pdfAreaHighlightPowerupCode,
@@ -373,6 +377,56 @@ export async function registerPluginPowerups(
           code: videoExtractEndSlotCode,
           name: 'End Time',
           propertyType: PropertyType.NUMBER,
+          hidden: true,
+        },
+      ],
+    },
+  });
+
+  // Local Video Powerup - a video file on this computer, in one of the helper's
+  // video libraries (lib/local_video.ts). Its extracts are VideoExtracts whose
+  // URL is the file's local-video:// URL.
+  await plugin.app.registerPowerup({
+    name: 'Local Video',
+    code: localVideoPowerupCode,
+    description: 'A video file on this computer, played by Incremental RemNote through its local helper',
+    options: {
+      slots: [
+        {
+          code: localVideoLibrarySlotCode,
+          name: 'Library',
+          propertyType: PropertyType.TEXT,
+          hidden: true,
+        },
+        {
+          code: localVideoPathSlotCode,
+          name: 'Path',
+          propertyType: PropertyType.TEXT,
+          hidden: true,
+        },
+      ],
+    },
+  });
+
+  // Card Video Powerup - a local video that explains a flashcard, on the card's
+  // own Rem (lib/local_video_ref.ts). Shown after Show Answer by the card_video
+  // widget, and in the editor like a Local Video. The Rem stays a plain card.
+  await plugin.app.registerPowerup({
+    name: 'Card Video',
+    code: cardVideoPowerupCode,
+    description: 'A video file on this computer that explains this flashcard, shown with its answer',
+    options: {
+      slots: [
+        {
+          code: localVideoLibrarySlotCode,
+          name: 'Library',
+          propertyType: PropertyType.TEXT,
+          hidden: true,
+        },
+        {
+          code: localVideoPathSlotCode,
+          name: 'Path',
+          propertyType: PropertyType.TEXT,
           hidden: true,
         },
       ],

@@ -20,6 +20,7 @@ Run **`Find Rem (insert reference / open in pane)`** (quick code `fir`) or press
 - **Ctrl/Cmd+Shift+Enter** or **Ctrl/Cmd+Shift+click** → appends a **pin at the end of the Rem you are editing, keeping your selected text**. See [Pin a source at the end of a Rem](#pin-a-source-at-the-end-of-a-rem) below.
 - **↑/↓** navigate · **Esc** closes.
 - **Concepts only** checkbox narrows results to Concept-type Rems.
+- **Drag the title row** to move the box if it covers what you need to see; the search box keeps your typing. It opens at your cursor again next time.
 
 The Rem you triggered the picker from is **excluded from results** — a Rem can't reference itself.
 
@@ -135,7 +136,8 @@ Both are triggered the same way — **hover** the reference pin, then press a sh
 | --- | --- | --- |
 | Command | `Open Hovered Source in Popup` | `Open Hovered Source in Floating Window` |
 | Shortcut | **`Opt+O` / `Alt+O`** | **`Opt+Shift+O` / `Alt+Shift+O`** |
-| Placement | Centered, large | Right portion of the screen (≈48% width) |
+| Placement | Centered, large | Right portion of the screen (40% width); drag its header to move it |
+| Height | 80% of the screen | 80% of the screen |
 | Blocks the UI behind it | **Yes** — a backdrop covers/dims the card | **No** — the card/editor stays visible beside it |
 | Best for | "Open → read → close → rate" in one focused glance | **Peeking back and forth** between source and card without close/reopen |
 | Closes on | `✕`, Esc, or clicking outside | `✕`, Esc, or advancing to the next card (does **not** close on outside click, so you can highlight/select in the PDF) |
@@ -156,24 +158,79 @@ The command inspects the hovered reference's target and only acts on **Reader so
 | --- | --- |
 | **PDF highlight** | Opens the host PDF and auto-scrolls to the highlight |
 | **HTML / web-article highlight** | Opens the article (Reader Mode) at the highlight |
+| **PDF Text Reader highlight** | Opens the host PDF and scrolls to the highlight when the PDF is in its Text Reader view |
 | **PDF source document** (the uploaded file Rem) | Opens the PDF at the top |
 | **HTML source** (a non-YouTube Link Rem) | Opens the article |
 | **A plain Rem** (no PDF/HTML source) | **Nothing happens** — you get a toast and default behavior is left untouched |
 
 So you can hover *any* pin and press the shortcut safely; only genuine sources open a viewer.
 
+### Source name in the header
+
+The header shows the name of the PDF or article after **📄 Source**, so you know which document you're looking at. A long name is cut off with "…"; hover the header to read it in full.
+
+### Height follows your screen
+
+Both variants are 80% of your display's height (at least 600 px, at most 1500 px), so they fill a laptop screen without running off the bottom and use the extra room on a large monitor. The height is measured when the plugin loads: after moving RemNote to another display, reload the plugin to refit it.
+
 ### Scroll to Highlight
 
 For PDF/HTML **highlights**, the viewer auto-scrolls to the highlighted passage once the reader finishes mounting (the embedded PDF engine takes a few seconds to initialize, so the scroll is retried a few times). If you then scroll around the document and want to jump back, click the **🔖 Scroll to Highlight** button in the header to re-center on the highlight at any time.
+
+### Open in another window
+
+The **🪟 Open in Another Window** button in the header shows the source in another RemNote window, and scrolls to the highlight if you opened it from one. It's useful when several PDFs in one window get in each other's way: in a window of its own, a PDF has the sidebar's Highlights tab to itself. Desktop app only.
+
+1. Click the button. It changes to **⏳ Waiting**.
+2. If another window is open, it shows the source within a few seconds. If none is open, press **`⌘⇧N` / `Ctrl+Shift+N`** to open one, and the new window shows the source.
+3. The button changes to **✅ Opened in the other window**, and stays that way until you close the viewer. Click it to send the source again.
+
+While it's waiting, click the button again to cancel. The request also expires after a minute, so a window you open later won't pick it up.
+
+- **The other window's focused pane is replaced,** so the document it was showing, or a queue, gives way to the source.
+- **The other window doesn't come to the front by itself;** switch to it yourself.
+- **The viewer stays open** in the first window, so you can keep peeking at it.
+
+### Follow the queue
+
+One RemNote window can show the sources of the cards you practice in another, so you can read them on a second screen, or beside the queue, without opening anything. Desktop app only.
+
+There are two ways to start it:
+
+- **From a queue:** open the Source viewer on a card and click **🧭 Follow the Queue in another window** in its header. Another open window starts following. If none is open, the button changes to **⏳ Waiting**: press **`⌘⇧N` / `Ctrl+Shift+N`** and the new window starts following. While it's waiting, click the button again to cancel. The request also expires after a minute. The button appears only while a queue is open.
+- **From the second window:** open it with **`⌘⇧N` / `Ctrl+Shift+N`**, then run **Follow the Queue's Sources in This Window** from the Omnibar there, before or during a queue.
+
+Place the second window where you want the sources. Each card's sources then open there a moment after the card appears.
+
+**The Following the queue bar** appears at the lower right of the following window:
+
+- **🔖 Scroll to Highlight** returns to the highlight. It appears when the card has a single source and its pin is a highlight.
+- **■ Stop** stops following and closes the bar. Running the command again in that window does the same.
+- **To move the bar,** drag it by any part outside its buttons. If you drag it out of the window, stop and start following again to bring it back to its usual spot.
+
+**What it opens:**
+
+- **The card's source pins.** It looks at the front and back of the card's Rem. If there are no pins, it looks at the parent, then the grandparent, and uses the first one that has any. A Rem that is itself a highlight counts as a pin to that highlight. A reference to a whole PDF or article counts only if it's pinned.
+- **Up to 4 different sources,** in the order the card mentions them: one fills the window, two sit side by side, the first of three takes the left half, and four form a grid.
+- **Each source once,** scrolled to its first pin. If the next card uses the same sources, the readers stay as they are and just scroll to the new highlight.
+
+**Good to know:**
+
+- **The panes are replaced.** When the sources change, every pane in that window's current tab gives way to them, so keep your notes in another tab or window.
+- **A card with no pins** leaves the last sources up.
+- **A queue started in the following window** pauses following until you leave that queue.
+- **Following ends when that window reloads or RemNote restarts;** run the command again to resume.
+- **Only one window follows at a time.** Running the command in another window moves it there.
 
 ### Floating window — interaction & closing
 
 The floating variant is designed so the source sits **beside** your card while you study, which is why it behaves a little differently from the modal:
 
-- **Stays open while you use the PDF.** Unlike a modal, clicking into the reader to highlight, select text, or click existing highlights will **not** dismiss it.
+- **Stays open while you use the PDF.** Unlike a modal, clicking into the reader to highlight, select text, or click existing highlights will **not** dismiss it. The highlight's Notes, Explain and other popups open on top of the window.
 - **Closes itself when you advance the card,** so a previous card's source never lingers over the next one.
-- **Esc closes it** — without closing the queue. The plugin "steals" the Esc key while the float is open, so RemNote's queue doesn't act on it; Esc closes the float instead. (When focus is inside the PDF itself, the browser handles Esc within the reader; use the `✕` button there.)
-- **Not user-resizable.** RemNote floating widgets have a fixed registered size; the window opens at ≈48% of the screen width on the right.
+- **Esc closes it** — without closing the queue. The plugin "steals" the Esc key while the float is open, so RemNote's queue doesn't act on it; Esc closes the float instead. (When focus is inside the PDF itself, the browser handles Esc within the reader; use the `✕` button there.) While you're typing in a highlight's Notes, the first Esc only takes the cursor out of the note and the second closes the window; to close just Notes, click outside it.
+- **Drag the header to move it.** Press anywhere on the header bar (except its buttons) and drag; it stays partly on screen at every edge. The next floating window opens where you last left it, until RemNote restarts. Highlights respond again a moment after you let go.
+- **Not user-resizable.** RemNote floating widgets have a fixed registered size; the window opens at 40% of the screen width on the right.
 
 ![PDF Source shown in floating widget](assets/source-floating-widget.png){ width="900" }
 
@@ -298,3 +355,83 @@ What identifies one is that the Rem holds an image **and nothing else** — no c
 Two consequences worth knowing: caption an area highlight and the next scan swaps its tags — `PdfAreaHighlight` off, `HasImage` on — and the ring turns blue; and a Rem holding only an image that did **not** come from a PDF, a figure pasted into your own notes, gets `HasImage` and stays blue, since the yellow means "this leads into the source document".
 
 > **Only image pins.** Pins to ordinary Rems are left alone. Ringing *every* pin was tried and says nothing — a marker that appears on all of them carries no information.
+
+---
+
+## Incremental Rems by Website
+
+Everything you are reading from one website, in one list. Run **`Incremental Rems by Website`** (quick code `irw`) to see your Incremental and Dismissed Rems grouped by the website of their source, largest group first.
+
+![The Incremental Rems by Website popup, listing websites with their Incremental and Dismissed counts](assets/increms-by-website.png)
+
+### How to use it
+
+- **↑/↓** choose · **Enter** shows the website's Rems · **Esc** closes.
+- In a website's list, each Rem shows its priority and next date, or *Dismissed*, along with its address. Incremental Rems come first, by priority. **Enter** opens the Rem, and **Esc** goes back to all websites.
+- **Type** at either level to filter: websites by name, or a website's Rems by name or address.
+
+If the focused Rem has a web source, the popup opens directly on that website. So does a Rem inside such a Rem, which means an extract leads to the website of the article it came from.
+
+### What counts as one website
+
+- **Subdomains join their parent:** `en.wikipedia.org` and `pt.wikipedia.org` are both `wikipedia.org`.
+- **Different domains stay apart:** `supermemo.guru` and `supermemo.org` are two websites.
+- **Country domains group on the name before the ending:** `www.totalsimulation.co.uk` is `totalsimulation.co.uk`, and `www1.folha.uol.com.br` is `uol.com.br`.
+- **Blogging hosts keep each site apart:** `alice.github.io` and `bob.github.io` are two websites. The same goes for `substack.com`, `medium.com`, `wordpress.com`, `blogspot.com` and `notion.site`.
+
+### When the list updates
+
+The list shares its data with the [duplicate web page warning](Getting-Started.md#duplicate-web-page-warning). A Rem joins it when you make it Incremental or use Paste Sources. A source added through RemNote's own menu appears after the next refresh, which runs about once a week, a couple of minutes after RemNote starts on a computer.
+
+---
+
+## Readable Breadcrumbs in Rem Preview
+
+When you hover a reference, RemNote's **Preview** popup shows the Rem's ancestors as breadcrumbs at the top, but cuts each name to about five characters: `AN1 P... > Highl... > Page...`. That is too short to tell which book or section the Rem comes from.
+
+The plugin fixes this automatically. Nothing to switch on. Each breadcrumb now shows about 13 characters in a normal-size popup, and RemNote still folds the middle ancestors of a deep path into a `...` menu.
+
+**Before**
+
+![The Rem Preview popup before the fix, its breadcrumbs cut to "SH4... › High... › Pag...", outlined in red](assets/rem-preview-breadcrumb-before.png){ width="800" }
+
+**After**
+
+![The Rem Preview popup over a reference, its breadcrumbs reading "SH4M 3+ PDF › Highlights › Page 022" in full, outlined in red](assets/rem-preview-breadcrumb.png){ width="800" }
+
+### Why RemNote cuts them so short
+
+RemNote picks how many characters each breadcrumb gets from the width of the breadcrumb row, then cuts the text before it is drawn. In the Preview popup that row never grows past 300px, so every name gets roughly five characters, however much room the popup has. The plugin lets the row use the empty space in the popup's header and gives RemNote a slightly larger width to calculate from, so it shows more of each name.
+
+### Optional: a wider popup
+
+The popup itself stays at RemNote's 700px. If you want it wider, and the breadcrumbs longer with it, paste this into **Settings → Custom CSS** and change the width:
+
+```css
+/* Reference/Preview popup: make it wider */
+:root { --ref-popup-width: 900px; }
+
+.rn-popup:has([data-icon="brain"]) {
+  max-width: calc(100vw - 32px) !important;
+}
+.rn-popup:has([data-icon="brain"]) [class~="w-[calc(min(700px,100vw-100px))]"] {
+  width: min(var(--ref-popup-width), calc(100vw - 100px));
+}
+.rn-popup:has([data-icon="brain"]) [class~="max-w-[calc(700px-128px)]"] {
+  max-width: none;
+}
+```
+
+At 900px each breadcrumb shows about 22 characters. The rule widens the whole popup (Reference, Explain and Mnemonic tabs too), so it does not change width when you switch tabs. RemNote places the hover popup once, when it opens. With a very large width, check that it still fits when the reference is near the right edge of the screen.
+
+## Copy Rem ID { #copy-rem-id }
+
+Copies a Rem's ID to the clipboard, so you can point an AI assistant (through the RemNote MCP) or a script at that exact Rem instead of describing it.
+
+- **Shortcut:** `Ctrl+Opt+I` (`Ctrl+Alt+I` on Windows), or **Copy Rem ID** / `id` in the Omnibar.
+- **Which Rem:** the selected Rems (one ID per line), otherwise the Rem with the cursor, otherwise, in the queue, the current card's Rem.
+
+RemNote does not let plugins write to the clipboard by themselves, so how the copy happens depends on the [Local Media Bridge](Local-Media-Bridge.md):
+
+- **Bridge on and the helper running:** the helper copies the ID and a toast confirms it. Nothing else to do.
+- **Otherwise:** a small popup shows the ID already selected. Press `Enter` or `⌘C` / `Ctrl+C` to copy it and close the popup, or `Esc` to cancel.

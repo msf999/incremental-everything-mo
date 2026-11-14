@@ -120,7 +120,7 @@ The same shortcuts are listed **twice**:
 | Search Descendants in Editor | `Cmd + Shift + C` | `Ctrl + Shift + C` |  |
 | Go to Parent | `Cmd + \\` | `Ctrl + \\` |  |
 | Find Text in Document | `Cmd + F` | `Ctrl + F` |  |
-| Filter Document | `Cmd + Shift + F` | `Ctrl + Shift + F` |  |
+| Filter Document | `Cmd + Shift + F` | `Ctrl + Shift + F` | ⚠️ Same keys as *True/False: Mark as False* (Windows) |
 
 ### Editor Scope Showing / Hiding
 
@@ -546,7 +546,7 @@ Active only outside text editing: in the queue, the PDF viewer and drawings.
 | `Cmd + Shift + C` / `Ctrl + Shift + C` | Copy as Image/Plain Text | — | may clash |
 | `Cmd + Shift + C` / `Ctrl + Shift + C` | Search Descendants in Editor | Editor Navigation |  |
 | `Cmd + Shift + E` / `Ctrl + Shift + E` | Copy Bullet as Portal | Copying References |  |
-| `Cmd + Shift + F` / `Ctrl + Shift + F` | Filter Document | Editor Navigation |  |
+| `Cmd + Shift + F` / `Ctrl + Shift + F` | Filter Document | Editor Navigation | ⚠️ Same keys as *True/False: Mark as False* (Windows) |
 | `Cmd + Shift + G` / `Ctrl + Shift + G` | Toggle Practice Forward | Bullet-Level Editing |  |
 | `Cmd + Shift + H` / `Ctrl + Shift + H` | Hide Parents & Siblings From Document | Editor Scope Showing / Hiding | ⚠️ Same keys as *Open Repetition History* (Windows) |
 | `Cmd + Shift + K` / `Ctrl + Shift + K` | Strikethrough Text | Text-Level Editing |  |
@@ -577,6 +577,7 @@ Active only outside text editing: in the queue, the PDF viewer and drawings.
 
 | Keys | Command | Where | Notes |
 | :--- | :--- | :--- | :--- |
+| `Ctrl + Opt + I` / `Ctrl + Alt + I` | [Copy Rem ID](Keyboard-Shortcuts.md) | **Incremental RemNote** |  |
 | `Ctrl + Opt + P` / `Ctrl + Alt + P` | [Quick Set Priority](Keyboard-Shortcuts.md) | **Incremental RemNote** | ⚠️ Same keys as *Add All Properties* (Windows) |
 | `Ctrl + Opt + ↑` / `Ctrl + Alt + ↑` | [Quick Increase Priority Number (Less Important)](Keyboard-Shortcuts.md) | **Incremental RemNote** | ⚠️ Same keys as *Increase Video Playback Speed on Learning Page* (Windows) |
 | `Ctrl + Opt + ↓` / `Ctrl + Alt + ↓` | [Quick Decrease Priority Number (More Important)](Keyboard-Shortcuts.md) | **Incremental RemNote** | ⚠️ Same keys as *Decrease Video Playback Speed on Learning Page* (Windows) |
@@ -585,11 +586,14 @@ Active only outside text editing: in the queue, the PDF viewer and drawings.
 
 | Keys | Command | Where | Notes |
 | :--- | :--- | :--- | :--- |
+| `Ctrl + Shift + F` | [True/False: Mark as False](Keyboard-Shortcuts.md) | **Incremental RemNote** | ⚠️ Same keys as *Filter Document* (Windows) |
 | `Ctrl + Shift + H` | [Open Repetition History](Keyboard-Shortcuts.md) | **Incremental RemNote** | ⚠️ Same keys as *Hide Parents & Siblings From Document* (Windows) |
 | `Ctrl + Shift + I` | [Toggle Ignore Tag](Keyboard-Shortcuts.md) | **Incremental RemNote** |  |
 | `Ctrl + Shift + J` | [Review in Editor (Execute Repetition)](Keyboard-Shortcuts.md) | **Incremental RemNote** |  |
+| `Ctrl + Shift + T` | [True/False: Mark as True](Keyboard-Shortcuts.md) | **Incremental RemNote** |  |
 | `Ctrl + Shift + F1` | [Copy Rem Sources](Keyboard-Shortcuts.md) | **Incremental RemNote** |  |
 | `Ctrl + Shift + F7` | [View Read Points (History)](Keyboard-Shortcuts.md) | **Incremental RemNote** |  |
+| `Ctrl + Shift + F8` | [Inlinize Detected List](Keyboard-Shortcuts.md) | **Incremental RemNote** |  |
 
 ### Opt/Alt + Shift + key
 
@@ -597,8 +601,9 @@ Active only outside text editing: in the queue, the PDF viewer and drawings.
 | :--- | :--- | :--- | :--- |
 | `Opt + Shift + C` / `Alt + Shift + C` | [Batch Assign Card Priority for tagged/referencing rems](Keyboard-Shortcuts.md) | **Incremental RemNote** |  |
 | `Opt + Shift + D` / `Alt + Shift + D` | Add Today's Document In New Pane | Global |  |
+| `Opt + Shift + Enter` / `Alt + Shift + Enter` | [Place Pending Rem Here](Keyboard-Shortcuts.md) | **Incremental RemNote** |  |
 | `Opt + Shift + F` / `Alt + Shift + F` | [Find Rem (insert reference / open in pane)](Keyboard-Shortcuts.md) | **Incremental RemNote** |  |
-| `Opt + Shift + G` / `Alt + Shift + G` | [Cycle Image Size (Fit / Large / Medium / Original)](Keyboard-Shortcuts.md) | **Incremental RemNote** |  |
+| `Opt + Shift + G` / `Alt + Shift + G` | [Cycle Image Size (Fit / Large / Medium / Small / Original)](Keyboard-Shortcuts.md) | **Incremental RemNote** |  |
 | `Opt + Shift + I` / `Alt + Shift + I` | [Open Incremental Rems Main View](Keyboard-Shortcuts.md) | **Incremental RemNote** |  |
 | `Opt + Shift + L` / `Alt + Shift + L` | [Priority Queue](Keyboard-Shortcuts.md) | **Incremental RemNote** |  |
 | `Opt + Shift + M` / `Alt + Shift + M` | [Convert extracted markup to rich text](Keyboard-Shortcuts.md) | **Incremental RemNote** |  |
@@ -645,3 +650,10 @@ Active only outside text editing: in the queue, the PDF viewer and drawings.
 | `` Cmd + Opt + Shift + ` `` / `` Ctrl + Alt + Shift + ` `` | Operating System: Quick Add | Global | desktop global |
 | `Cmd + Opt + Shift + ↑` / `Ctrl + Alt + Shift + ↑` | Collapse Children to 1st Level | Editor Scope Showing / Hiding |  |
 | `Cmd + Opt + Shift + Backspace` / `Ctrl + Alt + Shift + Backspace` | Delete Bullet | Bullet-Level Editing |  |
+
+### Ctrl + Opt/Alt + Shift + key
+
+| Keys | Command | Where | Notes |
+| :--- | :--- | :--- | :--- |
+| `Ctrl + Opt + Shift + J` / `Ctrl + Alt + Shift + J` | [True/False: Judge by Emoji](Keyboard-Shortcuts.md) | **Incremental RemNote** |  |
+| `Ctrl + Opt + Shift + Q` / `Ctrl + Alt + Shift + Q` | [Pin Source Quote (Quote Rems in descendants)](Keyboard-Shortcuts.md) | **Incremental RemNote** |  |

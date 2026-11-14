@@ -42,7 +42,7 @@ Both `Alt+Z` and `Alt+Shift+Z` apply **automatic Card Priority graduation**: eac
   Equivalent to clicking the "[Dismiss](Reviewing-Items-in-the-Queue.md#dismiss)" button. Removes the Incremental and transfers its history to the Dismissed powerup.
 
 - **[Transfer Incremental Data to Parent Rem](Create-Incremental-Rem-from-PDF-Highlights.md#transfer-to-parent)** — `quick: ttp`
-  Hands everything that makes this Rem incremental to its **parent**: priority, next-repetition date, the date it was first made incremental, the **whole repetition history** and the PDF/read-point reading state. The data is *moved*, not recreated, so the interval progression continues instead of restarting; the source Rem stops being incremental and its text, children and flashcards are left alone. Use it when an extract ended up under the outline heading that should have been the incremental item. A **🔀 Transferred from …** marker closes the moved history, naming where it came from. Works in the editor (focused Rem) and in the queue (item under review), and asks for confirmation first, naming both Rems and counting what moves. It refuses when the parent is **already** an Incremental Rem — dismiss it first (`Ctrl+D`), and the transfer will revive and keep that dismissed history — or when the Rem is top-level.
+  Hands everything that makes this Rem incremental to its **parent**: priority, next-repetition date, the date it was first made incremental, the **whole repetition history** and the PDF/read-point reading state. The data is *moved*, not recreated, so the interval progression continues instead of restarting; the source Rem stops being incremental and its text, children and flashcards are left alone. Use it when an extract ended up under the outline heading that should have been the incremental item. A **🔀 Transferred from …** marker closes the moved history, naming where it came from. Works in the editor (focused Rem) and in the queue (item under review), and asks for confirmation first, naming both Rems and counting what moves. It refuses when the parent is **already** an Incremental Rem — dismiss it first (`Ctrl+D`), and the transfer will revive and keep that dismissed history — or when the Rem is top-level. Run on the source of an [interrupted transfer](Create-Incremental-Rem-from-PDF-Highlights.md#finish-interrupted-transfer), it finishes that transfer instead.
 
 - **[Open Repetition History](Repetition-History-and-Statistics.md)** (`Ctrl+Shift+H`) — `quick: his` — [routes](Plugin-Widgets-Reference.md#how-ctrlshifth-routes) to the IncRem, flashcard or aggregated view
   Displays a comprehensive history popup. For Incremental Rems, opens the [IncRem Repetition History](Repetition-History-and-Statistics.md). For regular flashcards, opens the [Flashcard Repetition History](Reviewing-Items-in-the-Queue.md#flashcard-repetition-history).
@@ -121,6 +121,9 @@ Both `Alt+Z` and `Alt+Shift+Z` apply **automatic Card Priority graduation**: eac
 - **[Clean Priority Review Documents](Priority-Review-Document.md#cleaning-up-leftovers)** — `quick: clean`
   Drains every document tagged *Priority Review Queue* at once: finds the entries whose Rem no longer has anything due — or is cooling — and removes them after you confirm, per document. Leftover snapshot documents from earlier versions with **no flashcards left due** are deleted outright; Priority Queue documents are never deleted. Entries you have written notes under, and documents holding them, are never touched.
 
+- **[Recognition First: Release All Held Concepts](Priority-Review-Document.md#recognition-first)** — `quick: rfr`
+  Sets every concept held by Recognition First back to practising both directions, and reports how many were released.
+
 - **[Open Sorting Criteria](Prioritization-&-Sorting.md#sorting-criteria)** — `quick: sort`
   Brings up the Sorting dialog to manipulate the flashcard:increm ratio and queue randomization.
 
@@ -144,6 +147,12 @@ Both `Alt+Z` and `Alt+Shift+Z` apply **automatic Card Priority graduation**: eac
 - **[Paste Rem Sources](PDF-Incremental-Reading-Workflow.md#2-copying-and-pasting-sources)** (`Opt+Shift+V` / `Alt+Shift+V`) — `quick: paste`
   Adds the previously copied sources to **all selected Rems** (multi-select supported), or to the focused Rem if nothing is selected. Sources already present are silently skipped (idempotent). Together with **Copy Rem Sources**, this automates the [PDF-Incremental-Reading-Workflow#2-copying-and-pasting-sources](PDF-Incremental-Reading-Workflow.md#2-copying-and-pasting-sources).
 
+- **[Place Pending Rem Here](Create-Incremental-Rem-from-PDF-Highlights.md#pick-in-editor)** (`Opt+Shift+Enter` / `Alt+Shift+Enter`) — `quick: pph`
+  Creates the Rem waiting for a parent (after **📍 Pick in editor** in the Select Parent popup) under the Rem that has the cursor. A target outside the IncRem under review needs a second press to confirm.
+
+- **[Cancel Parent Pick](Create-Incremental-Rem-from-PDF-Highlights.md#pick-in-editor)** — `quick: cpp`
+  Drops the Rem waiting for a parent and closes its card, like `Esc`.
+
 - **No Inc Rem for 15 min** (Queue Menu)
   Temporarily disables the injection of Incremental Rems into your queue for 15 minutes, allowing you to focus purely on flashcards. A timer countdown widget appears in the queue to show the remaining time.
 
@@ -155,6 +164,23 @@ Both `Alt+Z` and `Alt+Shift+Z` apply **automatic Card Priority graduation**: eac
 
   ![Queue in Mobile showing No Inc Rem in this Device indicator](assets/queue-mobile-devicenoincrem-indicator.png){ width="400" }
 
+
+### Video Commands { #video-commands }
+
+- **[Add Video Transcript](Incremental-Video.md#transcripts)** — `quick: avt`
+  Writes the transcript of a YouTube video, or of a Video Extract's range, from the video's captions — from its audio when it has none and Whisper is set up. Works on the queue item, the focused Rem, the Rem under review or an open pane's Rem, and from a note inside a video or extract. Needs the [helper](Incremental-Video.md#setup).
+
+- **[Add Video Transcript from Audio](Incremental-Video.md#transcripts)** — `quick: avta`
+  The same, transcribed from the audio with Whisper on your computer even when the video has captions.
+
+- **[Import Local Videos](Incremental-Video.md#import-local-videos)** — `quick: ilv`
+  Pick a folder of videos on your computer and import it as a document of Incremental Rems, one per video, all due today or one more every N days. Desktop on macOS, with the [helper](Incremental-Video.md#setup).
+
+- **[Link Local Video](Incremental-Video.md#link-local-video)** — `quick: llv`
+  Pick one video file for the focused Rem and make the Rem Incremental.
+
+- **[Link Local Video as Card Extra](Incremental-Video.md#card-video)** — `quick: llce`
+  Pick a video file that explains the focused flashcard. It shows under the answer after Show Answer, and under the Rem's title in the editor; nothing is made Incremental. Desktop on macOS, with the [helper](Incremental-Video.md#setup).
 
 ---
 
@@ -188,6 +214,9 @@ Both `Alt+Z` and `Alt+Shift+Z` apply **automatic Card Priority graduation**: eac
 - **[Pin Source Quote](Source-Pins.md#pin-source-quote)** (`Opt+Shift+Q` / `Alt+Shift+Q`) — `quick: psq`
   Pins the source of the focused Rem's text: finds the passage in the PDF or saved web article open in a pane and appends a pin to its highlight, reusing a highlight that already covers it or creating one. Works in a PDF's page view, a saved web article and a PDF's Text Reader view (asking which, when a PDF has both). Needs the local helper — see [Source Pins](Source-Pins.md).
 
+- **[Pin Source Quote (Quote Rems in descendants)](Source-Pins.md#quote-rems-in-descendants)** (`Ctrl+Opt+Shift+Q` / `Ctrl+Alt+Shift+Q`) — `quick: psqd`
+  Runs Pin Source Quote on every Rem formatted as a Quote in the focused Rem and all its descendants, or in each selected Rem's subtree; other Rems are left alone.
+
 - <a id="store-linked-images-audio-in-remnote"></a>**Store linked images & audio in RemNote** — `quick: slm`
   An image or audio added through **Embed Link** (or **Audio Search**) is saved as the bare web address: nothing is copied, so the Rem breaks the day that server moves or removes the file, and it does not play offline. This command fetches each such file, stores it in RemNote the way an uploaded file is stored, and points the Rem at the stored copy.
   Run it on the focused Rem or on a selection of Rems; front and back are both handled. The Rem itself is edited in place — only the address inside the image or audio changes — so its flashcards and their history are untouched. Files RemNote already stores, and video embeds such as YouTube, are left alone, so it is safe to re-run.
@@ -197,9 +226,13 @@ Both `Alt+Z` and `Alt+Shift+Z` apply **automatic Card Priority graduation**: eac
 - **Store linked images & audio in RemNote (with descendants)**
   The same, over the focused or selected Rems and their whole subtree — point it at a document to store everything it links to.
 
-- <a id="cycle-image-size"></a>**Cycle Image Size (Fit / Large / Medium / Original)** (`Opt+Shift+G` / `Alt+Shift+G`) — `quick: cis`
-  Sizes the images that were never sized in RemNote — typically those of imported cards, which the queue can show zoomed in and cut off. Each press moves them one step along **Fit → Large → Medium → Original**.
-  Acts on the current queue card (or the Rem selected in the previewer), or on the focused or selected Rems in the editor, and three levels below. Images you have resized, Image Occlusions and highlight images are left alone.
+- <a id="upscale-image-with-chatgpt"></a>**Upscale image with ChatGPT** — `quick: upi`
+  Regenerates the focused Rem's image (each image in turn, front and back) at a higher resolution with ChatGPT's image model, then shows the original beside the result with an automatic check for changes. **Replace image** swaps the new image into the Rem in place; nothing changes until you press it. Keep the popup open while it works (about 45 seconds per image). Needs the **Local Media Bridge** setting, its helper and the Codex CLI signed in with a paid ChatGPT plan.
+  📖 See [Local Media Bridge → Upscale an image with ChatGPT](Local-Media-Bridge.md#upscale).
+
+- <a id="cycle-image-size"></a>**Cycle Image Size (Fit / Large / Medium / Small / Original)** (`Opt+Shift+G` / `Alt+Shift+G`) — `quick: cis`
+  Resizes the images of a card or Rem, including imported ones the queue can show zoomed in and cut off. Each press moves them one step along **Fit → Large → Medium → Small → Original**, and a small bar shows the size set.
+  Acts on the current queue card (or the Rem selected in the previewer), or on the focused or selected Rems in the editor, and three levels below. It asks first before changing images you have sized, or more than 5 images. Image Occlusions and highlight images are left alone.
   📖 See [Utilities → Cycle Image Size](Utilities-Cleaning-Up.md#cycle-image-size).
 
 ### Queue Display Commands
@@ -238,11 +271,14 @@ These commands tag a Rem with one of the [Utilities#queue-display-utilities](Uti
 
 Turn statements into [True or False cards](Utilities-True-or-False-Cards.md). All of them act on the focused Rem, a multi-Rem selection, or the current queue card.
 
-- **True/False: Mark as True** — `quick: tft`
+- **True/False: Mark as True** (`Ctrl+Shift+T`) — `quick: tft`
   Tags the Rem `TFT` and makes sure its back says ✅, keeping whatever the back already holds. A Rem with no back becomes a forward-only card.
 
-- **True/False: Mark as False** — `quick: tff`
+- **True/False: Mark as False** (`Ctrl+Shift+F`) — `quick: tff`
   The same with the `TFF` tag and ❌. Running it on a card marked true flips the verdict, swapping only the mark.
+
+- **True/False: Judge by Emoji** (`Ctrl+Opt+Shift+J` / `Ctrl+Alt+Shift+J`) — `quick: tfj`
+  [Marks question cards without clozes](Utilities-True-or-False-Cards.md#judge-by-emoji) as true or false from the mark on their back (✅ ✔️ ☑️ ✓ or ❌ ✖️), or else the words true, false, verdadeiro/a or falso/a, skipping everything else. On a single Rem it also covers its descendants, asking first with the counts; cards judged by a word are always listed for you to tick.
 
 - **True/False: Convert Pasted Tags** — `quick: tfc`
   For cards [imported from text](Utilities-True-or-False-Cards.md#importing-from-text) with `#[[TFT]]` / `#[[TFF]]`: swaps those plain tags for the powerups, writes the mark where it is missing, and deletes the plain tag Rem once unused. Covers the selected Rems, or the focused Rem and everything under it.
@@ -251,6 +287,9 @@ Turn statements into [True or False cards](Utilities-True-or-False-Cards.md). Al
   Removes the tag and its styling. The card and its back text are left as they are.
 
 ### Other utilities
+
+- **[Copy Rem ID](Utilities-Finding-and-Navigating.md#copy-rem-id)** (`Ctrl+Opt+I`) — `quick: id`
+  Copies the ID of the focused Rem, or of each selected Rem (one per line), to the clipboard; in the queue, the current card's Rem. Silent through the [Local Media Bridge](Local-Media-Bridge.md) helper when it runs, otherwise via a small popup where `Enter` or `⌘C` copies.
 
 - **Toggle Ignore Tag** (`Ctrl+Shift+I`) — `quick: ign`
   Adds or removes the `#ignore` tag on the **focused editor Rem**, or on a **multi-rem selection** (select several rems in the outline and run it from the Omnibar). The plugin registers CSS so ignored rems and their descendants are rendered smaller and slightly dimmed (full opacity returns on hover/focus), and the `#ignore` chip itself is hidden from the editor tag bar to keep the document clean.
@@ -291,13 +330,14 @@ Turn statements into [True or False cards](Utilities-True-or-False-Cards.md). Al
 
   📖 See [Utilities → Bulletize Inline Selected Text](Utilities-Text-and-Lists.md#bulletize-inline-selected-text) for full behavior and examples.
 
-- **Inlinize Detected List** — `quick: inl`
-  Detects a list flattened onto one line by a PDF highlight (`… evitá-las: 1 Aumentar… 2 Deixar… 3 O Oficial…`, or bullets run together like `… reconhecidas: • alvos…; • ocorrem…`) and inserts a line break + `• ` before each item, turning it into soft-wrapped bulleted lines **in the same rem**. Enumerated items keep their number; existing `•`/`-`/`*` markers are normalized to `• `. Acts on the **focused rem** (no selection needed) and is `Ctrl+Z`-able — the review checkpoint before breaking to children.
+- **Inlinize Detected List** (`Ctrl+Shift+F8`) — `quick: inl`
+  Detects a list flattened onto one line by a PDF highlight (`… evitá-las: 1 Aumentar… 2 Deixar… 3 O Oficial…`, or bullets run together like `… reconhecidas: • alvos…; • ocorrem…`) and inserts a line break + `• ` before each item, turning it into soft-wrapped bulleted lines **in the same rem**. Enumerated items and fill-in blanks keep their marker; existing `•`/`-`/`*` markers are normalized to `• `. Acts on the **focused rem** (no selection needed) and is `Ctrl+Z`-able — the review checkpoint before breaking to children.
 
-  - **Detection:** enumerated lists follow an **ascending chain** (accepts only the next expected value at a word boundary, preferring markers after sentence punctuation), so stray numbers in prose aren't mistaken for markers. Supports decimal (`1`, `1.`, `1)`), lettered (`a)`, `b.`) and roman (`i.`, `ii.`) enumerators, **depth/compound markers** (`1.1`, `1.2`… and mixed `1.a`, `1.b`…, kept as flat siblings), plus **bullet/dash lists** (`•`, `-`, `*`) — a marker must stand alone, and dash/compound lists need a clause boundary (`:`, `;`, `.`) before the first item to rule out parenthetical dashes and inline version numbers.
+  - **Press again:** on a list that is already split, it switches to a **blank line between items with no bullets**, and back on the next press.
+  - **Detection:** enumerated lists follow an **ascending chain** (accepts only the next expected value at a word boundary, preferring markers after sentence punctuation), so stray numbers in prose aren't mistaken for markers. Supports decimal (`1`, `1.`, `1)`), lettered (`a)`, `b.`) and roman (`i.`, `ii.`) enumerators, also with a spaced dash (`I - `, `1 - `), **depth/compound markers** (`1.1`, `1.2`… and mixed `1.a`, `1.b`…, kept as flat siblings), **fill-in blanks** (`( )`, two or more), plus **bullet/dash lists** (`•`, `-`, `*`) — a marker must stand alone, and dash/compound lists need a clause boundary (`:`, `;`, `.`) before the first item to rule out parenthetical dashes and inline version numbers.
 
 - **Break Inline List Into Children** — `quick: brl`
-  Splits an inline-bulletized list rem into child rems: the caput/title stays on the parent, each `• ` line becomes a child (order preserved, `• ` prefix stripped).
+  Splits an inline-bulletized list rem into child rems: the caput/title stays on the parent, each item line becomes a child (order preserved, `• ` prefix stripped, blank lines skipped).
 
   - **PDF-highlight pin follows the caput:** if the rem has a pin to a PDF highlight (toolbar-created *or* pasted as text + pin; the `#pdfextract` tag is optional), it's moved to the end of the caput instead of the last item.
   - **Images & other pins survive:** a trailing image becomes its own **last child item**; other trailing references join the caput; a mid-list image stays with its item.
@@ -382,7 +422,7 @@ Turn statements into [True or False cards](Utilities-True-or-False-Cards.md). Al
   📖 See [Utilities → Open Source in Popup](Utilities-Finding-and-Navigating.md#open-source-in-popup).
 
 - **Open Hovered Source in Floating Window** (`Opt+Shift+O` / `Alt+Shift+O`)
-  Same source viewer as above, but opened as a **non-blocking floating window on the right (~48% width)** instead of a centered modal — so the **card/editor stays visible beside it** for peeking back and forth without close/reopen. **Hover** the pin, then press the shortcut.
+  Same source viewer as above, but opened as a **non-blocking floating window on the right (40% width)** instead of a centered modal — so the **card/editor stays visible beside it** for peeking back and forth without close/reopen. **Hover** the pin, then press the shortcut.
 
   - **Stays open while you use the PDF:** highlighting, selecting, or clicking highlights in the reader does **not** dismiss it (outside-click-to-close is disabled).
   - **Auto-closes on card advance**, so a previous card's source never lingers over the next.
@@ -390,6 +430,16 @@ Turn statements into [True or False cards](Utilities-True-or-False-Cards.md). Al
   - Same source-detection and 🔖 Scroll to Highlight behavior as the modal variant.
 
   📖 See [Utilities → Open Source in Popup](Utilities-Finding-and-Navigating.md#open-source-in-popup).
+
+- **Follow the Queue's Sources in This Window**
+  Makes this window show the sources pinned on the cards you practice in another window, up to 4 at a time. Run it again, or press **Stop** on its bar, to stop. Desktop app only.
+
+  📖 See [Utilities → Follow the queue](Utilities-Finding-and-Navigating.md#follow-the-queue).
+
+- **Incremental Rems by Website** — `quick: irw`
+  Lists your Incremental and Dismissed Rems grouped by the website of their source, starting at the website of the focused Rem when it has one.
+
+  📖 See [Utilities → Incremental Rems by Website](Utilities-Finding-and-Navigating.md#incremental-rems-by-website).
 
 - **Jump to Rem by ID**
   Utility to navigate quickly based on raw IDs.
@@ -428,6 +478,9 @@ Turn statements into [True or False cards](Utilities-True-or-False-Cards.md). Al
 
 - **Incremental RemNote: Settings** (`is`)
   Opens the plugin's own settings popup — every setting the plugin owns, grouped by area, with the ones that do not currently apply hidden and a **?** beside each entry linking to the section of this manual that explains it. See [Plugin Settings Reference](Plugin-Settings-Reference.md#where-the-settings-are) for what lives here and what stays in RemNote's own panel.
+
+- **Import RemNote Scheduler Data**
+  Imports a file created by `scripts/export_scheduler_cards.py`. It can fill **FSRS Global Weights** and **Requested Retention** for this knowledge base from your Global Default Scheduler, and it stores the list of cards on other schedulers. That list labels those cards and adds an **Exclude other schedulers** checkbox to Card Analytics and FSRS Calibration. The popup shows what would change and warns you if your Global Default Scheduler isn't FSRS-6. It also shows the current list and can remove it. See [Import your scheduler data](Reviewing-Items-in-the-Queue.md#import-scheduler-data).
 
 - **Import Incremental Rems with History**
   Bulk-imports Incremental Rems from a **JSON payload** — including each rem's **full repetition history**, priority and next-repetition date. Built for migrating an external study log (e.g. a spreadsheet with years of study sessions) into the plugin's native history format.
@@ -480,6 +533,8 @@ Turn statements into [True or False cards](Utilities-True-or-False-Cards.md). Al
 - **Update all inherited Card Priorities** — `quick: ucp`
   Crucial maintenance task. Recursively processes every flashcard and tagged Rem in your knowledge base, pre-computing and propagating `cardPriority` tags so that the queue loads instantly on startup.
 
+  If it finds `inherited` priorities that have **lost their anchor** (no ancestor holds a manual or incremental card priority or is an Incremental Rem anymore), it asks once what to do with all of them: **OK** resets them to the default value with source `default`, **Cancel** leaves them as they are. See [Inherited priorities that lost their anchor](Priorities-for-Flashcards.md#orphaned-inherited).
+
   After the update completes, if any **"Rem not found"** errors were detected, the command automatically offers to **remove orphan cards** — flashcards whose parent Rem has since been deleted. The cleanup flow:
 
   - Shows a summary of all orphan cards found (count + affected Rem IDs)
@@ -501,6 +556,9 @@ Turn statements into [True or False cards](Utilities-True-or-False-Cards.md). Al
 
 - **Refresh Card Priority Cache**
   Forces a manual recalculation of the queue caching system.
+
+- **Refresh IncRem Cache**
+  Re-reads every Incremental Rem from the database, ignoring the copy saved for fast startup, and rebuilds both. 📖 [How the IncRem cache is loaded](IncRem-Scheduler.md#increm-startup-cache)
 
 - **Preserve history & remove** — `quick: phr`
   Deletes a rem's content the way native delete does (the rem **and its whole subtree**), but first **rescues all repetition history** in that subtree so your study stats survive. Normally, deleting a flashcard / Incremental / Dismissed rem discards its reviews and time-spent — and the [Study Dashboard](Study-Dashboard.md) total silently drops. This command prevents that.
@@ -558,8 +616,8 @@ Turn statements into [True or False cards](Utilities-True-or-False-Cards.md). Al
 - **Cancel No Inc Rem Timer**
   Stops system checks when queues are temporarily empty.
 
-- **Debug Incremental RemNote** / **Debug Video Detection**
-  Opens the Debug Widget popup for the focused Rem (now on **any** Rem, not just IncRem/CardPriority/Dismissed ones) and outputs specialized state logs to your developer console to diagnose edge cases. The Debug Widget includes the **[Search / Linkage Diagnostics](Troubleshooting.md#search-linkage-diagnostics-debug-widget)** section for investigating why a Rem is invisible in reference search.
+- **Debug Incremental RemNote**
+  Opens the Debug Widget popup for the focused Rem (now on **any** Rem, not just IncRem/CardPriority/Dismissed ones) and outputs specialized state logs to your developer console to diagnose edge cases. The Debug Widget includes the **[Search / Linkage Diagnostics](Troubleshooting.md#search-linkage-diagnostics-debug-widget)** section for investigating why a Rem is invisible in reference search, and **[Repoint references](Utilities-Cleaning-Up.md#repair-broken-references)** for repairing references that show "Loading".
 
 - **Toggle Priority Band Colour Logging**
   Prints the band → percentile → colour mapping each priority badge stylesheet is built from, to your developer console. Off by default; the setting is per device and survives a reload, so the mapping can be inspected on the next start. Use it if a badge's colour looks out of step with the **[Priority Editor](Prioritization-&-Sorting.md#priority-editor-widget)** for the same Rem.

@@ -7,7 +7,7 @@ import {
   PrioritySource,
   calculateCardRemPercentilesFromCards,
 } from './types';
-import { getRawCardPriorityString } from './slot_access';
+import { getRawCardPriorityString, isHiddenSlotMigrated } from './slot_access';
 import { getCardPriority, calculateNewPriority, setCardPriority } from './index';
 import {
   writeCardPriorityCache,
@@ -40,6 +40,19 @@ export function getPendingCacheUpdate(remId: RemId): CardPriorityInfo | null | u
 
 let isFlushing = false;
 let needsHeavyRecalcNextRound = false;
+/** Settles when the running flush loop has drained — see whenCardPriorityCacheFlushed. */
+let activeFlush: Promise<void> | null = null;
+
+/**
+ * Waits for the flush in progress, which drains every update queued before it
+ * ends. For a caller that has just queued an update (updateCardPriorityCache
+ * starts the flush itself) and must not move on until it is written. Calling
+ * flushCacheUpdatesNow instead would return at once while that flush runs and
+ * then schedule a second full pass over the cache.
+ */
+export function whenCardPriorityCacheFlushed(): Promise<void> {
+  return activeFlush ?? Promise.resolve();
+}
 
 async function flushCacheUpdates(plugin: RNPlugin, forceHeavyRecalc = false) {
   if (pendingUpdates.size === 0 && !forceHeavyRecalc) return;
@@ -50,6 +63,8 @@ async function flushCacheUpdates(plugin: RNPlugin, forceHeavyRecalc = false) {
   }
 
   isFlushing = true;
+  let settleFlush!: () => void;
+  activeFlush = new Promise<void>((resolve) => (settleFlush = resolve));
 
   try {
     while (pendingUpdates.size > 0 || needsHeavyRecalcNextRound || forceHeavyRecalc) {
@@ -62,7 +77,11 @@ async function flushCacheUpdates(plugin: RNPlugin, forceHeavyRecalc = false) {
 
       if (updatesToProcess.size === 0 && !runHeavy) break;
 
+      // Timed for the console: a flush blocks RemNote for seconds on a large KB, and its start
+      // time lets a slow command's `[Cloze]` line be matched against it.
+      const roundStartedAt = Date.now();
       const cache = (await plugin.storage.getSession<CardPriorityInfo[]>(allCardPriorityInfoKey)) || [];
+      const readAt = Date.now();
 
       let needsHeavyRecalc = runHeavy;
 
@@ -119,6 +138,7 @@ async function flushCacheUpdates(plugin: RNPlugin, forceHeavyRecalc = false) {
       // Convert map back to array.
       const updatedCache = Array.from(cacheMap.values());
 
+      let writeStartedAt = Date.now();
       if (needsHeavyRecalc) {
         // Per-card universe: kbPercentile is the rem's mean-rank percentile
         // across the expanded card population (matches Weighted Shield).
@@ -127,6 +147,7 @@ async function flushCacheUpdates(plugin: RNPlugin, forceHeavyRecalc = false) {
           ...info,
           kbPercentile: percentileByRem[info.remId] ?? 0,
         }));
+        writeStartedAt = Date.now();
         await writeCardPriorityCache(plugin, enrichedCache);
       } else {
         await writeCardPriorityCache(plugin, updatedCache);
@@ -134,12 +155,22 @@ async function flushCacheUpdates(plugin: RNPlugin, forceHeavyRecalc = false) {
 
       // Signal all listeners that the cache has been updated
       // This is crucial for UI components to refresh their priority displays
+      const writtenAt = Date.now();
       await plugin.storage.setSession(cardPriorityCacheRefreshKey, Date.now());
+      const doneAt = Date.now();
+      console.log(
+        `[Cache] flush at ${dayjs(roundStartedAt).format('HH:mm:ss.SSS')}: ${updatesToProcess.size} Rem(s) ` +
+          `in ${doneAt - roundStartedAt} ms (read ${readAt - roundStartedAt}, ` +
+          `${needsHeavyRecalc ? 'percentiles' : 'merge'} ${writeStartedAt - readAt}, ` +
+          `write ${writtenAt - writeStartedAt}, signal ${doneAt - writtenAt})`
+      );
     }
   } catch (err) {
     console.error(`[Cache] Error inside while loop:`, err);
   } finally {
     isFlushing = false;
+    activeFlush = null;
+    settleFlush();
   }
 }
 
@@ -147,7 +178,9 @@ export async function updateCardPriorityCache(
   plugin: RNPlugin,
   remId: RemId,
   isLightUpdate = false,
-  optimisticInfo?: Partial<CardPriorityInfo> | null
+  optimisticInfo?: Partial<CardPriorityInfo> | null,
+  /** Queue only: the caller flushes once for its whole batch (flushPendingCardPriorityUpdates). */
+  options?: { deferFlush?: boolean }
 ) {
   try {
     let updatedInfo: CardPriorityInfo | null = null;
@@ -196,6 +229,8 @@ export async function updateCardPriorityCache(
       });
     }
 
+    if (options?.deferFlush) return;
+
     // The flushCacheUpdates function now has an intelligent internal `isFlushing` loop
     // that prevents overlapping saves and safely batches rapid requests. 
     // We no longer need arbitrary `setTimeout` delays. We ask it to flush immediately.
@@ -207,34 +242,153 @@ export async function updateCardPriorityCache(
   }
 }
 
+/** Ratings are flushed once this long has passed without another one. */
+const RATED_FLUSH_IDLE_MS = 60_000;
+/** At this many Rems waiting, the flush no longer waits for a pause in the ratings. */
+const RATED_FLUSH_MAX_REMS = 25;
+/** Even then it stays clear of the next card appearing (2.2 s measured for the write). */
+const RATED_FLUSH_AT_CAP_DELAY_MS = 2500;
+const ratedRemIds = new Set<RemId>();
+let ratedFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let ratedFlushAtCap = false;
+
 /**
- * Replaces an optimistic entry with one read from the Rem's real cards, once
- * those cards exist. A command that writes the text a card is made from (Alt+Z)
- * cannot read that card straight away, so it stores what it knows and calls
- * this; each attempt waits longer, and the first one that finds cards wins.
+ * The cache update for a rated card. A rating changes a Rem's due data, never its priority, and
+ * a flush reads and rewrites the whole cache (over 2 s, for one Rem or many), so ratings are
+ * batched. Nothing in the queue needs them sooner: the shields leave out rated Rems through the
+ * seen list, and cooling keeps its own record of the session's ratings. A view opened mid-queue
+ * (Priority Graph, Selection Odds) can show a rated Rem's due data up to the next flush.
+ *
+ * The Rem is marked dirty at once, so the next startup re-reads it even if the app quits before
+ * the flush. Queue exit flushes through flushCacheUpdatesNow.
  */
-export function rereadCardPriorityCacheWhenCardsExist(
-  plugin: RNPlugin,
-  remId: RemId,
-  delaysMs: number[] = [2000, 5000, 15000]
-) {
-  const attempt = async (i: number) => {
+export function updateCardPriorityCacheAfterRating(plugin: RNPlugin, remId: RemId) {
+  markCardPriorityDirty(plugin, remId);
+  ratedRemIds.add(remId);
+  // Further ratings do not postpone a flush already due at the cap.
+  if (ratedFlushAtCap) return;
+  ratedFlushAtCap = ratedRemIds.size >= RATED_FLUSH_MAX_REMS;
+  if (ratedFlushTimer) clearTimeout(ratedFlushTimer);
+  ratedFlushTimer = setTimeout(
+    () => {
+      drainRatedCards(plugin)
+        .then(() => flushCacheUpdates(plugin))
+        .catch((e) => console.error('[Cache] Flush after ratings failed:', e));
+    },
+    ratedFlushAtCap ? RATED_FLUSH_AT_CAP_DELAY_MS : RATED_FLUSH_IDLE_MS
+  );
+}
+
+/** For a new queue's shield data: leaving by navigation fires no QueueExit, so no flush ran. */
+export async function flushRatedCardsNow(plugin: RNPlugin) {
+  if (ratedRemIds.size === 0) return;
+  await drainRatedCards(plugin);
+  await flushCacheUpdates(plugin);
+}
+
+async function drainRatedCards(plugin: RNPlugin) {
+  if (ratedFlushTimer) clearTimeout(ratedFlushTimer);
+  ratedFlushTimer = null;
+  ratedFlushAtCap = false;
+  const remIds = [...ratedRemIds];
+  ratedRemIds.clear();
+  for (const remId of remIds) {
     try {
       const rem = await plugin.rem.findOne(remId);
-      if (!rem) return;
-      if (((await rem.getCards()) || []).length > 0) {
-        await updateCardPriorityCache(plugin, remId);
-        return;
+      const info = rem ? await getCardPriority(plugin, rem) : null;
+      pendingUpdates.set(remId, { info, isLight: true });
+      if (info) lightModeOptimisticOverrides.set(remId, { info, expiresAt: Date.now() + 5000 });
+    } catch (e) {
+      console.error('Error updating card priority cache for rated Rem:', remId, e);
+    }
+  }
+}
+
+/**
+ * Holds an entry for a new Rem until rereadCardPriorityCacheWhenCardsExist flushes it. Flushing
+ * now as well would rewrite the whole cache (over 2 s) twice per new Rem, with the entry about
+ * to be replaced anyway. Readers in this realm see it through getPendingCacheUpdate, and it is
+ * marked dirty so that a reload before the flush still re-reads the Rem.
+ */
+export function holdCardPriorityCacheEntry(plugin: RNPlugin, info: CardPriorityInfo) {
+  markCardPriorityDirty(plugin, info.remId);
+  pendingUpdates.set(info.remId, { info, isLight: true });
+  lightModeOptimisticOverrides.set(info.remId, { info, expiresAt: Date.now() + 5000 });
+}
+
+/** Held entries are re-read and flushed once no new one has been held for this long. */
+const HELD_FLUSH_IDLE_MS = 12_000;
+/** A long run of clozes still gets its flush this long after the first one. */
+const HELD_FLUSH_MAX_WAIT_MS = 60_000;
+/** A Rem whose cards don't exist yet at the flush is read once more this much later. */
+const HELD_RETRY_MS = 15_000;
+const heldRemIds = new Set<RemId>();
+let heldFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let heldRunStartedAt: number | null = null;
+
+/**
+ * Replaces an optimistic entry with one read from the Rem's real cards. A command that writes the
+ * text a card is made from (Alt+Z) cannot read that card straight away, so it stores what it
+ * knows and calls this. One flush serves a whole run of clozes, once the run pauses: a flush
+ * blocks RemNote for over 2 s on a large KB, and a press landing in one took 6.7 s instead of
+ * 0.9 s. Until then other views see the new Rem only if another flush writes the held entry.
+ */
+export function rereadCardPriorityCacheWhenCardsExist(plugin: RNPlugin, remId: RemId) {
+  heldRemIds.add(remId);
+  const now = Date.now();
+  heldRunStartedAt ??= now;
+  if (heldFlushTimer) clearTimeout(heldFlushTimer);
+  const delayMs = Math.min(HELD_FLUSH_IDLE_MS, heldRunStartedAt + HELD_FLUSH_MAX_WAIT_MS - now);
+  heldFlushTimer = setTimeout(() => {
+    heldFlushTimer = null;
+    heldRunStartedAt = null;
+    const remIds = [...heldRemIds];
+    heldRemIds.clear();
+    void rereadHeldEntries(plugin, remIds, true);
+  }, Math.max(0, delayMs));
+}
+
+async function rereadHeldEntries(plugin: RNPlugin, remIds: RemId[], retryWithoutCards: boolean) {
+  const withoutCards: RemId[] = [];
+  for (const remId of remIds) {
+    try {
+      const rem = await plugin.rem.findOne(remId);
+      if (!rem) {
+        // Deleted since: drop its entry, including one another flush already wrote.
+        pendingUpdates.set(remId, { info: null, isLight: false });
+        continue;
       }
+      if (((await rem.getCards()) || []).length === 0) {
+        // Its held entry, if still pending, is flushed below as it is.
+        withoutCards.push(remId);
+        continue;
+      }
+      pendingUpdates.set(remId, { info: await getCardPriority(plugin, rem), isLight: false });
     } catch (e) {
       console.warn('[Cache] Deferred card re-read failed for Rem:', remId, e);
     }
-    if (i + 1 < delaysMs.length) setTimeout(() => void attempt(i + 1), delaysMs[i + 1]);
-  };
-  setTimeout(() => void attempt(0), delaysMs[0]);
+  }
+  await flushCacheUpdates(plugin).catch((e) => console.error('[Cache] Flush of held entries failed:', e));
+  if (retryWithoutCards && withoutCards.length > 0) {
+    setTimeout(() => void rereadHeldEntries(plugin, withoutCards, false), HELD_RETRY_MS);
+  }
+}
+
+/**
+ * Flushes what is queued and waits until it is written, for a writer that queued its
+ * entries with `deferFlush` (and awaited them, so they are in before the flush starts).
+ * Not flushCacheUpdatesNow: that forces a percentile pass even with nothing queued and
+ * drains the batched ratings, and when it raced an entry still being read it produced an
+ * extra full pass over the cache ("0 Rem(s)" in the console) before the real one. A
+ * round that changes a priority recalculates the percentiles by itself.
+ */
+export async function flushPendingCardPriorityUpdates(plugin: RNPlugin) {
+  await flushCacheUpdates(plugin);
+  await whenCardPriorityCacheFlushed();
 }
 
 export async function flushCacheUpdatesNow(plugin: RNPlugin) {
+  await drainRatedCards(plugin);
   await flushCacheUpdates(plugin, true);
 }
 
@@ -512,11 +666,26 @@ async function tryWarmPhase1(
       sample.push(reusable[i]);
     }
 
+    // Same slot-retirement settling getCardPriority does first, so the sample
+    // reads exactly the slots the cold build read.
+    await isHiddenSlotMigrated(plugin);
     const mismatches = (
       await Promise.all(
         sample.map(async (rem) => {
           const live = await getRawCardPriorityString(rem);
           const stored = store.byRem.get(rem._id)!;
+          // A tagged rem with NO stored value is not a disagreement: getCardPriority
+          // synthesises an 'inherited' or 'default' entry for it, and that is what
+          // the cold build saved. Comparing '' against that number failed every
+          // such rem — and a KB restored from a backup can have nearly all its
+          // values in that state (RemNote keeps the old slot values in the rem's
+          // `bpc` field, which getPowerupProperty does not read), so the check
+          // failed 200/200 on every launch, right after the cold build that wrote
+          // the copy. Like is compared with like: no live value must mean a
+          // synthesised stored entry.
+          if (!live) {
+            return stored.source === 'inherited' || stored.source === 'default' ? null : rem._id;
+          }
           const liveNum = parseInt(live);
           return !isNaN(liveNum) && liveNum === stored.priority ? null : rem._id;
         })

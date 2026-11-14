@@ -12,6 +12,14 @@ The fix (v1.0.39): `src/lib/queue_prefetch.ts` keeps gates, settings, the due co
 
 A served candidate counts as shown only once the *next* call's `queueInfo` proves it: `cardsPracticed` rose by one while `numCardsRemaining` held. The duplicate call at queue open is a queue-entry artifact, not a timeout retry.
 
+## The first card of a queue is never a plugin card
+
+When a queue opens, `loadCards` picks the first card in a `"critical"` preload, and the plugin card provider returns early in that mode (`if (this.pendingPluginCard || mode === "critical") return`, read from `app.asar` in October 2026). `GetNextCard` is first called in the `"full"` preload that runs **after** the first pop, and its answer is stored as `pendingPluginCard` for the next pop.
+
+So a queue with due IncRems but **no due flashcards** always opens on "Great job! You've finished practicing for now.", however fast the plugin answers: the first pop finds nothing, and the end screen never pops again. The November 2025 fix (computing the scope inside `GetNextCard`) only addressed the timing, and RemNote's provider no longer allows timing to matter.
+
+`queue.removeCurrentCardFromQueue` is the way out. On the end screen there is no current card to remove, so the call only pops: it shows the pending plugin card if there is one, and its trailing `"full"` preload calls `GetNextCard` again if there is not. An empty pop runs `notifyClearedQueue`, which plays the confetti again. `queue.rateCurrentCard` is the wrong tool here: off a card it calls the screen's `onContinueLearning` / `onStopLearning`. The end screen is the one state where `getCurrentQueueScreenType()` returns `undefined`. `src/lib/queue_empty_start.ts` implements the rescue.
+
 ## QueueLoadCard fires without a card id
 
 In a document's Practice All queue, every card change also fires a `QueueLoadCard` **with no `cardId`**, and RemNote moves past it by itself. Calling `removeCurrentCardFromQueue` on those lands 100–400 ms later, after the real card has loaded, and removes the real card instead. The emptied queue reloads and the loop repeats (440 removals in one test).
@@ -28,9 +36,15 @@ Going back with the left arrow reloads the previous card with an ordinary `Queue
 
 ## Card Cluster ratings emit no QueueCompleteCard
 
-Read from the bundle and confirmed in the database, 2026-10-04. The queue's `answerCard` emits `QueueCompleteCard` only when `this.answerCardOverride?.(score)` is falsy. The Card Cluster renderer defines `answerCardOverride`, writes the repetition itself (`submitAnswerWrite` → `updateRepStatusInner`), moves to the next sibling (`goToNextCompoundCard`) and returns `true`. So a cluster member's rating reaches no plugin event, even when it is the only member of its cluster in the queue. `GlobalRemChanged` is not a substitute: the Rem changes only when the rating moves its mastery level.
+Read from the bundle and confirmed in the database, 2026-10-04. The queue's `answerCard` emits `QueueCompleteCard` only when `this.answerCardOverride?.(score)` is falsy. The Card Cluster renderer defines `answerCardOverride`, writes the repetition itself (`submitAnswerWrite` → `updateRepStatusInner`), moves to the next sibling (`goToNextCompoundCard`) and returns `true`. So a cluster member's rating reaches no plugin rating event, even when it is the only member of its cluster in the queue.
+
+`GlobalRemChanged` can stand in for it only in part, because it never names the rated Rem. `Card.update` writes the Cards collection and emits nothing. A rating calls `Rem.update`, which emits the event, in two places: `onFinishedCard` on the practiced document for scores other than Again and Too Early, and `updateDeckInCounts` on each ancestor deck when the card goes from due to not due. Logged on 2026-10-31: a normal and a cluster rating, both Good, each fired one event naming the practiced document 35–50 ms later, and the rated Rem's last write stayed before the rating. An Again on a card that was not due should fire neither.
+
+An earlier fallback ran on that event and read the history of `clusterVisibleCardId`. In a test on 2026-10-31 it recorded the first three siblings of a real `cc` cluster about 190 ms after each rating and missed the fourth; an earlier pass also missed the last card rated. The likely cause, not confirmed, is that the last sibling leaves the cluster at once, so `QueueLoadCard` clears the key before the fallback reads it. `src/lib/cluster_rating_readback.ts` replaced it: it keeps its own list of cards seen on screen and reads their history 1.5 s after a card change.
 
 Two cards of `cc` parents had Good ratings stored with the drill document as `subQueueId` and were still in `finalDrillIds`. The card's `repetitionHistory` is the only reliable source: read it back after the next card change (`reconcileRatings` in `src/lib/mastery_drill_native.ts`; the popup drill's `registerDrillCardRatingListener` does the same for the card `QueueLoadCard` named).
+
+Rechecked in the bundle on 2026-10-31. `answerCardOverride` is assigned once, in `SpacedRepetitionCardCluster`, and every path returns `true`. The other emitters with a card id are the leech screen's Skip and Edit Myself, which pass that card's own id. So `cardId` in `QueueCompleteCard` is always the card rated, never a cluster anchor. Don't refine it with `clusterVisibleCardId`: that key names the card on screen, which may already be the next one. Replacing it when both cards shared a Rem put a never-reviewed cloze into the drill in place of the sibling rated Again.
 
 ## A skip buries the card's siblings
 
@@ -52,6 +66,25 @@ The queue controller chains providers:
 
 The order of portals in a document is irrelevant. The only order control a plugin has is the **size** of the document it queues (small bursts).
 
+## New bidirectional cards have no preferred direction
+
+Read from the `app.asar` of October 30, 2026, and measured in the main knowledge base on 2026-10-31. Nothing in a spaced or Practice All queue serves front → back before back → front, and concepts get no special case.
+
+- **No clusters:** the `random` provider splices each card in at a random position.
+- **Clusters on:** `addCardsFromRemTinygraph` runs `shuffle([forward, backward, cloze])` and stops at the first group that adds a card.
+- **New cards:** `new_and_stale` releases them with `_.sample`.
+- **First one wins:** whichever direction is served first buries the other for 60 minutes (`hasSpoiler`).
+
+In the database, of 1,052 concept Rems first practised since 2023, 46.6% started with the forward card (±3.0). Since 2025 it was 45.7% of 291. Rems first practised in 2016–2020 are almost all forward; the likely cause is that their backward cards were enabled later, but this was not checked. The filter for "both cards born together" uses the card's `m` field, so it is approximate.
+
+Not settled: the order `graph_todays_cards` returns inside the WASM module. It does not matter for the routes above, which reshuffle it, but In Order routes keep whatever order they receive.
+
+**Forcing back → front first.** A plugin skip works against this: skipping the forward card records it as seen, which buries the backward card for 60 minutes ([A skip buries the card's siblings](#a-skip-buries-the-cards-siblings)). The exception is Learn New, where In Order has no bury provider and Shuffled only defers buried cards to the end of the batch. The controller's `moveCurrentCardToBackOfQueue` does not go through the bury hook, but the SDK does not expose it. `rem.setPracticeDirection('backward')` avoids the queue altogether.
+
+Measured on 2026-10-31 on six test concepts: a forward card with no reps loses its record when the direction goes backward-only. A later `'both'` writes a new record, due at once. This differs from a card with reps, whose record survives ([CARD_STATE_REFERENCE.md](CARD_STATE_REFERENCE.md)). The new record has a new card id.
+
+The deleted card can still be served. The queue's loaded batch keeps it, and after Keep Practicing it fired `QueueLoadCard` with an id found only in `deleted_cards`. A plugin that changes a direction during a queue has to remember those ids and skip them when they load.
+
 ## "Need to Learn" cards and the Learn New queue
 
 Read from the 1.28.19 bundle and the local database, 2026-09-26.
@@ -64,7 +97,11 @@ A card created with the flag has no `ny,u` timestamp. `card.isNotYetLearned()` i
 
 **Leaving Learn New.** A card loses `ny` only when it is answered **Hard, Good or Easy**. Forgot, Skip (written as a `TOO_EARLY` rep) and Reset keep it. Learn New answers are stored as `isCram: true` reps with the page's `subQueueId`. The only native way to clear the flag without answering is the **"Need to Learn" switch** in a Rem's flashcard menu (`Hierarchy Editor Rem Card Menu`). It rewrites every card of that one Rem, and there is no bulk version.
 
-**Why siblings run back to back.** The page is `/need_to_learn/:examId/:documentId/:order?` (`NeedToLearnQueuePage`), which mounts `QueueMain` with **`skipCheckpoints: true`**. The bury provider's constructor sets `practiceBuriedCards = r.skipCheckpoints`, so this flag, meant to hide daily-goal checkpoints, also turns off same-Rem burying. The selector sends one document at a time, often a handful of cards from one or two Rems. With "In Order", the cards also come in cloze order.
+**Why siblings run back to back.** The page is `/need_to_learn/:examId/:documentId/:order?` (`NeedToLearnQueuePage`). Its `order` is `in_order` (the default) or `shuffled`. The selector sends one document at a time, often a handful of cards from one or two Rems. The two orders build different queues:
+- **In Order** (`showInOrder` → the controller's `inOrder`): the controller builds only the `in_order` provider, with no `new_and_stale` and **no `bury_protection` at all**. Cards come in cloze order, each sibling right after the other. The same goes for every In Order queue (`/flashcards/:id/ordered`), not only Learn New.
+- **Shuffled**: `bury_protection` is in the chain, but the page passes **`skipCheckpoints: true`** and the provider's constructor sets `practiceBuriedCards = r.skipCheckpoints`. A spoiled card is still set aside while unspoiled cards remain in the loaded batch. Once only spoiled cards are left, they are served at once, with no hour's wait and no "Time to Take a Break". `shouldWaitForExternalCardsBeforeBuried` is also false here, so the next batch is not fetched first.
+
+**RemNote's 1.28.48 change** (support said "fixed", Oct 2026; diffed against 1.28.45, 2026-10-15). The bury provider gained `latestSpoilerSeenAt`, `orderByLeastRecentlySpoiled` and `takeLeastRecentlySpoiledBuriedCard`. When buried cards are released, the card whose latest spoiler was seen longest ago now goes first. Before, they went first in, first out. That spreads the siblings of several Rems apart in Shuffled Learn New, and after Keep Practicing in normal queues. It does not restore the hour, and a batch holding one Rem's clozes still runs them back to back. Unchanged in 1.28.48: the In Order chain, `practiceBuriedCards = skipCheckpoints`, the 60-minute window, the spoiler tuples, `NeedToLearnQueuePage` and the Learn New item loader. The plugin's cooling skip is still needed in both orders.
 
 **From a plugin.**
 - The plugin **can't read or write `ny`**. The SDK `Card` copies only `_id`, `remId`, `type`, `createdAt`, `history`, `activeNextTime` and `timesWrongInRow`, and no bridge method sets the field. `updateCardRepetitionStatus(GOOD)` would clear it, but only by recording a fake review.
@@ -102,12 +139,39 @@ Read from the 1.28.19 bundle (`renderSR`, `SwipeQueueHOC`, the insight scroll la
 
 - **FlashcardAnswerButtons replaces the native buttons.** The slot's `componentToRenderIfNoWidgets` holds the answer buttons, type-in answer, MCAT indicator and "Grade yourself" hint. Any matching widget swaps all of them out. It is only safe for Plugin queue items, which is how `answer_buttons` uses it.
 - **FlashcardUnder** is the last child of the card content, inside the scroll surface. Its widget is part of the height RemNote measures for the card.
-- **QueueBelowTopBar** is the only slot pinned in place, at the top of the box.
+- **QueueBelowTopBar** is the only slot pinned in place, at the top of the box. Its wrapper (`widgetClassName: "rn-queue__widget-below-top-bar w-full"`, read from the 1.28.62 bundle) is a flex child of the box **without `shrink-0`**. When a revealed answer makes the card taller than the box, flexbox shrinks the wrapper, and its `overflow: hidden` clips the widget's lower part. Any widget there taller than one line needs `flex-shrink: 0` on that wrapper (QUEUE_VARIANT_CSS in `src/register/widgets.ts`).
 - Every widget iframe sits in `div.fade-in-first-load.relative` with inline `transform: rotate(0); overflow: hidden`. That wrapper is a containing block and a stacking context, so a `position: fixed` iframe stays trapped inside it. To relocate a widget, move the wrapper.
 - **Beautiful bottom controls** are `div.beautiful-queue-bottom-controls-overlay` (`absolute bottom-0`, `z-[10000]`, `pointer-events-none`) wrapping a transparent `.spaced-repetition__bottom`. The backdrop behind the buttons is `.beautiful-queue-bottom-fade-mask` (`z-[9998]`). A ResizeObserver reads the overlay's `offsetHeight` into `--beautiful-queue-bottom-controls-height` on the HOC root (`.spacedRepetition`), and also into `bottomControlsHeight`.
 - **The AI insights panel ("Explanation") is not pinned.** It is in-flow after the card content. A computed spacer (`scroll height − controlsHeight − 16 − card height − 16 − min(insights, 100)`) lands it just above the controls, and the card content goes `--sticky` (`position: sticky`, so it is a stacking context) when there is room. If the controls get taller, the Explanation moves up with them. Padding on `.spaced-repetition__bottom` does this, because it grows the overlay's content box and the ResizeObserver fires. Padding on the overlay itself would not trigger the observer.
+- **The insight scroll layout has its own filler (October 2026).** After the card stage and the insights anchor, RemNote added an empty `div.beautiful-queue-card-free-space.grow` before the bottom fade spacer. It was in the live DOM but not in the 1.28.45 `app.asar`. Any rule that makes the card stage `flex-grow: 1` to fill the box now shares the free space with that div, which shows as a blank band above the answer buttons. Set its `flex-grow` to 0 alongside.
 - **Anything between the widget and the HOC root that becomes a stacking context hides a relocated widget.** Its z-index is then scoped below the mask (`z-[9998]`). An opacity animation on `.rn-queue__content` with a forwards fill (`both`) does this for the whole card, even though the final opacity is 1. Use `backwards` when the end value is the natural one.
+- **On a phone the buttons leave the box.** When Beautiful + `Env.mobile.mode.isPhone` (and not showcase, preview or in-article), the answer buttons are portaled into `div.queue-beautiful-mobile-bottom-controls`, a sibling below the box (`relative min-h-[112px] w-full shrink-0 p-2`). The HOC gets no children, so it renders no overlay and no fade mask, and `--beautiful-queue-bottom-controls-height` stays `0px`. The Explanation spacer is computed from the scroll surface's `clientHeight` (ResizeObserver), so padding the bottom of `.spacedRepetition` shrinks the surface and moves the Explanation up. `.spacedRepetition` is `overflow-hidden`, which clips anything placed below its bottom edge.
 - **The suggested-grade tab.** After a type-in answer is graded, RemNote highlights one button (`suggestedAnswerButton()`: Good or Easy if right, Again if wrong). It hangs an absolute "↵ Enter" tab above it (height 25, `top: -25px`; "Say 'Done'" while voice-listening). On desktop only that button gets `border-t-transparent rounded-t-none`, so `.rn-queue__answer-btn.border-t-transparent.rounded-t-none` detects it. With swipe gestures on (`tF.t()`), every button instead shows a 25px "← Left"/"→ Right" label above it, with no class hook.
+
+## When the Beautiful queue draws a basic card with the divider
+
+Read from the 1.29.6-beta bundle and the local database (2026-11-03). The helpers are module 552780 (predicates `ex` basic, `ET` concept, `VS` descriptor; divider `aQ`, `data-test="Beautiful Queue Card Answer Divider"`), and the row renderer is the QueueHierarchyRem subclass's `renderKey`/`renderValue`.
+
+A basic card is drawn as question / short divider / answer only when **all** of these hold. Otherwise it is drawn as one "question → answer" line.
+
+1. **It is the last Rem of the stack and has a back.** The `value` must be non-empty, or the Rem must be a multi-line card (`Zd`).
+2. **`rem.type === RemType.DEFAULT_TYPE`, and DEFAULT_TYPE is `undefined`.** The check is strict, on the raw field.
+   - Concept (`1`) gets the concept layout.
+   - Descriptor (`2`) gets the descriptor layout, with the answer inline after the arrow or a "Recall the description" pill.
+   - A stored `"type": null` matches neither predicate and falls through to the classic `super.renderKey()`/`renderValue()`.
+3. **No child has the Card Item powerup** (`w`, multi-line items).
+4. **The indentation mode is not `"complex"`.** The mode comes from `z(mode, remStack)`. `remStack` comes from `partitionQueueHierarchyTreeStack`: the Rems below the nearest document (findLastIndex of `isTaggedAsDocument`, or below a HideQueueAncestors Rem) down to the card, the card included.
+   - Length 1 (the card sits directly under the document) → no mode → divider.
+   - Length 2 (one parent line) → `"flat"` → divider. The card row is rendered as a detached leaf.
+   - Length 3 or more → `"complex"` → a compact `queue-beautiful-basic-card-prompt-line--compact` line under the parent bullets, with the answer inline after the delimiter.
+
+The partition counts Rems before `shouldSkipRenderingQueueHierarchyRem` drops hidden ones (tables, AI flashcard sections, empty-key table rows). So an invisible ancestor can push a card into `"complex"`.
+
+**`null` types come from RemNote itself.** "Unset as Concept/Descriptor" (Opt+Cmd+Q, `SetTypeToQuestion`) saves `null`, while Rems that were never typed have no field. Rem `Am6k9j4o9cTmKU4fM` was still `null` after an unset (its `type,u` updated).
+
+The main knowledge base has 845 `null` Rems, 152 of them with a back side. Rems with a back side break down as 36k with no type, 54k Descriptors and 11k Concepts. Children of Concept parents are mostly Descriptors, so they never get the divider either.
+
+**A plugin cannot clear the `null`.** See PLUGIN_BRIDGE_AND_SDK.md: `rem.setType(DEFAULT_TYPE)` is rejected by the bridge. Reported in [support-reports/REMNOTE_SUPPORT_REPORT_beautiful_queue_null_rem_type.md](support-reports/REMNOTE_SUPPORT_REPORT_beautiful_queue_null_rem_type.md).
 
 ## Images in the queue are drawn by the drawing canvas
 

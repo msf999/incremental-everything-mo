@@ -30,6 +30,7 @@ import { tryParseJson, getDailyDocReferenceForDate, sleep } from '../utils';
 import { getInitialPriority } from '../priority_inheritance';
 import { stampNoteAndContext, setPendingReviewNote } from '../history_notes';
 import { updateIncrementalRemCache } from './cache';
+import { markIncRemDirty } from './persistence'; // FORK (10297b3 sync)
 import { mergeHistoryFromDismissed } from '../dismissed';
 import { registerRemsAsPdfKnown, registerRemsAsHtmlKnown, isHtmlSource } from '../pdfUtils';
 import { syncPriorityBand } from '../priority_bands';
@@ -159,6 +160,12 @@ export async function setIncRemPriority(
     : null;
 
   await rem.setPowerupProperty(powerupCode, prioritySlotCode, [newPriority.toString()]);
+  // FORK (10297b3 sync): upstream's warm-start cache learns of a priority write from the
+  // 'priorityChange' history entry below, which moves this Rem's `updatedAt`. The fork does
+  // not write that entry (priorityChangeHistory is off) and the Priority slot is a child Rem,
+  // so the write would leave no trace — mark the Rem dirty directly. A no-op while
+  // FORK_FEATURES.warmStartCache is off.
+  markIncRemDirty(plugin, rem._id);
 
   if (recordHistory) {
     const parsed = parseInt(String(before ?? '').trim(), 10);
@@ -314,7 +321,19 @@ async function readHistorySlot(rem: PluginRem): Promise<IncrementalRep[] | 'unre
 export async function updateReviewRemData(
   plugin: RNPlugin,
   incRem: IncrementalRem | undefined,
-  overrideOptions?: ReviewOverrideOptions
+  overrideOptions?: ReviewOverrideOptions,
+  /**
+   * Values read at the moment of the click, for a caller that runs later (the
+   * tracker's review jobs): by then the queue has moved on, so the review start
+   * key belongs to the next item and the lookback state may have changed.
+   * `reviewTimeSeconds: null` means no start time was recorded.
+   */
+  captured?: {
+    reviewTimeSeconds: number | null;
+    inLookbackMode: boolean;
+    /** Merged into the new entry's context, such as a hand-off to the Chrome Companion. */
+    context?: IncrementalRep['context'];
+  }
 ) {
   if (!incRem) {
     console.log("❌ [reviewRem] No incRem provided!");
@@ -322,15 +341,19 @@ export async function updateReviewRemData(
   }
 
   // 1. Calculate review time
-  const startTime = await plugin.storage.getSession<number>(incremReviewStartTimeKey);
-  const reviewTimeSeconds = startTime ? dayjs().diff(dayjs(startTime), 'second') : undefined;
+  let reviewTimeSeconds: number | undefined;
+  if (captured) {
+    reviewTimeSeconds = captured.reviewTimeSeconds ?? undefined;
+  } else {
+    const startTime = await plugin.storage.getSession<number>(incremReviewStartTimeKey);
+    reviewTimeSeconds = startTime ? dayjs().diff(dayjs(startTime), 'second') : undefined;
+  }
 
-  // DEBUG LOGS
-  console.log(`🔍 [reviewRem] ID: ${incRem.remId}`);
-  console.log(`🔍 [reviewRem] Start Time: ${startTime}`);
-  console.log(`🔍 [reviewRem] Calculated Duration: ${reviewTimeSeconds}`);
+  console.log(`🔍 [reviewRem] ID: ${incRem.remId}, duration: ${reviewTimeSeconds}`);
 
-  const inLookbackMode = !!(await plugin.queue.inLookbackMode());
+  const inLookbackMode = captured
+    ? captured.inLookbackMode
+    : !!(await plugin.queue.inLookbackMode());
   const nextSpacing = await getNextSpacingDateForRem(plugin, incRem.remId, inLookbackMode);
   if (!nextSpacing) {
     return null;
@@ -350,6 +373,7 @@ export async function updateReviewRemData(
     if (rem) {
       await stampNoteAndContext(plugin, rem, lastEntry);
     }
+    if (captured?.context) lastEntry.context = { ...lastEntry.context, ...captured.context };
   }
 
   // Apply manual overrides when provided (used by drag-to-next/today UX)
@@ -652,7 +676,12 @@ export async function rescheduleWithoutReview(
  */
 export const getIncrementalRemFromRem = async (
   plugin: RNPlugin,
-  r: PluginRem | undefined
+  r: PluginRem | undefined,
+  opts?: {
+    /** The Rem came from the powerup's taggedRem(), so it carries the powerup by
+     *  definition: skip the hasPowerup round trip (one call per IncRem on a load). */
+    knownTagged?: boolean;
+  }
 ): Promise<IncrementalRem | null> => {
   if (!r) {
     return null;
@@ -663,7 +692,7 @@ export const getIncrementalRemFromRem = async (
   // from the cache/list — that is exactly what made interval-0 (today-referenced)
   // rems disappear. We gate on the powerup and fall back to "due now" instead of
   // returning null; null is reserved for rems that genuinely aren't incremental.
-  if (!(await r.hasPowerup(powerupCode))) {
+  if (!opts?.knownTagged && !(await r.hasPowerup(powerupCode))) {
     return null;
   }
 
@@ -1014,7 +1043,21 @@ async function firstAddedReference(
   }
 }
 
-export async function initIncrementalRem(plugin: ReactRNPlugin, rem: PluginRem, options?: { skipFlagManagement?: boolean, explicitParentId?: string, skipInitialCascade?: boolean, deferCacheUpdate?: boolean }) {
+export async function initIncrementalRem(plugin: ReactRNPlugin, rem: PluginRem, options?: {
+  skipFlagManagement?: boolean,
+  explicitParentId?: string,
+  skipInitialCascade?: boolean,
+  deferCacheUpdate?: boolean,
+  /** The priority to start with, instead of the inherited one or the default. */
+  priority?: number,
+  /** The first repetition's date, instead of today + the Initial Interval (bulk imports spread them out). */
+  nextRepDate?: Date,
+  /**
+   * False leaves the creation out of the Incremental history list: a bulk
+   * import would flood it, and its parallel writes would race on the list.
+   */
+  recordCreation?: boolean,
+}) {
   const isAlreadyIncremental = await rem.hasPowerup(powerupCode);
 
   if (!isAlreadyIncremental) {
@@ -1044,7 +1087,8 @@ export async function initIncrementalRem(plugin: ReactRNPlugin, rem: PluginRem, 
       const initialInterval = initialIntervalSetting || 0;
       const defaultPriority = Math.min(100, Math.max(0, defaultPrioritySetting || 10));
 
-      const nextRepDate = new Date(Date.now() + (initialInterval * 24 * 60 * 60 * 1000));
+      const nextRepDate = options?.nextRepDate ?? new Date(Date.now() + (initialInterval * 24 * 60 * 60 * 1000));
+      const firstRepIsToday = dayjs(nextRepDate).isSame(dayjs(), 'day');
 
       // The inherited-priority walk runs in parallel with the next-rep daily-doc
       // lookup. The "today" reference, however, must NOT share a Promise.all with
@@ -1063,7 +1107,9 @@ export async function initIncrementalRem(plugin: ReactRNPlugin, rem: PluginRem, 
       // getIncrementalRemFromRem returns null and the rem vanishes from the plugin
       // entirely). defaultPriority above has always been clamped; this was not.
       const [rawInitialPriority, dateRef] = await Promise.all([
-        getInitialPriority(plugin, rem, defaultPriority, options?.explicitParentId),
+        options?.priority !== undefined
+          ? Math.min(100, Math.max(0, options.priority))
+          : getInitialPriority(plugin, rem, defaultPriority, options?.explicitParentId),
         getDailyDocReferenceForDate(plugin, nextRepDate),
       ]);
       if (!dateRef) {
@@ -1071,7 +1117,7 @@ export async function initIncrementalRem(plugin: ReactRNPlugin, rem: PluginRem, 
       }
       const initialPriority = Math.min(100, Math.max(0, rawInitialPriority));
       const todayRef =
-        initialInterval === 0 ? dateRef : await getDailyDocReferenceForDate(plugin, new Date());
+        firstRepIsToday ? dateRef : await getDailyDocReferenceForDate(plugin, new Date());
       // FORK (2026-10-11, owner request, reproduced live): a Rem made incremental again keeps
       // the day it was first added (from its preserved history) instead of being reset to
       // today — see firstAddedReference. Awaited on its own, after todayRef, for the same
@@ -1096,7 +1142,9 @@ export async function initIncrementalRem(plugin: ReactRNPlugin, rem: PluginRem, 
         // priority popup folds in over it). Display/diagnostic only — no scheduling
         // code reads `interval` off a history entry — but it keeps the Opt+X marker
         // as informative as the Opt+Shift+X one.
-        interval: initialInterval,
+        interval: options?.nextRepDate
+          ? Math.max(0, dayjs(nextRepDate).startOf('day').diff(dayjs().startOf('day'), 'day'))
+          : initialInterval,
         // Reliable fallback for the next-rep date when this rem's Daily Doc reference
         // can't be resolved on read (covers rems made incremental without a reschedule,
         // e.g. the plain "make incremental" command, especially with initialInterval 0).
@@ -1156,7 +1204,7 @@ export async function initIncrementalRem(plugin: ReactRNPlugin, rem: PluginRem, 
         console.error('[IncRem] initial band sync failed', err);
       }
 
-      if (!hasExistingHistory) {
+      if (!hasExistingHistory && options?.recordCreation !== false) {
         // Record creation event in incremental history (fire and forget)
         addCreationToIncrementalHistory(plugin, rem._id).catch(console.error);
       }

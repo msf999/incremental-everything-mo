@@ -239,7 +239,7 @@ Happy learning! 📚✨
           * [PDF Incremental Reading Workflow](PDF-Incremental-Reading-Workflow.md)
           * [Create Incremental Rem from PDF Highlights](Create-Incremental-Rem-from-PDF-Highlights.md)
         * **Incremental Reading** with web pages.
-        * **[Incremental Video](Incremental-Video.md)**: Watch YouTube videos incrementally, create timed extracts, and auto-transcribe segments.
+        * **[Incremental Video](Incremental-Video.md)**: Watch YouTube videos and video files from your computer incrementally, in the plugin's player or RemNote's, with timed extracts, transcripts and screenshots.
         * **[IncRem-List-and-Main-View](IncRem-List-and-Main-View.md)**: Browse, filter, and manage your Incremental Rems outside the queue. Includes the Review in Editor flow and the KB Priority Distribution Graph.
         * Tips for **Incremental Writing**.
         * How to use document/folder-specific queues for **Subset Review**.
@@ -249,6 +249,8 @@ Happy learning! 📚✨
     * **Purpose:** Connect the incremental workflow to other applications.
     * **Content:**
         * **[Logos Bible Software](Logos-Bible-Software-Integration.md)**: Read Logos books incrementally — import a book, send passages as extracts and keep a bookmark with keyboard shortcuts pressed in Logos (macOS).
+        * **[Local Media Bridge](Local-Media-Bridge.md)**: Lets outside tools (scripts, an AI assistant through the RemNote MCP) insert local images that RemNote stores itself.
+        * **[Priority Bridge for Other Plugins](Priority-Bridge-for-Other-Plugins.md)**: How other plugins, such as importers, read the priority a new flashcard would inherit and set card priorities.
 
 * **7. [Utilities](Utilities.md)**
     * **Purpose:** Tools built into the plugin that support the workflow without being part of the queue itself.
@@ -257,6 +259,7 @@ Happy learning! 📚✨
         * **[Outline & Headings](Utilities-Outline-and-Headings.md)**: Restructure Outline by Headings (`roh`) for fixing flat or mis-pasted documents, and heading-level tools.
         * **[Finding & Navigating](Utilities-Finding-and-Navigating.md)**: **Find Rem — Reference or Open** (`Opt+Shift+F`) for Rems RemNote's own search can't find, source popups, and filtering a document by images.
         * **[True or False Cards](Utilities-True-or-False-Cards.md)**: Mark statements as true or false with one command; the queue shows a large ✔ / ✘ badge and a green or red answer.
+        * **[Multiple-Choice Cards](Utilities-Multiple-Choice-Cards.md)**: Scissors beside each option of a multiple-choice card, to strike options out before you answer, and a True/False answer sheet for questions that list numbered statements.
         * **[Queue Display](Utilities-Queue-Display.md)**: Hide in Queue, Remove Parent and the other powerups that control how a card's context shows in the queue.
         * **[Cleaning Up](Utilities-Cleaning-Up.md)**: delete empty Extra Card Detail Rems, audit disabled cards, and store linked images and audio in RemNote.
         * **[Under the Hood](Utilities-Under-the-Hood.md)**: infrastructure several commands rely on.

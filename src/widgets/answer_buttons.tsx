@@ -4,6 +4,7 @@ import {
   useTrackerPlugin,
   WidgetLocation,
 } from '@remnote/plugin-sdk';
+import { withHoverTips } from '../components/HoverTipLayer';
 import React, { useMemo, useRef, useState, useLayoutEffect, useEffect } from 'react';
 import * as _ from 'remeda';
 import dayjs from 'dayjs';
@@ -1527,4 +1528,6 @@ export function AnswerButtons() {
   );
 }
 
-renderWidget(AnswerButtons);
+// 10297b3 sync: upstream draws hover hints itself (HoverTipLayer) — the desktop app stopped
+// showing `title` tooltips in plugin frames in RemNote 1.29.x.
+renderWidget(withHoverTips(AnswerButtons));

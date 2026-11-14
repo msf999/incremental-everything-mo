@@ -1,5 +1,5 @@
 import { QueueItemType, ReactRNPlugin, WidgetLocation } from '@remnote/plugin-sdk';
-import { pluginIframeSelector, pageRangeWidgetId, parentSelectorWidgetId, powerupCode, priorityGraphPowerupCode, incremNotesSidebarWidgetId, enableMasteryDrillId, pluginHubWidgetId, onboardingTipsWidgetId } from '../lib/consts';
+import { pluginIframeSelector, pageRangeWidgetId, parentSelectorWidgetId, parentPickWidgetId, powerupCode, priorityGraphPowerupCode, incremNotesSidebarWidgetId, enableMasteryDrillId, pluginHubWidgetId, onboardingTipsWidgetId, cardVideoPowerupCode, mcScissorsWidgetId, mcAssertionsWidgetId } from '../lib/consts';
 import { getIESetting } from '../lib/settings';
 import { screenFittedHeight } from '../lib/utils';
 
@@ -21,7 +21,8 @@ import { screenFittedHeight } from '../lib/utils';
    the breadcrumbs, and the ~36px badge row fits inside it. The spacer moves to
    the next sibling so the card sits exactly where RemNote puts it. The width cap
    keeps the transparent iframe from swallowing clicks across the whole strip
-   when the card content scrolls under it. */
+   when the card content scrolls under it; lib/queue_beautiful_bar_fit narrows
+   it further, to the widget's reported content width. */
 const QUEUE_VARIANT_CSS = `
   .queue-beautiful-chrome-actions .rn-queue__widget-toolbar:has(> div > ${pluginIframeSelector}:is([src*="widgetName=queue_toolbar_priority&"], [src*="widgetName=no_inc_timer_indicator&"])) {
     display: none;
@@ -30,6 +31,13 @@ const QUEUE_VARIANT_CSS = `
     min-height: 0.5rem;
     flex-shrink: 0;
   }
+  /* The slot is a flex child of the queue box without shrink-0: once a revealed answer
+     overflows the box, flexbox squeezes the wrapper and its overflow:hidden clips the bar. */
+  .rn-queue__widget-below-top-bar:has(> div > ${pluginIframeSelector}[src*="widgetName=mastery_drill_queue_bar&"]) {
+    flex-shrink: 0;
+  }
+  /* In Beautiful the overlay below also covers the drill bar's right end. Both are sized to
+     the overlay's content by lib/queue_beautiful_bar_fit; the width below is the fallback. */
   .rn-queue:not(.queue-beautiful-box) ${pluginIframeSelector}[src*="widgetName=queue_beautiful_bar&"] {
     display: none;
   }
@@ -43,6 +51,37 @@ const QUEUE_VARIANT_CSS = `
   }
   .queue-beautiful-box > .rn-queue__widget-below-top-bar:has(> div > ${pluginIframeSelector}[src*="widgetName=queue_beautiful_bar&"]) + * {
     margin-top: 0.5rem;
+  }
+`;
+
+/* Keeps the Editor Review Timer in view while the document scrolls.
+
+   DocumentAboveToolbar widgets are ordinary flow content at the top of the
+   pane's scroller, so they scroll away with the title:
+
+     div#tile__document.rn-pane__body          <- the scroller (overflow-y-scroll)
+       div.w-full.h-full.relative
+         div.document-inner-container          <- overflow-hidden
+           div.fade-in-first-load.relative     <- one per widget (overflow:hidden)
+             div > iframe[data-plugin-id]
+           div.rn-document-wrapper             <- the document itself
+
+   position:sticky on the widget's wrapper is the whole fix, but a sticky box
+   sticks to its nearest ancestor with a scrolling mechanism, and overflow:hidden
+   makes .document-inner-container one (that never scrolls) — so it would stick
+   to nothing. overflow:clip clips the same way without being a scroll container,
+   which hands the sticky box to #tile__document. The wrapper is a direct child
+   of .document-inner-container, which spans the whole document, so it stays
+   pinned to the end. With no review running the widget renders nothing and the
+   pinned box is 0px tall. */
+const EDITOR_REVIEW_TIMER_STICKY_CSS = `
+  .document-inner-container:has(> .fade-in-first-load > div > ${pluginIframeSelector}[src*="widgetName=editor_review_timer&"]) {
+    overflow: clip !important;
+  }
+  .document-inner-container > .fade-in-first-load:has(> div > ${pluginIframeSelector}[src*="widgetName=editor_review_timer&"]) {
+    position: sticky !important;
+    top: 0;
+    z-index: 100;
   }
 `;
 
@@ -74,6 +113,19 @@ const SIDEBAR_END_PADDING_CSS = `
   .fade-in-first-load.px-8 > div.px-8:has(> ${pluginIframeSelector}) {
     padding-left: 0;
     padding-right: 0;
+  }
+`;
+
+// A floating widget's wrapper is z-50, but the reader's Notes (z 12), Explain (z 20)
+// and every default popup (z 30) sit below it, in #controlled-popup-portal. While the
+// Source float is open, lift that whole portal: popups keep their order among themselves.
+// Tablets excluded: their popups are absolute, and this would clip them to the portal.
+const SOURCE_FLOATING_POPUPS_CSS = `
+  @media (pointer: fine) {
+    body:has(${pluginIframeSelector}[src*="widgetName=pdf_source_floating"]) #controlled-popup-portal {
+      position: relative;
+      z-index: 60;
+    }
   }
 `;
 
@@ -222,7 +274,7 @@ export async function registerWidgets(plugin: ReactRNPlugin) {
   plugin.app.registerWidget('priority_shield_graph', WidgetLocation.Popup, {
     dimensions: {
       width: 1075,
-      height: 1050,
+      height: screenFittedHeight(600),
     },
   });
 
@@ -251,6 +303,7 @@ export async function registerWidgets(plugin: ReactRNPlugin) {
   });
   await plugin.app.registerCSS('queue-beautiful-bar', QUEUE_VARIANT_CSS);
   await plugin.app.registerCSS('sidebar-end-padding', SIDEBAR_END_PADDING_CSS);
+  await plugin.app.registerCSS('editor-review-timer-sticky', EDITOR_REVIEW_TIMER_STICKY_CSS);
 
   // The Priority Queue popup: status, refresh/drain/refill/practise for the
   // persistent review document, and the Cooling list. Replaces the snapshot
@@ -300,8 +353,33 @@ export async function registerWidgets(plugin: ReactRNPlugin) {
     },
   });
 
+  // Warning that another Incremental or Dismissed Rem has the same web page as a
+  // source (lib/duplicate_source).
+  plugin.app.registerWidget('duplicate_source_popup', WidgetLocation.Popup, {
+    dimensions: {
+      width: 460,
+      height: 'auto',
+    },
+  });
+
+  // Incremental and Dismissed Rems grouped by the website of their source.
+  plugin.app.registerWidget('source_sites_popup', WidgetLocation.Popup, {
+    dimensions: {
+      width: 560,
+      height: 'auto',
+    },
+  });
+
   // Generic message dialog for failures the user must read (lib/message_dialog.ts).
   plugin.app.registerWidget('message_popup', WidgetLocation.Popup, {
+    dimensions: {
+      width: 420,
+      height: 'auto',
+    },
+  });
+
+  // Fallback for lib/clipboard.ts when the index iframe cannot write the clipboard.
+  plugin.app.registerWidget('copy_text_popup', WidgetLocation.Popup, {
     dimensions: {
       width: 420,
       height: 'auto',
@@ -326,9 +404,12 @@ export async function registerWidgets(plugin: ReactRNPlugin) {
     },
   });
 
-  plugin.app.registerWidget('video_debug', WidgetLocation.Popup, {
+  // The video that explains a card (Link Local Video as Card Extra). The slot
+  // is mounted only after Show Answer, where Extra Card Details show.
+  plugin.app.registerWidget('card_video', WidgetLocation.FlashcardExtraDetail, {
+    powerupFilter: cardVideoPowerupCode,
     dimensions: {
-      width: '500px',
+      width: '100%',
       height: 'auto',
     },
   });
@@ -341,7 +422,23 @@ export async function registerWidgets(plugin: ReactRNPlugin) {
     dimensions: { height: 'auto', width: '100%' },
   });
 
-  // Register incremental rem counter widget below document title
+  // Import Local Videos: opened by its command after the helper's folder dialog.
+  plugin.app.registerWidget('local_video_import', WidgetLocation.Popup, {
+    dimensions: { width: 480, height: 'auto' },
+  });
+
+  // The timer's controls over RemNote's video page; opened by lib/video_review_bar.ts.
+  plugin.app.registerWidget('video_review_bar', WidgetLocation.FloatingWidget, {
+    dimensions: { height: 'auto', width: 'auto' },
+  });
+
+  // Shows that a window follows the queue, with its controls; opened by lib/follow_queue_sources.ts.
+  plugin.app.registerWidget('follow_queue_bar', WidgetLocation.FloatingWidget, {
+    dimensions: { height: 'auto', width: 'auto' },
+  });
+
+  // Register incremental rem counter widget below document title. It also
+  // hosts a local video's player (components/LocalVideoEditorPlayer).
   plugin.app.registerWidget('inc_rem_counter', WidgetLocation.DocumentBelowTitle, {
     dimensions: { height: 'auto', width: '100%' },
   });
@@ -361,9 +458,33 @@ export async function registerWidgets(plugin: ReactRNPlugin) {
     dimensions: { height: 'auto', width: 620 },
   });
 
-  // Register parent selector popup for creating rems under incremental rems
+  // Import the file written by scripts/export_scheduler_cards.py
+  plugin.app.registerWidget('import_scheduler_cards', WidgetLocation.Popup, {
+    dimensions: { height: 'auto', width: 520 },
+  });
+
+  // Register parent selector popup for creating rems under incremental rems.
+  // The height follows the screen; keep it in sync with the container height in
+  // widgets/parent_selector.tsx, whose tree list absorbs the difference.
   plugin.app.registerWidget(parentSelectorWidgetId, WidgetLocation.Popup, {
-    dimensions: { height: 850, width: 400 },
+    dimensions: { height: screenFittedHeight(560), width: 400 },
+  });
+
+  // "Pick in editor" card (lib/parent_pick.ts): floats over the editor while a
+  // new Rem waits for the user to confirm a parent there.
+  plugin.app.registerWidget(parentPickWidgetId, WidgetLocation.FloatingWidget, {
+    dimensions: { height: 'auto', width: 340 },
+  });
+
+  // Multiple-choice scissors (lib/mc_scissors.ts): one per option of a native
+  // multiple-choice card, pinned beside it by CSS anchor positioning.
+  plugin.app.registerWidget(mcScissorsWidgetId, WidgetLocation.FloatingWidget, {
+    dimensions: { height: 28, width: 28 },
+  });
+  // Its True/False answer sheet: one column, pinned beside the question.
+  plugin.app.registerWidget(mcAssertionsWidgetId, WidgetLocation.FloatingWidget, {
+    // Its height comes from host CSS (the options' spacing), not from its content.
+    dimensions: { height: 120, width: 58 },
   });
 
   plugin.app.registerWidget('priority_review_graph', WidgetLocation.UnderRemEditor, {
@@ -501,8 +622,37 @@ export async function registerWidgets(plugin: ReactRNPlugin) {
   plugin.app.registerWidget('pdf_source_popup', WidgetLocation.Popup, {
     dimensions: {
       width: 1000,
-      height: 800,
+      height: screenFittedHeight(600),
     },
+  });
+
+  // True/False: Judge by Emoji, asking first when the Rem has descendants or a card
+  // was judged by a word.
+  plugin.app.registerWidget('true_false_judge_confirm', WidgetLocation.Popup, {
+    dimensions: {
+      width: 620,
+      height: 'auto',
+    },
+  });
+
+  // Cycle Image Size: the confirmation, and the size it just set (lib/image_size_session.ts).
+  plugin.app.registerWidget('image_size_confirm', WidgetLocation.Popup, {
+    dimensions: {
+      width: 540,
+      height: 'auto',
+    },
+  });
+  // Upscale image with ChatGPT: progress, side-by-side + fidelity check, replace (lib/upscale_image.ts).
+  // Fixed, screen-fitted frame: 'auto' measures the popup before the side-by-side
+  // image has loaded, so the result spilled out of the frame. The body scrolls.
+  plugin.app.registerWidget('upscale_image_popup', WidgetLocation.Popup, {
+    dimensions: {
+      width: 960,
+      height: screenFittedHeight(640, 1100),
+    },
+  });
+  plugin.app.registerWidget('image_size_feedback', WidgetLocation.FloatingWidget, {
+    dimensions: { height: 'auto', width: 'auto' },
   });
 
   // Floating (non-blocking) variant of the Source popup — opens to the side so
@@ -515,12 +665,14 @@ export async function registerWidgets(plugin: ReactRNPlugin) {
       // EXPERIMENT: width accepts a string (per WidgetOptions type), so try a
       // viewport-relative width that adapts to screen size. If the float opens
       // as a ~48px sliver, RemNote parsed this numerically — revert to a fixed
-      // number (e.g. 1100). Height MUST stay a fixed number (PDFWebReader needs
-      // an explicit height; the type forbids a string here anyway).
+      // number (e.g. 1100). Height MUST stay a number (PDFWebReader needs an
+      // explicit height; the type forbids a string here anyway), so it is
+      // fitted to the display once at registration instead.
       width: '40vw',
-      height: 1000,
+      height: screenFittedHeight(600),
     },
   });
+  await plugin.app.registerCSS('source-floating-popups', SOURCE_FLOATING_POPUPS_CSS);
 
   // Outline Restructure preview popup (Before | After + per-rem preserve toggles).
   plugin.app.registerWidget('outline_restructure_preview', WidgetLocation.Popup, {
@@ -583,6 +735,13 @@ export async function registerWidgets(plugin: ReactRNPlugin) {
       },
     });
     plugin.app.registerWidget('mastery_drill_list', WidgetLocation.Popup, {
+      dimensions: {
+        width: 900,
+        height: screenFittedHeight(560),
+      },
+    });
+    // The bar's panels: clear confirmations and Clear Low Priority.
+    plugin.app.registerWidget('mastery_drill_panel', WidgetLocation.Popup, {
       dimensions: {
         width: 900,
         height: screenFittedHeight(560),

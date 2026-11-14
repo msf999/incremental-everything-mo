@@ -106,6 +106,42 @@ const CURVE_STROKE = {
 const strokeFor = (grade: CurveGrade) => (grade === 'good' ? CURVE_STROKE.good : CURVE_STROKE.grade);
 
 /**
+ * The comparison weights' lines: a faint overlay on the configured weights'
+ * chart, never part of it. One colour for all of them, outside the grade and
+ * retrievability palettes, so "the magenta lines" is the whole comparison. A
+ * forecast line keeps the dash length of the line it shadows but drops every
+ * other dash (gap = dash + 2 × gap), so the same dash means the same thing in
+ * both sets while the sparse rhythm sets it apart from the forecast's other
+ * dashed lines, where the colour alone was not enough. Thin and translucent, because the configured weights are
+ * what the card is really scheduled with — and they alone size the axes, so a
+ * comparison line that leaves the view is clipped rather than rescaling it.
+ */
+/** `"14 6"` → `"14 26"`: the same dash, with every other one left out. */
+function sparseDash(dash: string): string {
+    const [on, off] = dash.split(' ').map(Number);
+    return `${on} ${on + 2 * off}`;
+}
+
+const COMPARISON_COLOR = '#d946ef';
+const COMPARISON_OPACITY = 0.55;
+const COMPARISON_STROKE = {
+    history: { width: 1.2, dash: undefined as string | undefined },
+    noReview: { width: 1.2, dash: sparseDash(CURVE_STROKE.noReview.dash!) },
+    good: { width: 1.1, dash: sparseDash(CURVE_STROKE.good.dash!) },
+};
+
+/** Compact date for the comparison summary: the year only when it is not this one. */
+function formatDueDate(t: number): string {
+    const date = new Date(t);
+    const sameYear = date.getFullYear() === new Date().getFullYear();
+    return date.toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        ...(sameYear ? {} : { year: 'numeric' }),
+    });
+}
+
+/**
  * How long a legend swatch is.
  *
  * Long enough for the longest dash pattern to repeat: at 18px a `14 6` drew one
@@ -266,6 +302,8 @@ export interface ForgettingCurveChartProps {
     /** Trailing controls for the header row (e.g. a close button). */
     headerRight?: React.ReactNode;
     title?: string;
+    /** Shown right below the title. */
+    subtitle?: React.ReactNode;
 }
 
 interface TooltipEntry {
@@ -291,6 +329,7 @@ function CurveTooltip({
     const days = typeof row.days === 'number' ? row.days : null;
     const r = typeof row.r === 'number' ? row.r : null;
     const s = typeof row.s === 'number' ? row.s : null;
+    const rCmp = typeof row.rCmp === 'number' ? row.rCmp : null;
     const isFuture = t !== null && t > series.nowT;
 
     return (
@@ -326,6 +365,12 @@ function CurveTooltip({
                     <strong>{formatStabilityDays(s)}</strong>
                 </div>
             )}
+            {rCmp !== null && !isFuture && (
+                <div style={{ color: COMPARISON_COLOR }}>
+                    Comparison: <strong>{rCmp.toFixed(1)}%</strong>
+                    {typeof row.sCmp === 'number' && <> · S {formatStabilityDays(row.sCmp)}</>}
+                </div>
+            )}
             {isFuture && (
                 <div className="mt-1 pt-1 rn-clr-border-opaque border-t">
                     {typeof row.noReview === 'number' && (
@@ -342,6 +387,20 @@ function CurveTooltip({
                             </div>
                         );
                     })}
+                    {(typeof row.noReviewCmp === 'number' || typeof row.goodCmp === 'number') && (
+                        <div className="mt-1 pt-1 rn-clr-border-opaque border-t" style={{ color: COMPARISON_COLOR }}>
+                            {typeof row.noReviewCmp === 'number' && (
+                                <div>
+                                    Comparison, if not reviewed: <strong>{row.noReviewCmp.toFixed(1)}%</strong>
+                                </div>
+                            )}
+                            {typeof row.goodCmp === 'number' && (
+                                <div>
+                                    Comparison, Good: <strong>{row.goodCmp.toFixed(1)}%</strong>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             )}
         </div>
@@ -430,7 +489,17 @@ function StabilityTooltip({
             : rowWithStability && typeof rowWithStability.s === 'number'
               ? rowWithStability.s
               : null;
+    const sCmp =
+        onRep && nearest
+            ? nearest.sCmp
+            : rowWithStability && typeof rowWithStability.sCmp === 'number'
+              ? rowWithStability.sCmp
+              : null;
     const isFuture = t !== null && t > series.nowT;
+    const cmpGoodS =
+        series.comparison && nearestRow && typeof nearestRow.goodSLogCmp === 'number'
+            ? Math.pow(10, nearestRow.goodSLogCmp)
+            : null;
 
     return (
         <div
@@ -452,8 +521,18 @@ function StabilityTooltip({
                     <strong>{formatStabilityDays(s)}</strong>
                 </div>
             )}
+            {sCmp !== null && !isFuture && (
+                <div style={{ color: COMPARISON_COLOR }}>
+                    Comparison: <strong>{formatStabilityDays(sCmp)}</strong>
+                </div>
+            )}
             {isFuture && (
                 <div className="mt-1 pt-1 rn-clr-border-opaque border-t">
+                    {cmpGoodS !== null && (
+                        <div style={{ color: COMPARISON_COLOR }}>
+                            Comparison, Good: <strong>{formatStabilityDays(cmpGoodS)}</strong>
+                        </div>
+                    )}
                     {CURVE_GRADES.map((g) => {
                         const branch = series.branches.find((b) => b.grade === g);
                         if (!branch) return null;
@@ -505,6 +584,7 @@ export function ForgettingCurveChart({
     onScaleChange,
     headerRight,
     title = 'Forgetting Curve',
+    subtitle,
 }: ForgettingCurveChartProps) {
     // How wide the plot actually is, so the axis can earn more marks on a wide
     // chart than on a narrow one. The series ships ticks for an assumed width,
@@ -922,9 +1002,12 @@ export function ForgettingCurveChart({
             title="Drag across the chart to zoom, scroll to zoom at the pointer, double-click to reset"
         >
             <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
-                <h3 className="text-sm font-bold uppercase rn-clr-content-tertiary tracking-wider">
-                    {title}
-                </h3>
+                <div className="flex flex-col items-start gap-0.5">
+                    <h3 className="text-sm font-bold uppercase rn-clr-content-tertiary tracking-wider">
+                        {title}
+                    </h3>
+                    {subtitle}
+                </div>
                 <div className="flex items-center gap-2">
                     {activeZoom && (
                         <button
@@ -1040,7 +1123,31 @@ export function ForgettingCurveChart({
                     />
                     Target {series.targetPercent.toFixed(0)}%
                 </span>
+                {series.comparison && (
+                    <span className="flex items-center gap-1">
+                        <LineSwatch
+                            color={COMPARISON_COLOR}
+                            width={COMPARISON_STROKE.history.width}
+                            opacity={COMPARISON_OPACITY}
+                        />
+                        <span title="The same history replayed with the FSRS Comparison Weights from the plugin settings. Each magenta line shadows the line with the same dash length, with every other dash left out: solid = history, long dash = if not reviewed, short dash = if Good. For comparison only; the chart is scaled to your configured weights.">
+                            Comparison weights
+                        </span>
+                    </span>
+                )}
             </div>
+            {series.comparison && (
+                <div className="text-[10px] rn-clr-content-tertiary mb-1">
+                    <span style={{ color: COMPARISON_COLOR, opacity: 0.85 }}>Comparison</span> (current →
+                    comparison): stability {formatStabilityDays(series.comparison.current.stability)} →{' '}
+                    {formatStabilityDays(series.comparison.comparison.stability)} · R now{' '}
+                    {series.comparison.current.r.toFixed(0)}% → {series.comparison.comparison.r.toFixed(0)}% ·
+                    due ≈ {formatDueDate(series.comparison.current.dueT)} →{' '}
+                    {formatDueDate(series.comparison.comparison.dueT)} · next Good{' '}
+                    {formatCurveDays(series.comparison.current.goodIntervalDays)} →{' '}
+                    {formatCurveDays(series.comparison.comparison.goodIntervalDays)}
+                </div>
+            )}
 
             <ResponsiveContainer width="100%" height={height} debounce={50}>
                 <ComposedChart
@@ -1157,6 +1264,52 @@ export function ForgettingCurveChart({
                         />
                     ))}
 
+                    {/* The comparison overlay — see COMPARISON_STROKE. */}
+                    {series.comparison && (
+                        <>
+                            <Line
+                                type="monotone"
+                                dataKey="rCmp"
+                                stroke={COMPARISON_COLOR}
+                                strokeWidth={COMPARISON_STROKE.history.width}
+                                strokeOpacity={COMPARISON_OPACITY}
+                                dot={false}
+                                activeDot={false}
+                                isAnimationActive={false}
+                                connectNulls={false}
+                                name="Comparison"
+                            />
+                            <Line
+                                type="monotone"
+                                dataKey="noReviewCmp"
+                                stroke={COMPARISON_COLOR}
+                                strokeWidth={COMPARISON_STROKE.noReview.width}
+                                strokeDasharray={COMPARISON_STROKE.noReview.dash}
+                                strokeOpacity={COMPARISON_OPACITY}
+                                dot={false}
+                                activeDot={false}
+                                isAnimationActive={false}
+                                connectNulls
+                                name="Comparison, if not reviewed"
+                            />
+                            {grades.length > 0 && (
+                                <Line
+                                    type="monotone"
+                                    dataKey="goodCmp"
+                                    stroke={COMPARISON_COLOR}
+                                    strokeWidth={COMPARISON_STROKE.good.width}
+                                    strokeDasharray={COMPARISON_STROKE.good.dash}
+                                    strokeOpacity={COMPARISON_OPACITY}
+                                    dot={false}
+                                    activeDot={false}
+                                    isAnimationActive={false}
+                                    connectNulls
+                                    name="Comparison, Good"
+                                />
+                            )}
+                        </>
+                    )}
+
                     {/* Declared after the series so it paints over them: it is a
                         marker for reading the chart against, and a curve running
                         across its label makes the label the thing being read. */}
@@ -1231,6 +1384,36 @@ export function ForgettingCurveChart({
                                 connectNulls
                             />
                         ))}
+
+                        {series.comparison && (
+                            <>
+                                <Line
+                                    type="stepAfter"
+                                    dataKey="sLogCmp"
+                                    stroke={COMPARISON_COLOR}
+                                    strokeWidth={COMPARISON_STROKE.history.width}
+                                    strokeOpacity={COMPARISON_OPACITY}
+                                    dot={false}
+                                    activeDot={false}
+                                    isAnimationActive={false}
+                                    connectNulls={false}
+                                />
+                                {grades.length > 0 && (
+                                    <Line
+                                        type="linear"
+                                        dataKey="goodSLogCmp"
+                                        stroke={COMPARISON_COLOR}
+                                        strokeWidth={COMPARISON_STROKE.good.width}
+                                        strokeDasharray={COMPARISON_STROKE.good.dash}
+                                        strokeOpacity={COMPARISON_OPACITY}
+                                        dot={false}
+                                        activeDot={false}
+                                        isAnimationActive={false}
+                                        connectNulls
+                                    />
+                                )}
+                            </>
+                        )}
 
                         <Line
                             dataKey="repSLog"

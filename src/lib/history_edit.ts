@@ -202,6 +202,8 @@ export interface ExternalSessionInput {
    * backdated session never touches the schedule.
    */
   nextRepDate?: number;
+  /** Machine context for the entry, such as the web page a Companion session read. */
+  context?: IncrementalRep['context'];
 }
 
 /**
@@ -254,6 +256,7 @@ export async function addExternalSessionRep(
       eventType: 'externalRep',
       // FORK (#13): see priorityStampFor — never stamp a placeholder priority.
       ...(incRem ? priorityStampFor(incRem) : {}),
+      ...(input.context ? { context: input.context } : {}),
     },
     input.date
   );
@@ -293,6 +296,8 @@ export interface HistoryEntryPatch {
   reviewTimeSeconds?: number;
   /** New note text; empty string clears it. */
   notes?: string;
+  /** Fields merged into the entry's machine context. */
+  context?: IncrementalRep['context'];
 }
 
 /**
@@ -336,6 +341,8 @@ export async function updateHistoryEntry(
       delete updated.notes;
     }
   }
+
+  if (patch.context) updated.context = { ...updated.context, ...patch.context };
 
   const previousStamp = latestNextRepStamp(store.history);
   const next = [...store.history];

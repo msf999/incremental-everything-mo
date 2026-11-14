@@ -159,6 +159,15 @@ export async function findClosestAncestorWithAnyPriority(
   sourceType: 'IncRem' | 'Card';
   level: number;
   levelDescription: string;
+  /**
+   * False when the result is only the fallback below: the closest ancestor
+   * whose own priority is 'inherited', found after the walk reached the top
+   * without meeting a manual/incremental card priority or an Incremental Rem.
+   * Such a value has nothing left to inherit from — the anchor it was copied
+   * from was removed or moved away — so it is an orphan, and so is everything
+   * that inherits it.
+   */
+  anchored: boolean;
 } | null> {
   if (!rem) return null;
 
@@ -195,9 +204,11 @@ export async function findClosestAncestorWithAnyPriority(
     // Fetch Card Priority details
     // Hidden slot first, then the pre-migration visible one — see
     // card_priority/slot_access.ts.
-    const parentCardPriorityValue = await getRawCardPriorityString(parent);
-    const parentCardSource = await parent.getPowerupProperty(CARD_PRIORITY_CODE, SOURCE_SLOT);
-    const parentIncPriority = await getIncrementalPriorityOnly(parent);
+    const [parentCardPriorityValue, parentCardSource, parentIncPriority] = await Promise.all([
+      getRawCardPriorityString(parent),
+      parent.getPowerupProperty(CARD_PRIORITY_CODE, SOURCE_SLOT),
+      getIncrementalPriorityOnly(parent),
+    ]);
 
     const hasCardPriority = parentCardPriorityValue && (parentCardSource === 'manual' || parentCardSource === 'incremental');
     const hasIncRemPriority = parentIncPriority !== null;
@@ -215,7 +226,8 @@ export async function findClosestAncestorWithAnyPriority(
           ancestorName: await getFormattedName(),
           sourceType: 'IncRem',
           level: currentLevel,
-          levelDescription: getLevelDescription(currentLevel)
+          levelDescription: getLevelDescription(currentLevel),
+          anchored: true,
         };
       }
       // 2. Fallback to explicit Card Priority
@@ -227,7 +239,8 @@ export async function findClosestAncestorWithAnyPriority(
             ancestorName: await getFormattedName(),
             sourceType: 'Card',
             level: currentLevel,
-            levelDescription: getLevelDescription(currentLevel)
+            levelDescription: getLevelDescription(currentLevel),
+            anchored: true,
           };
         }
       }
@@ -241,7 +254,8 @@ export async function findClosestAncestorWithAnyPriority(
             ancestorName: await getFormattedName(),
             sourceType: 'Card',
             level: currentLevel,
-            levelDescription: getLevelDescription(currentLevel)
+            levelDescription: getLevelDescription(currentLevel),
+            anchored: true,
           };
         }
       }
@@ -252,7 +266,8 @@ export async function findClosestAncestorWithAnyPriority(
           ancestorName: await getFormattedName(),
           sourceType: 'IncRem',
           level: currentLevel,
-          levelDescription: getLevelDescription(currentLevel)
+          levelDescription: getLevelDescription(currentLevel),
+          anchored: true,
         };
       }
     }
@@ -283,7 +298,8 @@ export async function findClosestAncestorWithAnyPriority(
       ancestorName: truncatedName,
       sourceType: 'Card',
       level: highestInheritedAncestor.level,
-      levelDescription: getLevelDescription(highestInheritedAncestor.level)
+      levelDescription: getLevelDescription(highestInheritedAncestor.level),
+      anchored: false,
     };
   }
 

@@ -27,6 +27,14 @@ import { cardInfoBarDockCssId, cardInfoBarHeightKey, pluginIframeSelector } from
    4. when RemNote makes the card content sticky (a stacking context), lift it so the
       bar inside can still paint above the mask.
 
+   On a phone the buttons are not in the box. RemNote portals them into
+   .queue-beautiful-mobile-bottom-controls, below it, and renders no overlay and no
+   mask, so the controls height stays 0. Rules 1 and 3 would put the bar at
+   bottom: -barHeight, where the box's overflow-hidden clips it. So when the overlay
+   is missing, the band is padding at the bottom of the HOC root instead. That shrinks
+   the scroll surface, and RemNote sizes the Explanation spacer from the surface's
+   clientHeight, so the Explanation moves up. The bar is pinned inside that band.
+
    Every rule is gated on our iframe being inside the Beautiful scroll surface. If a
    RemNote update renames something, the bar falls back to its old place under the
    card. The height comes from the widget itself (cardInfoBarHeightKey), because CSS
@@ -43,13 +51,24 @@ export type DockTarget = {
   inFlowPadding: boolean;
 };
 const DEFAULT_TARGET: DockTarget = { widgetName: 'card_info_bar', inFlowPadding: true };
+const OVERLAY = '.beautiful-queue-bottom-controls-overlay';
 function dockSelectors(widgetName: string) {
   const IFRAME = `${pluginIframeSelector}[src*="widgetName=${widgetName}&"]`;
   // The innermost widget wrapper that holds our iframe.
   const WRAPPER = `.fade-in-first-load:has(${IFRAME}):not(:has(.fade-in-first-load ${IFRAME}))`;
   const ROOT = `.spacedRepetition:has(> .queue-beautiful-scroll-surface ${IFRAME})`;
-  return { IFRAME, WRAPPER, ROOT };
+  // Phone: the buttons are portaled out of the box, so the HOC renders no overlay.
+  const ROOT_WITHOUT_OVERLAY = `${ROOT}:not(:has(> ${OVERLAY}))`;
+  return { IFRAME, WRAPPER, ROOT, ROOT_WITHOUT_OVERLAY };
 }
+
+// Upstream's two exports, built for its own card_info_bar (the default target).
+const CARD_INFO_BAR_SELECTORS = dockSelectors(DEFAULT_TARGET.widgetName);
+/** The bar's wrapper while it is docked over the bottom of the card (lib/mc_scissors.ts
+    hides scissors whose option has slid under it). */
+export const DOCKED_CARD_INFO_BAR = `${CARD_INFO_BAR_SELECTORS.ROOT} ${CARD_INFO_BAR_SELECTORS.WRAPPER}`;
+/** What holds the answer buttons in the Beautiful queue: in the box, or below it on a phone. */
+export const QUEUE_BOTTOM_CONTROLS = [OVERLAY, '.queue-beautiful-mobile-bottom-controls'];
 
 // Before the widget reports its height. One row of the bar.
 const DEFAULT_BAR_HEIGHT = 38;
@@ -59,9 +78,12 @@ const GAP_ABOVE_BUTTONS = 12;
 const SUGGESTED_TAB_HEIGHT = 25;
 // Matches the controls' px-8 on desktop, so the bar lines up with the buttons.
 const SIDE_INSET = 32;
+// Phone: between the bar and the bottom edge of the box, and the bar's side inset.
+const PHONE_BOTTOM_GAP = 12;
+const PHONE_SIDE_INSET = 16;
 
 export function buildCardInfoBarDockCss(barHeight: number, target: DockTarget = DEFAULT_TARGET): string {
-  const { IFRAME, WRAPPER, ROOT } = dockSelectors(target.widgetName);
+  const { IFRAME, WRAPPER, ROOT, ROOT_WITHOUT_OVERLAY } = dockSelectors(target.widgetName);
   // A bar that renders nothing (no priority, IncRem queue) reserves no space.
   const band = barHeight > 0 ? barHeight + GAP_ABOVE_BUTTONS : 0;
   return `
@@ -79,13 +101,13 @@ export function buildCardInfoBarDockCss(barHeight: number, target: DockTarget = 
   ${ROOT} {
     contain: layout;
   }
-  ${ROOT} > .beautiful-queue-bottom-controls-overlay .spaced-repetition__bottom {
+  ${ROOT} > ${OVERLAY} .spaced-repetition__bottom {
     padding-top: ${band}px !important;
   }
   /* A graded type-in answer pre-selects a button and hangs an "↵ Enter" tab over
      it (absolute, 25px, top: -25px). On desktop that button, and only that one,
      loses its top border and corners, which is the hook to make room for the tab. */
-  ${ROOT} > .beautiful-queue-bottom-controls-overlay .spaced-repetition__bottom:has(.rn-queue__answer-btn.border-t-transparent.rounded-t-none) {
+  ${ROOT} > ${OVERLAY} .spaced-repetition__bottom:has(.rn-queue__answer-btn.border-t-transparent.rounded-t-none) {
     padding-top: ${band > 0 ? band + SUGGESTED_TAB_HEIGHT : 0}px !important;
   }
   ${ROOT} .beautiful-queue-card-content--sticky:has(${IFRAME}) {
@@ -98,6 +120,15 @@ export function buildCardInfoBarDockCss(barHeight: number, target: DockTarget = 
     bottom: calc(var(--beautiful-queue-bottom-controls-height, 0px) - ${barHeight}px);
     z-index: 10001;
     padding: 0;
+  }
+
+  ${ROOT_WITHOUT_OVERLAY} {
+    padding-bottom: ${barHeight > 0 ? barHeight + PHONE_BOTTOM_GAP : 0}px;
+  }
+  ${ROOT_WITHOUT_OVERLAY} ${WRAPPER} {
+    left: ${PHONE_SIDE_INSET}px;
+    right: ${PHONE_SIDE_INSET}px;
+    bottom: ${PHONE_BOTTOM_GAP}px;
   }
 `;
 }

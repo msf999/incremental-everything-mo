@@ -55,7 +55,9 @@ export const FORK_FEATURES = {
   referenceFinder: false,
   /** Ctrl+F7 read points (rem-position bookmarks). */
   readPoints: false,
-  /** Video debug surface (viewers stay compiled for data safety). */
+  /** Video tools: transcripts, local-video import and linking, card videos. The in-queue
+      video viewers stay (an existing video Incremental Rem still plays). Until the 10297b3
+      sync this flag gated upstream's video debug surface, which upstream has since removed. */
   videoSurface: false,
   /**
    * Debug / diagnostics / raw-slot repair commands and widgets.
@@ -121,6 +123,48 @@ export const FORK_FEATURES = {
       still picks which items start in it, and its "View in Context" still leaves it; there is
       just no way back for that item. */
   isolatedViewBackButton: false,
+
+  // ---- 10297b3 sync (2026-11-14): upstream's new subsystems, all OFF by default (the
+  // owner's standing policy: what is not needed is denied; each can be switched on here).
+  /** Flashcard-queue extras: the multiple-choice scissors and True/False answer sheet
+      (lib/mc_scissors.ts), and Recognition First (holds back cards of new concepts). */
+  flashcardQueueExtras: false,
+  /** Bridges that let OTHER plugins set card priorities and link card videos
+      (lib/external_priority_bridge.ts, lib/external_card_video_bridge.ts). */
+  pluginBridges: false,
+  /** The Chrome Companion extension's listener (lib/companion): a browser extension that
+      turns web-page selections into Incremental Rems and records reading time. */
+  chromeCompanion: false,
+  /** Duplicate-source detection: the warning when a Rem made incremental shares a web page
+      with another one, the "Incremental Rems by Website" list, and the URL index scan. */
+  duplicateSources: false,
+  /** Upstream's stall diagnostics (lib/stall_diagnostics.ts): wraps every SDK call in every
+      plugin frame and probes the bridge every 5 s, to explain frozen widgets in the console.
+      Off; switch on (and rebuild) when a freeze needs diagnosing. */
+  stallDiagnostics: false,
+  /** "Copy Rem ID" (Ctrl+Opt+I) and its fallback popup. */
+  copyRemId: false,
+  /** Upstream's CSS for RemNote's own Rem Preview popup (longer breadcrumb names). Not a
+      plugin feature — it restyles a RemNote surface. */
+  previewBreadcrumbs: false,
+  /**
+   * Upstream's warm-start Incremental Rem cache (v1.0.213, lib/incremental_rem/persistence.ts):
+   * at startup the cache is served from a copy kept in local storage, and only the Rems
+   * whose `updatedAt` moved (or that sit in a "dirty set") are read again.
+   *
+   * OFF here, so every startup reads every Incremental Rem as before (the same cost as before
+   * this sync; upstream's new 24-at-a-time reader keeps the widgets responsive meanwhile).
+   * Why: upstream's change signal for a PRIORITY write is the 'priorityChange' history entry
+   * that write appends — it moves the tagged Rem's `updatedAt`. This fork switches those
+   * entries off (`priorityChangeHistory` above), and the Priority slot itself is a child Rem,
+   * so a priority changed on another device, synced before this plugin starts listening,
+   * leaves no trace: the copy would serve the OLD priority until a sampled self-check or the
+   * weekly full read catches it. Same-device writes are covered (setIncRemPriority marks the
+   * Rem dirty), and Rotation is compared in the self-check — both fork additions — so the
+   * remaining exposure is cross-device only. Switch on together with `priorityChangeHistory`
+   * for upstream's full guarantee, or alone to accept that exposure.
+   */
+  warmStartCache: false,
 } as const;
 
 /**
@@ -296,6 +340,10 @@ const GROUPS: GateGroup[] = [
       'pin-source-quote',
       'ai-transcribe-highlight',
       'restore-highlight-before-ai',
+      // 10297b3 sync: more of the source viewer — pin every quote in a subtree, and a second
+      // window that follows the queue's pinned sources.
+      'pin-source-quotes-in-tree',
+      'follow-queue-sources',
     ],
     widgets: [
       'page-range',
@@ -305,9 +353,16 @@ const GROUPS: GateGroup[] = [
       'pdf_source_floating',
       'image_scan_popup',
       'pin_source_views_popup',
+      'follow_queue_bar', // 10297b3 sync
     ],
     menuItems: ['pdf_control_panel_menuitem'],
-    css: ['pdf-inc-highlight-styling', 'highlight-priority-band-badges', 'has-image-tag-hide', 'pin-reference-styling'],
+    css: [
+      'pdf-inc-highlight-styling',
+      'highlight-priority-band-badges',
+      'has-image-tag-hide',
+      'pin-reference-styling',
+      'source-floating-popups', // 10297b3 sync: lifts the floating Source window's popups
+    ],
   },
   {
     enabled: FORK_FEATURES.readPoints,
@@ -325,10 +380,11 @@ const GROUPS: GateGroup[] = [
       'migrate-card-priority-hidden-slot',
       'undo-card-priority-hidden-slot',
       'hideFrontExtrasCmd', // Hide Front Extras: a flashcard-only queue-display tweak
+      'import-scheduler-cards', // 10297b3 sync: FSRS data import for the card statistics
     ],
     // flashcard_repetition_history: the card history popup (Forgetting Curve, FSRS
     // table) — denied 2026-10-10; repetition_history.tsx hides the button that opened it.
-    widgets: ['card_info_bar', 'batch_card_priority', 'flashcard_repetition_history'],
+    widgets: ['card_info_bar', 'batch_card_priority', 'flashcard_repetition_history', 'import_scheduler_cards'],
     menuItems: ['batch_card_priority_menuitem'],
     css: ['incremental-everything-card-info-bar-dock'],
   },
@@ -351,7 +407,8 @@ const GROUPS: GateGroup[] = [
     enabled: FORK_FEATURES.upstreamQueueToolbarPriority,
     // queue_beautiful_bar carries the same badge in RemNote's Beautiful queue variant.
     widgets: ['queue_toolbar_priority', 'queue_beautiful_bar'],
-    css: ['queue-beautiful-bar'],
+    // + the stylesheet that sizes the Beautiful queue's corner strip to that badge (10297b3 sync).
+    css: ['queue-beautiful-bar', 'incremental-everything-queue-beautiful-bar-fit'],
   },
   {
     enabled: FORK_FEATURES.clozeTools,
@@ -364,8 +421,10 @@ const GROUPS: GateGroup[] = [
       'trueFalseFalseCmd',
       'trueFalseConvertTagsCmd',
       'trueFalseClearCmd',
+      'trueFalseJudgeCmd', // 10297b3 sync: Judge by Emoji
     ],
-    css: ['true-false-cards', 'true-false-cluster-card'],
+    widgets: ['true_false_judge_confirm'],
+    css: ['true-false-cards', 'true-false-cluster-card', 'true-false-bare-answer'],
   },
   {
     enabled: FORK_FEATURES.outlineTools,
@@ -398,8 +457,18 @@ const GROUPS: GateGroup[] = [
   },
   {
     enabled: FORK_FEATURES.videoSurface,
-    commands: ['debug-video'],
-    widgets: ['video_debug'],
+    // 10297b3 sync: upstream removed its video debug surface ('debug-video', 'video_debug' —
+    // webpack.config.js asserts a source file for every denied widget, so they had to go from
+    // here) and rebuilt Incremental Video. Its new commands and popups are denied; the players
+    // the queue shows for an existing video Incremental Rem are not widgets and stay.
+    commands: [
+      'add-video-transcript',
+      'add-video-transcript-audio',
+      'import-local-videos',
+      'link-local-video',
+      'link-local-video-card-extra',
+    ],
+    widgets: ['card_video', 'local_video_import'],
   },
   {
     enabled: FORK_FEATURES.debugTools,
@@ -451,12 +520,39 @@ const GROUPS: GateGroup[] = [
   },
   {
     enabled: FORK_FEATURES.mediaTools,
-    commands: ['localize-external-media', 'localize-external-media-tree', 'cycle-image-size'],
+    // 10297b3 sync: + the ChatGPT image upscaler, and Cycle Image Size's confirmation popup
+    // and feedback bar. The Local Media Bridge's poller is guarded on this flag in index.tsx.
+    commands: ['localize-external-media', 'localize-external-media-tree', 'cycle-image-size', 'upscale-image-chatgpt'],
+    widgets: ['upscale_image_popup', 'image_size_confirm', 'image_size_feedback'],
   },
   {
     enabled: FORK_FEATURES.editorReviewTimer,
     commands: ['review-increm-in-editor'],
-    widgets: ['editor_review', 'editor_review_timer'],
+    // 10297b3 sync: + the timer's floating bar over RemNote's video page, and the two
+    // stylesheets that pin the timer and move RemNote's sticky headers below it.
+    widgets: ['editor_review', 'editor_review_timer', 'video_review_bar'],
+    css: ['editor-review-timer-sticky', 'incremental-everything-editor-review-timer-headers'],
+  },
+  // ---- 10297b3 sync: upstream's new subsystems (flags above) ----
+  {
+    enabled: FORK_FEATURES.flashcardQueueExtras,
+    commands: ['recognition-first-release-all'],
+    widgets: ['mc_scissors', 'mc_assertions'],
+    css: ['mc-scissors-anchors', 'mc-scissors-strike', 'mc-assertions-sheet'],
+  },
+  {
+    enabled: FORK_FEATURES.duplicateSources,
+    commands: ['incremental-rems-by-website'],
+    widgets: ['source_sites_popup', 'duplicate_source_popup'],
+  },
+  {
+    enabled: FORK_FEATURES.copyRemId,
+    commands: ['copy-rem-id'],
+    widgets: ['copy_text_popup'],
+  },
+  {
+    enabled: FORK_FEATURES.previewBreadcrumbs,
+    css: ['preview-breadcrumbs'],
   },
 ];
 
@@ -515,6 +611,7 @@ const FORK_COMMAND_OVERRIDES: Record<
   },
   'preserve-history-and-remove': { name: 'Delete Rem, Keep Study History' },
   'cancel-no-inc-rem-timer': { name: 'Cancel Queue Pause Timer' },
+  'refresh-increm-cache': { name: 'Refresh Rem Cache' }, // 10297b3 sync: de-stutter
   'quick-increase-priority': {
     name: 'Make Less Important',
     description:

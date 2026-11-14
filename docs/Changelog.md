@@ -2,6 +2,734 @@
 
 This page documents the major changes and improvements for each version of the Incremental RemNote plugin.
 
+## v1.0.213 - November 10th, 2026
+
+### ⚡ Improved
+
+**Startup**: The Incremental Rem cache now loads from a copy saved on your device, re-reading only the IncRems that changed (39 s → 2.4 s on 6,583 IncRems), so the plugin's widgets no longer freeze while RemNote starts.
+
+📖 [How the IncRem cache is loaded](IncRem-Scheduler.md#increm-startup-cache)
+
+## v1.0.212 - November 10th, 2026
+
+### ✨ New
+
+**Stall diagnostics**: When every plugin widget freezes for a while, the console now records how long, what the plugin was doing, and whether the wait was on the plugin or on RemNote.
+
+📖 [Plugin widgets freeze or vanish for a while](Troubleshooting.md#stall-diagnostics)
+
+## v1.0.211 - November 9th, 2026
+
+### ✨ New
+
+**Copy Rem ID** (`Ctrl+Opt+I`, `id`): Copies the ID of the focused Rem, or of each selected Rem, to the clipboard, ready to hand to an AI assistant through the RemNote MCP.
+
+📖 [Copy Rem ID](Utilities-Finding-and-Navigating.md#copy-rem-id)
+
+## v1.0.210 - November 9th, 2026
+
+### ✨ New
+
+**Upscale image with ChatGPT** (`upi`): Regenerates the focused Rem's figure at a higher resolution with ChatGPT's image model, through the Local Media Bridge helper and the Codex CLI signed in with your ChatGPT plan. A popup shows the original beside the result, with an automatic check for changed lines, colours and words, and zoomed views of every region that changed. **Replace image** swaps it into the Rem in place, keeping the caption and display size.
+
+📖 [Upscale an image with ChatGPT](Local-Media-Bridge.md#upscale)
+
+## v1.0.206 - November 9th, 2026
+
+### ✨ New
+
+**Local Media Bridge**: Besides storing images, the helper can now ask the plugin to move rems, remove tags (Extra Card Detail and other built-in powerups included), copy a rem's images to files, and make rems Incremental with a given priority — the operations the RemNote MCP lacks, done by the plugin itself.
+
+📖 [Rem operations](Local-Media-Bridge.md#operations)
+
+## v1.0.205 - November 8th, 2026
+
+### 🐛 Fixed
+
+**AI Transcription of PDF Highlights**: **✨** on a larger highlight that starts in a bold heading now also merges the smaller highlights inside it, which stayed separate before.
+
+📖 [A larger highlight over earlier ones](AI-Transcription-of-PDF-Highlights.md#absorb)
+
+## v1.0.204 - November 7th, 2026
+
+### ⚡ Improved
+
+**Multiple-Choice Cards**: The scissors of an option that has slid under the answer buttons now slide under with it, instead of showing beside the buttons.
+
+### 🐛 Fixed
+
+**Multiple-Choice Cards**: In the Android app, the scissors and the True/False answer sheet now sit beside the card instead of stacked at the top right of the screen.
+
+**Multiple-Choice Cards**: The True/False answer sheet now also appears when the statements are numbered with a dash (`I- `, `II- `).
+
+📖 [Scissors](Utilities-Multiple-Choice-Cards.md#scissors) · [True/False answer sheet](Utilities-Multiple-Choice-Cards.md#answer-sheet)
+
+## v1.0.202 - November 6th, 2026
+
+### ✨ New
+
+**Scheduler**: Added **Ignore Same-Day Reviews in Scheduling** (on by default): a second review the same day, before the item is due again, keeps the next review date and counts once, so an Editor Review or a Companion session no longer pushes the Saturating Curve a step or multiplies the interval twice. Its time is still recorded, and the history marks it 🔁 *same day*.
+
+### 🐛 Fixed
+
+**Scheduler**: A Reschedule in the editor or a date edit right after a review no longer takes that review out of the Saturating Curve's count.
+
+📖 [Same-day reviews](IncRem-Scheduler.md#same-day-reviews)
+
+## v1.0.201 - November 6th, 2026
+
+### ⚡ Improved
+
+**Repetition History**: Reviews involving the Chrome Companion now say so under the row: 🌐 *Read in the Chrome Companion*, with the page's address, or 📎 *Queue, then the Chrome Companion*, with the reading measured there.
+
+### 🐛 Fixed
+
+**Chrome Companion Extension**: Recording in the Companion right after Next in the queue no longer records the reading again as a second review. Needs the Companion's new version, waiting for Google's approval in the Chrome Web Store.
+
+📖 [With the queue](Chrome-Companion-Extension.md#with-the-queue-and-the-editor-review-timer)
+
+## v1.0.200 - November 6th, 2026
+
+These need the Companion's new version, which is waiting for Google's approval in the Chrome Web Store. It updates on its own once approved.
+
+### ✨ New
+
+**Chrome Companion Extension**: Added a reading clock beside **✓ Incremental** in the panel: it counts the time you spend reading the page, pauses in a background tab or after 3 minutes without activity, and shows the total with the reviews already in the page's history.
+
+**Chrome Companion Extension**: Click the clock to record that time as a review: **Enter** lets the scheduler pick the next date, **Shift+Enter** opens the Execute Repetition popup with the minutes filled in.
+
+**Chrome Companion Extension**: A session you didn't record is offered the next time you open the panel, dated when you stopped reading, with **Keep counting** to add more to it.
+
+**Chrome Companion Extension**: The panel now shows **Dismissed** for a dismissed page, with **Make Incremental again**.
+
+### ⚡ Improved
+
+**Queue**: **Open URL** now says **Use Companion**, and a page opened with it is counted by the Companion from the start; the queue's review and the Companion's reading become one review, never two.
+
+📖 [The reading clock](Chrome-Companion-Extension.md#the-reading-clock) · [With the queue](Chrome-Companion-Extension.md#with-the-queue-and-the-editor-review-timer) · [Open URL, Use Companion](Reviewing-Items-in-the-Queue.md#open-url-use-companion)
+
+## v1.0.199 - November 6th, 2026
+
+These need the Companion's new version, which is waiting for Google's approval in the Chrome Web Store. It updates on its own once approved.
+
+### ✨ New
+
+**Chrome Companion Extension**: Selecting text now brings up a menu beside it with **Add Extract** and **Add Highlight**, instead of the button on the bar.
+
+**Chrome Companion Extension**: Added **Add Highlight** (`Opt+H`): the selection becomes a Rem in its section, as with Add Extract, but isn't made Incremental, and is highlighted yellow on the page.
+
+**Chrome Companion Extension**: The panel's header now shows **✓ Incremental** with its priority when the page's document is Incremental, and a **Make Incremental** button with a priority field when it isn't.
+
+### ⚡ Improved
+
+**Chrome Companion Extension**: An extract of several paragraphs keeps them apart with a blank line, still in one Rem, and list items and line breaks start new lines.
+
+**Chrome Companion Extension**: Added a **›** button at the right end of the bar that hides its buttons on every page, and **‹** brings them back.
+
+**Chrome Companion Extension**: Deleting an extract's Rem in the panel now removes its highlight from the page at once, without a reload.
+
+📖 [Extracts](Chrome-Companion-Extension.md#extracts) · [Add Highlight](Chrome-Companion-Extension.md#add-highlight) · [Incremental status](Chrome-Companion-Extension.md#the-pages-document-incremental-or-not) · [The bar](Chrome-Companion-Extension.md#the-bar) · [Highlights and the read point](Chrome-Companion-Extension.md#highlights-and-the-read-point)
+
+## v1.0.196 - November 5th, 2026
+
+### ✨ New
+
+**Multiple-Choice Cards**: Added scissors beside each option of RemNote's multiple-choice cards in the queue: click one to strike that option through and rule it out before you answer. On by default; turn it off in **IR Settings → Queue Display**.
+
+![A multiple-choice card in the queue with a ✂ beside each option; clicking a ✂ strikes that option through, and the answer is then picked from the options that are left](assets/mc-scissors.gif){ width="900" }
+
+**Multiple-Choice Cards**: Added a True/False answer sheet beside questions that list statements numbered I., II., III.: click a box to mark its statement T, again for F, and again to clear it, then match your verdicts to an option. On by default, in **IR Settings → Queue Display**.
+
+![A multiple-choice question that lists statements I, II and III, with a column of boxes beside it, one per statement, marked T in green or F in red; the options below say which statements are false](assets/mc-answer-sheet.png){ width="700" }
+
+📖 [Scissors](Utilities-Multiple-Choice-Cards.md#scissors) · [True/False answer sheet](Utilities-Multiple-Choice-Cards.md#answer-sheet)
+
+## v1.0.195 - November 5th, 2026
+
+### ✨ New
+
+**Local Media Bridge**: Tools outside RemNote — scripts, or an AI assistant writing through the RemNote MCP — can insert local images again, and RemNote stores its own copy. Since RemNote 1.29 an image written from outside as a `file://` link is never uploaded and shows *"Unable to find this image"*. A small helper (`scripts/media_bridge/media_bridge.py`) serves the image at a local address, and with **Settings → Integrations → Local Media Bridge** on, the plugin runs **Store linked images & audio in RemNote** on the rems the tool names. A toast confirms each job. Off by default.
+
+📖 [Local Media Bridge](Local-Media-Bridge.md)
+
+**Card Videos**: Added **Link Local Video as Card Extra** (`llce`), which links a video on your computer to a flashcard: it shows under the answer after Show Answer, and above the Rem in the editor, without making anything Incremental.
+
+**Bridge for Other Plugins**: Other plugins can now link card videos too, picking a folder through Incremental RemNote's dialog, so an importer can attach to each question the video that explains it.
+
+📖 [A video that explains a card](Incremental-Video.md#card-video) · [Card videos for other plugins](Priority-Bridge-for-Other-Plugins.md#card-videos)
+
+**Chrome Companion Extension**: Incremental RemNote Companion is now published in the **[Chrome Web Store](https://chromewebstore.google.com/detail/incremental-remnote-compa/jdmbkbchgkfmipijdolpkhehjmehaagf)**: install it with **Add to Chrome**, no developer mode needed.
+
+![The Incremental RemNote Companion page in the Chrome Web Store](assets/companion-assets/companion-webstore.png){ width="700" }
+
+![A Wikipedia page read with the Companion: extracts highlighted on the page, and the page's document in the panel](assets/companion-assets/companion-usage.png){ width="900" }
+
+📖 [Chrome Companion Extension](Chrome-Companion-Extension.md#setting-it-up)
+
+### ⚡ Improved
+
+**Mastery Drill**: The regular-queue drill now opens the Queue Dashboard when **Auto-focus Queue Dashboard** is on; the popup drill still never does.
+
+📖 [Auto-focus Queue Dashboard](Plugin-Settings-Reference.md#queue-display) · [The regular-queue drill](History-Queue-Dashboard-and-Mastery-Drill.md#regular-queue-drill)
+
+### 🐛 Fixed
+
+**Queue Dashboard**: The previous card in the Live Session and the forgetting curve's **Previous** view is now the last card you saw, not one that the Mastery Drill, cooling or Recognition First skipped as it loaded.
+
+**Hover Hints**: Hover hints in plugin popups, sidebars and floating windows show reliably again in the desktop app, which stopped drawing them in RemNote 1.29.x; the plugin now draws them itself.
+
+**Dismiss**: Dismissing Incremental Rems with `Ctrl+D` in the editor (focused Rem or a selection) now leaves their priority behind as an `incremental` card priority, like every other Dismiss, so cards under them inherit it.
+
+📖 [Practiced Queues History & Live Dashboard](History-Queue-Dashboard-and-Mastery-Drill.md#practiced-queues-history-live-dashboard) · [Hover hints missing in the desktop app](Troubleshooting.md#hover-hints-desktop) · [Priority Sources](Priorities-for-Flashcards.md#priority-sources)
+
+## v1.0.194 - November 4th, 2026
+
+### ⚡ Improved
+
+**Open in a New Pane**: Shift+click an entry in the Incremental Rem, Visited Rem or Flashcard History, or the Editor Review Timer's **↗ Go to Rem**, to open the Rem in a new pane beside your document instead of replacing it.
+
+📖 [Visited Rem History](History-Queue-Dashboard-and-Mastery-Drill.md#visited-rem-history) · [Flashcard History](History-Queue-Dashboard-and-Mastery-Drill.md#flashcard-history) · [Editor Review Timer](Reviewing-Items-in-the-Editor.md#the-workflow)
+
+### 🐛 Fixed
+
+**Quick Priority**: Fixed `Ctrl+Opt+↑/↓` presses made just before rating a card sometimes changing the next card instead; if the plugin can't tell which card a press was for, it now changes nothing and says so.
+
+**Priority Popup**: Hovering **Relative** now shows the rank among IncRems only or cards only again, and the cards-only rank counts cards rather than Rems with cards, so it matches the Card Shield.
+
+📖 [Quick Priority in the queue](Prioritization-&-Sorting.md#quick-priority-in-the-queue) · [Main Priority Popup](Prioritization-&-Sorting.md#main-priority-popup)
+
+## v1.0.193 - November 4th, 2026
+
+### ✨ New
+
+**Priority Shield**: The IncRem Shield is replaced by a Priority Shield that ranks Incremental Rems and cards together by priority (dismissed Rems left out); the Card Shield is unchanged.
+
+**Priority Shield History**: The history popup now has three charts per scope, Priority Shield (IncRems + Cards), Card Shield and IncRem Shield, with days before this version rebuilt from the older histories, and two tabs when a document scope is open.
+
+**Flashcard Bar Shield**: The flashcard bar shows one shield at a time with new icons; click it to switch between the Card Shield and the Priority Shield for the rest of the queue, and choose the default in Settings.
+
+**Priority Colours**: Every priority colour in the plugin (editor, tables, highlights, queue bars and toolbar, priority popup, sidebar lists) now uses one scale, IncRems and cards ranked together, so the same priority is the same colour everywhere; the queue bars' percentages follow the shield on screen, and the popup's **Relative** ranks among IncRems + cards.
+
+📖 [IncRems and cards together](Prioritization-&-Sorting.md#unified-priority-shield) · [Priority Shield History](Prioritization-&-Sorting.md#priority-shield-history) · [Switching shields on flashcards](Prioritization-&-Sorting.md#flashcard-bar-shield) · [The priority ramp](Colour-Coding-Reference.md#the-priority-ramp)
+
+### 🐛 Fixed
+
+**Priority Popups**: Fixed `Opt+P` and `Ctrl+Opt+P` in the queue opening on a Rem you had just edited in the previewer, after closing it, instead of on the card on screen.
+
+📖 [Which Rem a popup opens on](Prioritization-&-Sorting.md#popup-target-in-queue)
+
+## v1.0.192 - November 4th, 2026
+
+### ⚡ Improved
+
+**Mastery Drill Card List**: Added **Due now**, **Cooling** and **Unplayable** filters (keys `1`–`3`), so a due card that never came up in the drill is easy to spot; due cards now sort above cooling ones.
+
+📖 [Filtering the Card List](History-Queue-Dashboard-and-Mastery-Drill.md#card-list-filters)
+
+## v1.0.191 - November 3rd, 2026
+
+### ✨ New
+
+**FSRS Comparison Weights**: Added a setting for a second set of FSRS weights, drawn as faint magenta lines over every forgetting curve, with a one-line summary of what it would change for the card on screen.
+
+**Memory Analytics and FSRS Calibration**: Added a **Use comparison weights** checkbox that recomputes them with that second set, so you can judge new weights before adopting them.
+
+**FSRS Optimizer Scripts**: Added `export_fsrs_revlog.py`, which exports every review for an external FSRS optimizer — including the same-day reviews RemNote's **Download revlog.csv** drops — and `run_fsrs_optimizer.py`, which runs fsrs-optimizer without its SM-2 comparison crash.
+
+📖 [Comparing two weight sets](Reviewing-Items-in-the-Queue.md#comparison-weights) · [Optimizing weights outside RemNote](Reviewing-Items-in-the-Queue.md#export-revlog)
+
+### 🐛 Fixed
+
+**Memory Analytics**: Fixed Retention counting the first answer of each card, which Avg pR leaves out, so R-dev read too low.
+
+**Memory Analytics and FSRS Calibration**: Same-day reviews (learning and relearning steps, Mastery Drill passes) are no longer scored, as fsrs-optimizer does; they had filled the Again row of Calibration's Grid C with predictions near 100%.
+
+📖 [Card Priority × Memory Analytics](Prioritization-&-Sorting.md#card-memory-analytics) · [FSRS Calibration](Prioritization-&-Sorting.md#fsrs-calibration)
+
+## v1.0.190 - November 3rd, 2026
+
+### ✨ New
+
+**Pin Source Quote**: Added **Quote Rems in descendants** (`Ctrl+Opt+Shift+Q`, `psqd`), which pins the source of every Quote Rem in the focused Rem and its descendants at once.
+
+📖 [Pinning every quote in a subtree](Source-Pins.md#quote-rems-in-descendants)
+
+### ⚡ Improved
+
+**Update all inherited Card Priorities**: Now finds inherited flashcard priorities whose ancestor no longer holds a priority, and asks whether to reset them to the default or leave them as they are.
+
+**Priority popup**: Now says when a flashcard's inherited priority has lost its anchor, instead of showing "inherited" with no ancestor.
+
+📖 [Inherited priorities that lost their anchor](Priorities-for-Flashcards.md#orphaned-inherited) · [How Inheritance Works](Priorities-for-Flashcards.md#inheritance)
+
+## v1.0.189 - November 2nd, 2026
+
+### ⚡ Improved
+
+**Create Cloze**: Changed `Alt+Z` and `Alt+Shift+Z` to show the new Rem and the highlight before doing the priority work, so you see the result sooner, especially when RemNote is busy.
+
+📖 [Create Cloze](IR-Flow--Reading-Extracting-and-Clozing.md#create-cloze-altz-altshiftz)
+
+## v1.0.188 - November 2nd, 2026
+
+### ⚡ Improved
+
+**Create Cloze**: Reduced the work `Alt+Z` and `Alt+Shift+Z` do on each cloze, so the new Rem and the highlight should appear sooner and quick clozes in a row hold up RemNote less.
+
+📖 [Create Cloze](IR-Flow--Reading-Extracting-and-Clozing.md#create-cloze-altz-altshiftz)
+
+## v1.0.187 - November 2nd, 2026
+
+### ✨ New
+
+**True or False Cards**: Added **Judge by Emoji** (`Ctrl+Opt+Shift+J`, `tfj`), which marks question cards without clozes as true or false from the mark on their back (✅ ✔️ ☑️ ✓ or ❌ ✖️), on a selection or on a Rem and its descendants; cards with only the word true, false, verdadeiro/a or falso/a are listed for you to confirm.
+
+📖 [Judge by Emoji](Utilities-True-or-False-Cards.md#judge-by-emoji)
+
+## v1.0.186 - November 2nd, 2026
+
+### ✨ New
+
+**Follow the Queue**: Added a mode that makes a second RemNote window show the sources pinned on the cards you practice in the first, up to 4 at a time, each scrolled to its first pin. Start it from the Source viewer's new **🧭 Follow the Queue in another window** button during a queue, or by running **Follow the Queue's Sources in This Window** in the second window. A small bar there shows it's on, with **Scroll to Highlight** and **Stop**.
+
+📖 [Follow the queue](Utilities-Finding-and-Navigating.md#follow-the-queue)
+
+**Chrome Companion Extension**: Added support for a new Chrome extension that turns text selected on web pages into Incremental Rems, with a priority per extract, highlights that stay on the page and stay separate per knowledge base, read points, and sections imported from the page's headings.
+
+![Extracts marked blue on a Wikipedia page, and the same text in the panel with its image and LaTeX imported](assets/companion-assets/extracted-image-latex.png){ width="900" }
+
+![The priority field below a selected passage, with 16 typed in](assets/companion-assets/priority-set.png){ width="500" }
+
+![A page's headings imported as nested Rems in the panel, matching the page's contents](assets/companion-assets/headings-imported.png){ width="900" }
+
+📖 [Chrome Companion Extension](Chrome-Companion-Extension.md)
+
+## v1.0.184 - November 1st, 2026
+
+### ✨ New
+
+**Incremental Rems**: Added a warning when a Rem you are making Incremental has the same web page as a source as another Incremental or Dismissed Rem, with the choice to open that Rem instead.
+
+📖 [Duplicate web page warning](Getting-Started.md#duplicate-web-page-warning)
+
+**Incremental Website Rems list**: Added Incremental Rems by Website, a list of your Incremental and Dismissed Rems grouped by the website of their source.
+
+![The Incremental Rems by Website popup, listing websites with their Incremental and Dismissed counts](assets/increms-by-website.png){ width="500" }
+
+📖 [Incremental Rems by Website](Utilities-Finding-and-Navigating.md#incremental-rems-by-website)
+
+## v1.0.183 - November 1st, 2026
+
+### ✨ New
+
+**Queue**: Added Recognition First, an optional setting that starts new bidirectional concepts with recognizing the term, and begins practice of defining it only once you have learned that.
+
+📖 [Recognition First](Priority-Review-Document.md#recognition-first)
+
+## v1.0.182 - October 31st, 2026
+
+### ⚡ Improved
+
+**Queue**: Reduced the background work after each rating by updating the card priority data in batches instead of after every card.
+
+📖 [How ratings reach the cache](Priorities-for-Flashcards.md#cache-blind-spot)
+
+## v1.0.181 - October 31st, 2026
+
+### ⚡ Improved
+
+**Practiced Queues**: The Live Session now moves to the next card about twice as fast after a rating.
+
+📖 [Live Dashboard](History-Queue-Dashboard-and-Mastery-Drill.md#practiced-queues-history-live-dashboard)
+
+### 🐛 Fixed
+
+**Practiced Queues**: Fixed the Prev. Card tile showing the current card, and the first card of a queue sometimes not being counted.
+
+📖 [Live Dashboard](History-Queue-Dashboard-and-Mastery-Drill.md#practiced-queues-history-live-dashboard)
+
+## v1.0.180 - October 31st, 2026
+
+### ⚡ Improved
+
+**True or False Cards**: Answers in the queue no longer repeat the verdict with a ✅ / ❌ and now appear in a smaller, quieter type suited to long observations and quotations.
+
+📖 [What a True/False card looks like](Utilities-True-or-False-Cards.md#what-it-looks-like)
+
+## v1.0.179 - October 31st, 2026
+
+### 🐛 Fixed
+
+**Card Clusters**: Ratings inside a cluster, including its last card, now reach Flashcard History, the Mastery Drill, Practiced Queues statistics and the Card Shield.
+
+📖 [Cluster-aware recording](History-Queue-Dashboard-and-Mastery-Drill.md#flashcard-history)
+
+**Mastery Drill**: Fixed a rating going to another card of the same Rem when that card came up next, which could add a never-reviewed cloze to the drill. An entry already added this way stays until you press **Remove from Drill**.
+
+📖 [How the Mastery Drill works](History-Queue-Dashboard-and-Mastery-Drill.md#how-it-works)
+
+## v1.0.178 - October 30th, 2026
+
+### ✨ New
+
+**Open in Another Window**: The Source viewer's new button shows the PDF or article in another RemNote window, at the highlight. If no other window is open, press `⌘⇧N` / `Ctrl+Shift+N` within a minute and the new window opens it. Desktop app only.
+
+📖 [Open in another window](Utilities-Finding-and-Navigating.md#open-in-another-window)
+
+## v1.0.177 - October 30th, 2026
+
+### 🐛 Fixed
+
+**Floating Source Window**: Pressing `Esc` while typing in a highlight's Notes no longer closes the window; it takes a second `Esc`.
+
+📖 [Floating window](Utilities-Finding-and-Navigating.md#floating-window-interaction-closing)
+
+## v1.0.176 - October 30th, 2026
+
+### 🐛 Fixed
+
+**Open Source in Popup / Floating Window**: Now also opens PDF Text Reader highlights and web-article highlights, which it was rejecting as "not a PDF/HTML source".
+
+📖 [What it opens](Utilities-Finding-and-Navigating.md#what-it-opens)
+
+**Floating Source Window**: The highlight's Notes, Explain and other popups now appear on top of the window instead of behind it, and highlights can still be clicked after you drag the window.
+
+📖 [Floating window](Utilities-Finding-and-Navigating.md#floating-window-interaction-closing)
+
+## v1.0.175 - October 30th, 2026
+
+### ✨ New
+
+**Other Schedulers**: Cards on a scheduler other than the Global Default can now be labelled and left out of Card Analytics and FSRS Calibration, using a list created by a script on your computer.
+
+📖 [Cards on other schedulers](Reviewing-Items-in-the-Queue.md#cards-on-other-schedulers)
+
+**Flashcard Repetition History**: List and set cards now show why the card is due, what it will test next, and how each item is doing, and their history rows show each item's score.
+
+📖 [The Items panel](Reviewing-Items-in-the-Queue.md#multi-line-items-panel)
+
+### ⚡ Improved
+
+**FSRS Settings**: FSRS Global Weights and Requested Retention are now saved for each knowledge base, and a script can fill them from your Global Default Scheduler. A secondary knowledge base now uses the FSRS defaults until you set its own values, so if you pasted weights while working in one, enter them there again.
+
+📖 [Required setup](Reviewing-Items-in-the-Queue.md#required-setup-fsrs-weights) · [Import your scheduler data](Reviewing-Items-in-the-Queue.md#import-scheduler-data)
+
+**FSRS Figures**: Difficulty, Stability and the per-grade forecasts now match RemNote's own FSRS exactly, when the plugin's weights match the card's scheduler.
+
+📖 [How accurate the figures are](Reviewing-Items-in-the-Queue.md#how-accurate-the-figures-are)
+
+**List and Set Cards**: Partial repetitions no longer count toward the main card in the FSRS figures, the Forgetting Curve, FSRS Calibration and Card Analytics retention, as in RemNote; they still count as reps and time.
+
+📖 [Partial list and set cards](Reviewing-Items-in-the-Queue.md#partial-list-and-set-cards)
+
+**Cycle Image Size**: Now also resizes images you have already sized, after a confirmation with thumbnails, and *Original* puts your sizes back. It also asks before resizing more than 5 images (adjustable in Settings), adds a *Small* size, and shows the size set in a small clickable bar instead of a toast.
+
+📖 [Cycle Image Size](Utilities-Cleaning-Up.md#cycle-image-size)
+
+## v1.0.174 - October 29th, 2026
+
+### ✨ New
+
+**Floating Windows**: The floating Source window (`Opt+Shift+O`) and the Find Rem picker (`Opt+Shift+F`) can now be moved by dragging their header; the Source window reopens where you left it.
+
+📖 [Floating Source window](Utilities-Finding-and-Navigating.md#floating-window-interaction-closing) · [Find Rem](Utilities-Finding-and-Navigating.md#how-to-invoke)
+
+## v1.0.173 - October 29th, 2026
+
+### ✨ New
+
+**Mastery Drill**: A card rated *Hard* now waits a share of its new interval before returning to the drill (default 5%, between the Minimum Delay and a 7-day maximum), so a card sent a year out is checked from long-term memory days later instead of three hours later.
+
+📖 [Why Hard cards wait longer](History-Queue-Dashboard-and-Mastery-Drill.md#hard-card-delay)
+
+### ⚡ Improved
+
+**Priority Popups**: A priority changed with `Opt+P` or `Ctrl+Opt+P` now shows on the Card Info Bar, the queue's priority badge and the Priority Editor almost at once, instead of after up to 10 seconds.
+
+📖 [After You Save a Priority](Prioritization-&-Sorting.md#after-you-save-a-priority)
+
+**Mastery Drill**: The drill bar in the regular queue now has the popup's queue tools — the Remaining and cooling counts, List Cards, Clear Queue, Clear Low Priority and Clear Old — next to Remove from Drill.
+
+📖 [The regular-queue drill](History-Queue-Dashboard-and-Mastery-Drill.md#regular-queue-drill)
+
+**Mastery Drill**: The Old Items warning now counts a card's age from when it became ready to drill, so a card that was still cooling is never flagged as old.
+
+📖 [Queue Management](History-Queue-Dashboard-and-Mastery-Drill.md#queue-management)
+
+**Beautiful Queue**: The priority badge's area in the card's top-right corner now fits the badge, widening only while the No Inc Rem countdown shows, so clicks across the rest of the card's top edge reach the card.
+
+📖 [In the Beautiful queue variant](Plugin-Widgets-Reference.md#beautiful-queue-variant)
+
+## v1.0.172 - October 28th, 2026
+
+### ✨ New
+
+**Repair Broken References**: Added a tool to the Debug popup that repoints references showing only "Loading" (often left by importing or moving Rems between knowledge bases) to the Rems they should point at, one Rem or a whole plan at once, with an AI prompt in the docs that finds the matches in your backups.
+
+📖 [Repair Broken References](Utilities-Cleaning-Up.md#repair-broken-references)
+
+### ⚡ Improved
+
+**Open Source in Popup**: The popup and the floating window now take 80% of your screen's height instead of a fixed size, so they no longer run off a laptop screen and use the extra room on a large monitor.
+
+📖 [Height follows your screen](Utilities-Finding-and-Navigating.md#height-follows-your-screen)
+
+## v1.0.171 - October 28th, 2026
+
+### ⚡ Improved
+
+**Open Source in Popup**: The popup header (`Opt+O` / `Opt+Shift+O`) now shows the name of the PDF or article after "Source".
+
+📖 [Source name in the header](Utilities-Finding-and-Navigating.md#source-name-in-the-header)
+
+## v1.0.170 - October 27th, 2026
+
+### ⚡ Improved
+
+**Rem Preview**: The breadcrumbs at the top of the hover preview now show about 13 characters per ancestor instead of 5, and an optional Custom CSS rule widens the popup for longer ones.
+
+**Before**
+
+![The Rem Preview popup before the fix, its breadcrumbs cut to "SH4... › High... › Pag...", outlined in red](assets/rem-preview-breadcrumb-before.png){ width="800" }
+
+**After**
+
+![The Rem Preview popup over a reference, its breadcrumbs reading "SH4M 3+ PDF › Highlights › Page 022" in full, outlined in red](assets/rem-preview-breadcrumb.png){ width="800" }
+
+📖 [Readable Breadcrumbs in Rem Preview](Utilities-Finding-and-Navigating.md#readable-breadcrumbs-in-rem-preview)
+
+## v1.0.169 - October 27th, 2026
+
+### ✨ New
+
+**Incremental Video**: The Repetition History now records where each review left the video: the time, the extract's range or the video's length, and the playback speed.
+
+📖 [Where you stopped, in the history](Incremental-Video.md#history)
+
+### ⚡ Improved
+
+**Bulk Priority**: Changing the priority of a multi-selection with `Opt+P` or `Ctrl+Opt+P` is much faster: 18 Rems now take about 12 seconds instead of several minutes.
+
+📖 [Bulk Priority for a Multi-Selection](Prioritization-&-Sorting.md#bulk-priority-for-a-multi-selection)
+
+**Priority Editor Widget**: The priority badges and the Incremental Rem counter no longer slow the editor down after each review or priority change on large knowledge bases.
+
+📖 [Priority Editor Widget](Prioritization-&-Sorting.md#priority-editor-widget)
+
+### 🐛 Fixed
+
+**Quick Priority**: Fixed `Ctrl+Opt+↑/↓` over a multi-selection sometimes skipping the flashcard-priority update under some of the selected Rems, and made it faster.
+
+📖 [Quick Priority Shortcuts](Prioritization-&-Sorting.md#quick-priority-shortcuts)
+
+## v1.0.168 - October 27th, 2026
+
+### ⚡ Improved
+
+**Transfer Incremental Data to Parent**: The confirmation now warns when the parent will use a different scheduler, and running `ttp` again on the source of an interrupted transfer finishes it.
+
+📖 [Finishing an interrupted transfer](Create-Incremental-Rem-from-PDF-Highlights.md#finish-interrupted-transfer)
+
+### 🐛 Fixed
+
+**Transfer Incremental Data to Parent**: Fixed transfers that froze the plugin midway and left the full history on both the parent and the child.
+
+📖 [Transferring an Incremental Rem to its Parent](Create-Incremental-Rem-from-PDF-Highlights.md#transfer-to-parent)
+
+## v1.0.167 - October 26th, 2026
+
+### ⚡ Improved
+
+**Editor Review Timer**: In a split view the timer now shows in one pane only (the top-left one) instead of in every pane, and moves to another pane if you close that one.
+
+📖 [Always in view](Reviewing-Items-in-the-Editor.md#timer-stays-in-view)
+
+## v1.0.166 - October 26th, 2026
+
+### ✨ New
+
+**Incremental Video**: Rebuilt from the ground up — two players for YouTube videos, extracts that resume and can be cut again, transcripts and titles by AI, and video files from your computer.
+
+![A RemNote video in the queue, in the plugin's player: the top bar with From the start, the RemNote player switch, −30s, pause, +30s, the time, speed, screenshots, transcript and Extract; the notes on the left and the video on the right](assets/YT-plugin-player.png){ width="900" }
+
+📖 [Incremental Video](Incremental-Video.md)
+
+**Two Players**: Added RemNote's own player (transcript, Highlight Moment, AI Tutor) for videos added with Upload File › YouTube URL, with a button to switch players; both resume from the same position.
+
+📖 [Two players](Incremental-Video.md#two-players)
+
+**Plugin's Video Player**: Added ±30 s, speed controls, a resume chip, a resizable notes pane and 📸 screenshots of the exact frame, with 📸✨ to transcribe what's on screen.
+
+📖 [The plugin's player](Incremental-Video.md#plugin-player)
+
+**Video Extracts**: Extracts can now be made in RemNote's player too, resume where their last review stopped, and can be cut into shorter extracts when 1.5 minutes or longer.
+
+📖 [Video Extracts](Incremental-Video.md#video-extracts)
+
+**Video Transcripts**: Transcripts are back, through the local helper — the uploader's captions, YouTube's automatic captions tidied by Claude, or the audio transcribed by Whisper on your computer — and Claude now titles each new extract from its transcript.
+
+📖 [Transcripts](Incremental-Video.md#transcripts)
+
+**Local Videos**: Added Import Local Videos (`ilv`) to turn a folder of video files into Incremental Rems, introduced one a day if you like, with the same player, extracts and transcripts (macOS desktop).
+
+📖 [Local videos](Incremental-Video.md#local-videos)
+
+**Review in Editor**: Videos now keep a player in the editor — RemNote's video page with a floating review bar, or the plugin's player under a local video's title.
+
+📖 [Reviewing in the Editor](Incremental-Video.md#review-in-editor)
+
+### ♻️ Changed
+
+**Video Transcripts**: The old transcript proxy (`yt-local-proxy.js`) was removed; if you installed it, unload its LaunchAgent and set up the helper instead.
+
+📖 [Setting up the helper for video](Incremental-Video.md#setup)
+
+### 🐛 Fixed
+
+**Plugin's Video Player**: Fixed YouTube videos showing a black player.
+
+## v1.0.164 - October 22nd, 2026
+
+### ⚡ Improved
+
+**Queue**: Next, Reschedule (`Ctrl+J`), Dismiss (`Ctrl+D`), `Cmd+→` and the Today/Tomorrow swipe now move to the next item instantly and save the review in the background.
+
+📖 [Saved in the background](Reviewing-Items-in-the-Queue.md#saved-in-the-background)
+
+**Editor Review Timer**: End Review, Next and Dismiss now move on instantly, and dismissing several selected Rems with `Ctrl+D` in the editor is much faster.
+
+📖 [The Workflow](Reviewing-Items-in-the-Editor.md#the-workflow)
+
+### 🐛 Fixed
+
+**Editor Review Timer**: Fixed Next carrying a pause, and its paused time, over to the next item.
+
+**Next Item in Queue** (`Cmd+→`): Fixed it hiding your last reading bookmark from the Scroll button on PDF items.
+
+## v1.0.163 - October 22nd, 2026
+
+### 🐛 Fixed
+
+**Cooling**: Fixed Image Occlusions made in RemNote's newer drawing editor being cooled; they are now exempt like every other Image Occlusion.
+
+📖 [Image Occlusion is never cooled](Priority-Review-Document.md#image-occlusion-is-never-cooled)
+
+## v1.0.162 - October 22nd, 2026
+
+### ⚡ Improved
+
+**Execute Repetition**: Confirm Review now closes the popup instantly and saves the repetition in the background; a priority changed there now also updates the inherited priorities of the flashcards below it.
+
+📖 [Execute Repetition](Reviewing-Items-in-the-Editor.md#key-behavior)
+
+### 🐛 Fixed
+
+**Repetition History**: Fixed slow reviews sometimes adding false ✏️ Manual Date Reset entries.
+
+## v1.0.161 - October 21st, 2026
+
+### ✨ Improved
+
+**Execute Repetition**: Start Timer now continues from the Review time you typed instead of starting from zero, as *Review in Editor* already does from the queue.
+
+📖 [Execute Repetition](Reviewing-Items-in-the-Editor.md#1-execute-repetition-command)
+
+## v1.0.159 - October 17th, 2026
+
+### ✨ Improved
+
+**Inlinize Detected List**: Now on `Ctrl+Shift+F8`; press it again to switch between bulleted items and items separated by a blank line, and fill-in blanks `( )` now count as list markers.
+
+📖 [Inlinize Detected List](Utilities-Text-and-Lists.md#inlinize-detected-list-inl)
+
+**True or False Cards**: Mark as True and Mark as False are now on `Ctrl+Shift+T` and `Ctrl+Shift+F`, in the editor and the queue.
+
+📖 [Mark as True / Mark as False](Utilities-True-or-False-Cards.md#mark-as-true-or-false)
+
+### 🐛 Fixed
+
+**Inlinize Detected List**: Fixed lists not being detected when a spaced dash follows the marker (`I - Um…`, `1 - Um…`).
+
+## v1.0.158 - October 16th, 2026
+
+### ✨ New
+
+**Priority Bridge**: Other plugins can now ask what priority a new flashcard would inherit at a given place and set card priorities, through a small messaging bridge. An importer, for example, can show you each card's inherited priority before importing and let you choose a different one; Incremental RemNote applies it as a manual priority, recorded as **Import** in the card's history.
+
+📖 [Priority Bridge for Other Plugins](Priority-Bridge-for-Other-Plugins.md)
+
+## v1.0.157 - October 15th, 2026
+
+### ✨ Improved
+
+**Answer Buttons**: Redesigned the bar so it fits on one line: every button after Next is now a compact icon button, and Scroll to Highlight / Scroll to Bookmark became **To Highlight** / **To Bookmark**, next to the other reader actions.
+
+![A PDF highlight in the queue with the redesigned answer buttons bar](assets/answer-buttons-new-design.png){ width="1000" }
+
+📖 [The Answer Buttons](Reviewing-Items-in-the-Queue.md#the-answer-buttons)
+
+### 🐛 Fixed
+
+**Queue**: Fixed documents with due Incremental Rems but no due flashcards opening on "You've finished practicing for now"; the first Incremental Rem now appears after a brief flash of that screen.
+
+**Queue**: Fixed a blank band between the PDF reader and the answer buttons in the Beautiful queue, and removed the empty space below the buttons.
+
+## v1.0.156 - October 15th, 2026
+
+### ✨ New
+
+**Create Incremental Rem**: Added **📍 Pick in editor** (`E`) to the Select Parent popup: the list closes, you put the cursor in the destination Rem in the editor and press `Opt+Shift+Enter`. A Rem outside the IncRem you are reviewing asks you to confirm first.
+
+📖 [Picking the parent in the editor](Create-Incremental-Rem-from-PDF-Highlights.md#pick-in-editor)
+
+### 🐛 Fixed
+
+**Select Parent popup**: Fixed the horizontal and vertical scrollbars; the popup now sizes itself to your screen.
+
+## v1.0.155 - October 15th, 2026
+
+### 🐛 Fixed
+
+**Card Info Bar**: Fixed the bar not showing in the Beautiful queue on phones; it is now docked at the bottom of the card, just above the answer buttons.
+
+**Card Info Bar**: Fixed unreadable black text on the bar in dark mode on iOS.
+
+![The Card Info Bar docked above the answer buttons in the Beautiful queue on an iPhone, in dark mode](assets/card-info-bar-docked-phone.jpg){ width="320" }
+
+📖 [In the Beautiful queue variant](Plugin-Widgets-Reference.md#card-info-bar-beautiful)
+
+## v1.0.153 - October 9th, 2026
+
+### ⚡ Improved
+
+**Priority colours**: The red → blue ramp now changes fastest across the top 35% of your material and flattens into blue below the 60th percentile, so high-priority items are easier to tell apart on PDF highlights, table badges, priority badges and the priority slider.
+
+📖 [More colour where it matters](Colour-Coding-Reference.md#steeper-at-the-top)
+
+### 🐛 Fixed
+
+**Editor Review Timer**: RemNote's sticky headers now appear just below the pinned timer instead of on top of it.
+
+📖 [Always in view](Reviewing-Items-in-the-Editor.md#timer-stays-in-view)
+
+## v1.0.152 - October 8th, 2026
+
+### ⚡ Improved
+
+**Editor Review Timer**: The timer bar now stays pinned to the top of the document while you scroll, instead of scrolling away with the title.
+
+📖 [Always in view](Reviewing-Items-in-the-Editor.md#timer-stays-in-view)
+
+## v1.0.151 - October 8th, 2026
+
+### 🐛 Fixed
+
+**Card Clusters**: The Priority popups (`Opt+P`, `Ctrl+Opt+P`), the Quick Priority shortcuts and the priority badge in the queue's top bar now act on the cluster sibling on screen instead of the cluster's first card.
+
+**Priority popup**: Fixed it opening in the queue for a Rem you had just selected in the editor instead of the current card.
+
+📖 [Priority in the queue, and in a Card Cluster](Priorities-for-Flashcards.md#priority-in-card-clusters)
+
 ## v1.0.150 - October 8th, 2026
 
 ### 🐛 Fixed

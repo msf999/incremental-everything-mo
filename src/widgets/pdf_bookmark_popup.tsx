@@ -1,4 +1,5 @@
 import { renderWidget, usePlugin, WidgetLocation, ReactRNPlugin } from '@remnote/plugin-sdk';
+import { withHoverTips } from '../components/HoverTipLayer';
 import React, { useState, useEffect } from 'react';
 import { getPdfInfoFromHighlight, findAllRemsForPDF, findAllRemsForHTML, findPDFinRem, findHTMLinRem, isHtmlSource, addPageToHistory, getPageHistory, PageHistoryEntry, PageRangeContext, setIncrementalReadingPosition, getIncrementalPageRange, safeRemTextToString } from '../lib/pdfUtils';
 import { incrementalQueueActiveKey, currentIncRemKey, editorReviewTimerRemIdKey } from '../lib/consts';
@@ -364,7 +365,7 @@ export function PdfBookmarkPopup() {
               backgroundColor: 'var(--rn-clr-blue, #3b82f6)', color: 'white', cursor: 'pointer',
               fontWeight: 500, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px'
             }}
-            onClick={async () => { await saveBookmark(activeQueueContext.incrementalRemId); plugin.widget.closePopup(); }}
+            onClick={async () => { if (!activeQueueContext.incrementalRemId) return; await saveBookmark(activeQueueContext.incrementalRemId); plugin.widget.closePopup(); }}
           >
             {activeContextSource === 'editor-timer'
               ? 'Update Current Editor Review Reading'
@@ -530,4 +531,4 @@ export function PdfBookmarkPopup() {
   );
 }
 
-renderWidget(PdfBookmarkPopup);
+renderWidget(withHoverTips(PdfBookmarkPopup));

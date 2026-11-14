@@ -65,7 +65,9 @@ This hold is within a session. Its counterpart across days is **cooling** in the
 
 ## The Answer Buttons
 
-Here is a breakdown of each button and its function, from left to right.
+![The answer buttons bar: Next, Reschedule, Dismiss, Priority, In Editor, New Tab and To Highlight, followed by the review-note, P Edit and help icons](assets/answer-buttons-bar.png){ width="900" }
+
+Here is a breakdown of each button and its function, from left to right. Every button after **Next** is a compact icon button — icon above, one-word label below — so the whole row fits on one line; hover over any button for its full name and shortcut.
 
 * **[Next](#next):** (Shortcut: `Cmd+Right` on Mac, `Ctrl+Right` on Windows/Linux)
 This is your primary action. Clicking "Next" marks the item as reviewed, calculates the next time you should see it based on the scheduling algorithm, and advances to the next item in your queue. The subtitle (e.g., "×1.5 in 3 days") shows the interval that will be set, preceded by a chip naming the [scheduler](IncRem-Scheduler.md#scheduler-indicator) that produced it.
@@ -83,40 +85,40 @@ This button opens a popup that gives you manual control over the item's schedule
 When you have finished processing an item and no longer wish to see it in your queue, click "Dismiss" (or press `Ctrl+D`). This permanently finishes the item by removing its `Incremental` power-up. This shortcut also works in the Editor to dismiss the focused Incremental Rem.
 
 * **[Change Priority](#change-priority):** (Shortcut: `Opt+P` / `Alt+P` for full widget and `Ctrl+Opt+P` / `Ctrl+Alt+P` for light widget)
-This opens the advanced priority popup. The label on the button itself provides rich, at-a-glance information:
+The **↕ Priority** button opens the advanced priority popup. The priority badge in the info bar below the buttons gives the at-a-glance information:
 
   * **The Number:** The Rem's absolute priority value (0-100, lower is more important).
   * **The Percentiles:** The Rem's rank within your entire Knowledge Base (`% of KB`) and within the current document (`% of Doc`).
   * **The Color:** The background color shifts from red (high priority) to blue (low priority) for an instant visual cue of its importance.
 
-* **[Review in Editor](#review-in-editor):** (Shortcut: `Ctrl+Shift+J`) *(Previously called "Review & Open")*
+* **[Review in Editor](#review-in-editor):** (Shortcut: `Ctrl+Shift+J`) *(Previously called "Review & Open"; the button reads **✎ In Editor**)*
 This is a powerful workflow tool. It performs a sequence of actions:
 
   1. It first **reviews** the item (rescheduling it) and **opens** the Rem in the editor, exiting the queue.
   2. It immediately starts an **Editor Review Timer**. When finished, clicking **"End Review"** stops the timer and routes you back to your queue document.
 This is perfect to avoid friction with the queue interface, and when an item inspires you to do more detailed work, like extensive note-taking or using other features like the AI assistant.
 
-* **Scroll to Highlight / Scroll to Bookmark:**
-This button appears for **PDF highlights, HTML highlights, and Incremental Rems with PDF sources**. 
-
-  * If you are reviewing a highlight, clicking this instantly snaps your view back to the highlight's position in the document.
-  * If you are reviewing a full PDF chapter (an Incremental Rem with a PDF source), this button acts as a **Scroll to Bookmark**. It jumps directly to your last recorded reading position within that chapter/PDF/IncRem.
-  * *See the [PDF-Incremental-Reading-Workflow#4-pdf-highlight-toolbar-utilities](PDF-Incremental-Reading-Workflow.md) guide to learn how bookmark positions are automatically tracked when extracting highlights.*
-  * *See also: **[Create-Incremental-Rem-from-PDF-Highlights](Create-Incremental-Rem-from-PDF-Highlights.md)** for how to turn highlights into active learning material.*
-
 * **🔖 Read point (hybrid PDF/HTML IncRems):**
-This button appears when a **PDF/HTML IncRem also has a [read point](Reviewing-Items-in-the-Editor.md#read-points-for-rem-type-incremental-rems)** set on one of its own descendant rems (a "hybrid" — a reading source *and* its own outline content). Because the in-queue reader can't jump into the outline without leaving the queue, clicking it shows a **confirmation dialog** with the read point's rem name; on confirm it behaves like **[Review in Editor](#review-in-editor)** — it records a review for the current IncRem and starts its timer — but opens the **read-point descendant** in the editor so you can resume reading there. A small **`• latest`** marker appears on whichever of *Scroll to Bookmark* / *Read point* was saved most recently. (Pure Rem-type cards don't need this button — their read point is shown directly in the [read-only card](#read-point-and-status-emphasis-in-rem-type-cards).)
+This button appears when a **PDF/HTML IncRem also has a [read point](Reviewing-Items-in-the-Editor.md#read-points-for-rem-type-incremental-rems)** set on one of its own descendant rems (a "hybrid" — a reading source *and* its own outline content). Because the in-queue reader can't jump into the outline without leaving the queue, clicking it shows a **confirmation dialog** with the read point's rem name; on confirm it behaves like **[Review in Editor](#review-in-editor)** — it records a review for the current IncRem and starts its timer — but opens the **read-point descendant** in the editor so you can resume reading there. Whichever of the two was saved most recently is marked: a **`• latest`** label on this button, or a blue dot on the *To Bookmark* button. (Pure Rem-type cards don't need this button — their read point is shown directly in the [read-only card](#read-point-and-status-emphasis-in-rem-type-cards).)
 
 * **📑 View outline / 📄 Read document (hybrid toggle):**
 For the same hybrid IncRems (a **PDF/HTML reading source that also has a read point** on a descendant), a toggle appears in the **top-right corner** of the queue card. **📑 View outline** flips the card from the PDF/HTML reader to a **read-only outline view** of the IncRem — the same [ExtractViewer](#read-point-and-status-emphasis-in-rem-type-cards) used for Rem-type cards, where the read point is **emphasized and auto-scrolled into view** — *without leaving the queue*. **📄 Read document** flips back to the reader. This lets you read the document and consult your outline/notes in the same session. *(To instead make a chapter **always** open as an outline in the queue, add the **`#extractviewer`** tag — see [PDF-Incremental-Reading-Workflow#extractviewer-mode](PDF-Incremental-Reading-Workflow.md#extractviewer-mode).)*
 
-* **[Open Editor in New Tab](#open-editor-in-new-tab)**:
+* **[Open Editor in New Tab](#open-editor-in-new-tab)** (the **↗ New Tab** button):
 Clicking this button instantly opens the full source document in a new browser tab, right at the location of your highlight/PDF document/Rem. Use it to take notes of what you are reading in a PDF section, to paste highlighted extracts right there (tagging it "incremental" in the editor note rather than in the PDF highlight itself, for easier manipulation and future flashcard creation), to have access to all of RemNote's formatting tools, and to link to other ideas.
 
-* **📝 Review Note** (compact icon, next to *Open Editor*):
+* **To Highlight / To Bookmark** (scroll the reader; they do not create anything):
+These buttons appear for **PDF highlights, HTML highlights, and Incremental Rems with PDF sources**, right after *New Tab*.
+
+  * **To Highlight** (yellow, crosshair icon): if you are reviewing a highlight, clicking it instantly snaps your view back to the highlight's position in the document.
+  * **To Bookmark** (blue outline, bookmark icon): if you are reviewing a full PDF chapter (an Incremental Rem with a PDF source), it jumps directly to your last recorded reading position within that chapter/PDF/IncRem. A small blue dot in its corner means the bookmark is more recent than the read point (see *🔖 Read point* below).
+  * *See the [PDF-Incremental-Reading-Workflow#4-pdf-highlight-toolbar-utilities](PDF-Incremental-Reading-Workflow.md) guide to learn how bookmark positions are automatically tracked when extracting highlights.*
+  * *See also: **[Create-Incremental-Rem-from-PDF-Highlights](Create-Incremental-Rem-from-PDF-Highlights.md)** for how to turn highlights into active learning material.*
+
+* **📝 Review Note** (compact icon, after *New Tab* and the *To Highlight / To Bookmark* buttons):
 Toggles an inline text field to attach a short **observation to this repetition's history entry** — *"stopped mid-proof"*, *"re-read section 3 first"*, *"dismissing: superseded by newer source"*. The note is parked as you type and saved with whichever action ends the review: **Next**, **Reschedule** (`Ctrl+J`), or **Dismiss** (where it becomes the *dismissal reason*). The icon stays highlighted while a note is pending. Notes appear later in the [Repetition History popup](Plugin-Widgets-Reference.md#212-increm-repetition-history-aggregated-view), the Aggregated view, and the [Study Dashboard](Study-Dashboard.md#hierarchy-section). Each entry also gets an **automatic reading-context snapshot** (current page, page range, PDF name, last bookmark) — no typing needed for that part.
 
-* **Open URL for Web Clipper 📎** (for HTML-type Incremental Rems): When reviewing IncRems with web pages sources, this button opens the original URL in a new browser tab, allowing you to use the Clipper's side panel for additional notes and extracts, improving the experience of Incremental Reading web pages. The button features an animated design to highlight when you're reviewing web content.
+* **[Open URL · Use Companion 📎](#open-url-use-companion)** (for HTML-type Incremental Rems): opens the page in a new browser tab, to read and extract from it with the [Chrome Companion Extension](Chrome-Companion-Extension.md). The time you read there goes into this review.
 
 * **Document Notes (Sidebar):**
 When reviewing PDF or HTML Incremental Rems (including **PDF Highlights** and **HTML Highlights**), a **📝 Document Notes** icon appears in the top bar. Clicking this opens the current document in a right-sidebar widget, allowing you to view and make notes and capture thoughts side-by-side with your reading material without leaving the queue. The sidebar syncs with the active queue item automatically. For highlight IncRems, the sidebar discovers all Incremental Rems sharing the same source document and lets you pick which one's notes to view (auto-selects if there is only one).
@@ -141,7 +143,11 @@ This is a non-clickable hint that appears **only for certain card types** (like 
 ![Queue Shortcuts](assets/queue-shortcuts.png){ width="900" }
 
 
-![answer buttons bar](assets/uploaded/94b5bfab-4860-46f3-8997-bea085d8f595.png){ width="900" }
+![A PDF highlight in the queue: the reader on top, then the answer buttons bar and the priority info bar below it](assets/answer-buttons-new-design.png){ width="1000" }
+
+### Saved in the background { #saved-in-the-background }
+
+**Next**, **Reschedule**, **Dismiss** and the swipe gesture move you to the next item immediately; the review is written a moment later in the background (schedule, history entry, note, reading time). Your next item is never held up waiting for those writes, and an item you just finished is not shown again in the same session even if its new date has not landed yet. If something cannot be saved (for example, the Rem was deleted in the meantime), a dialog tells you.
 
 
 
@@ -341,7 +347,7 @@ This new button instantly opens the full source document in a new browser tab, r
 A highlight sparks a complex new idea that requires more space than a simple comment. Or you want to take notes of what you are reading in a PDF section, and paste highlighted extracts right there (tagging it "incremental" in the editor note rather than in the PDF highlight itself, for easier manipulation and future flashcard creation). Use the button to open the full editor, where you have access to all of RemNote's formatting tools, can link to other ideas, and can write extensive notes alongside the original PDF. This allows you to capture detailed thoughts without being constrained by the queue's limited interface.
 
 
-![open editor new tab button](assets/uploaded/138c8770-1786-41c8-87a5-2fb3c4e12979.png){ width="900" }
+![The answer buttons bar with an arrow pointing to the New Tab button](assets/open-editor-new-tab.png){ width="900" }
 
 
 ####  ⚙️  Related Setting: Preferred RemNote Environment
@@ -351,9 +357,11 @@ For users who primarily work on the beta version of RemNote, a new "Preferred Re
 
 ![remnote-environment](assets/uploaded/3f69d55a-75b4-4696-9a55-61969eabefa0.png){ width="750" }
 
-### Open URL to use Web Clipper 📎
+### Open URL, Use Companion 📎 { #open-url-use-companion }
 
-This button only appears for HTML-type Incremental Rems. When reviewing IncRems with web pages sources, this button opens the original URL in a new browser tab, allowing you to use the Clipper's side panel for additional notes and extracts, improving the experience of Incremental Reading web pages. The button features an animated design to highlight when you're reviewing web content.
+This button only appears for HTML-type Incremental Rems. It opens the page in a new browser tab, where you read it and add extracts with the [Chrome Companion Extension](Chrome-Companion-Extension.md). It works with the RemNote Clipper as well.
+
+With the Companion, the page's [reading clock](Chrome-Companion-Extension.md#the-reading-clock) counts from the moment the page opens. When you come back and press **Next**, the review holds the time in the queue before you clicked plus the reading the Companion measured, not the time the item sat on screen. If you recorded the session in the Companion first, Next adds the queue's minutes to it instead of making a second review. 📖 [With the queue](Chrome-Companion-Extension.md#with-the-queue-and-the-editor-review-timer)
 
 ![open url use clipper button](assets/uploaded/c4609bf8-4250-4b58-aa1c-933607599ed2.png){ width="900" }
 
@@ -422,7 +430,7 @@ Clicking the 🔬 button (or pressing `Ctrl+Shift+H`) opens a detailed popup sho
 
 **Each row contains:**
 
-*   **Rating:** The score given (Again, Hard, Good, Easy), color-coded.
+*   **Rating:** The score given (Again, Hard, Good, Easy), color-coded. On a list or set card it is followed by [each item's score](#multi-line-items-panel).
 *   **Response Time:** How long you spent answering.
 *   **Target Date:** When the review was originally scheduled.
 *   **Practice Date:** When you actually reviewed it.
@@ -433,6 +441,36 @@ Clicking the 🔬 button (or pressing `Ctrl+Shift+H`) opens a detailed popup sho
 *   **pluginData:** Any data recorded by plugins during that review (historical; only present for reviews performed via the plugin's custom scheduler).
 
 The heading summary also shows the current **SInc** for all three recall grades, color-coded: 🟠 Hard / 🟢 Good / 🔵 Easy. Hover for a tooltip with projected stability values.
+
+#### The Items panel { #multi-line-items-panel }
+
+On a list or set card, the popup adds an **Items** panel above the Forgetting Curve. It answers three questions: why the card is due when it is, what it will test next, and which items are weak.
+
+Two sentences at the top say why the card is due and what comes next. For example: *Back early because you forgot "ou dão-se…" on Oct 30. Next time it tests only "ou dão-se…". The full card returns around Dec 26.*
+
+Below them, one row per item, with the items tested next first and then the weakest:
+
+| Column | What it shows |
+|---|---|
+| **Item** | The item's text, with ⚠ if it is changing what the card does |
+| **Last 2** | Its last two scores, oldest first: ✓ recalled, ~ partially recalled, ✗ forgot |
+| **Memory** | Its FSRS stability |
+| **Next test** | When you will next see it: *Next time*, *Full card, ~Dec 26*, or its own date |
+
+**What "in trouble" means.** RemNote treats an item as in trouble while either of its last two scores is a Forgot or a Partially Recalled. Only an item in trouble can bring the card back before its normal date, and the lowest recent scores decide which items the next partial card tests. An item leaves trouble after two good answers in a row.
+
+**How items get separate scores:**
+
+*   **List card:** you rate each item as it is revealed.
+*   **Set card:** the button you press goes to every item, except the items you tick first, which count as **Forgot**. You can't mark a single item as Partially Recalled.
+
+Pressing **Partially Recalled** on a set card with nothing ticked scores every item the same. They are all in trouble, but they replay to the main card's date and are tested together, so nothing changes: the card doesn't come back early and the next showing is the full card. That is why ⚠ only marks items that really change what the card does.
+
+**In the history table,** a full repetition shows one mark per item, with its name and score on hover. A [partial repetition](#partial-list-and-set-cards) is greyed, with a tag such as `Partial 1/3`.
+
+**How far to trust it.** The scores and the "in trouble" status are exact. The rest is calculated by the plugin the way RemNote does it, so dates are marked with `~`: RemNote adds a small random variation to them, and the plugin can't read your relearning steps. On a real knowledge base, the prediction of what the card tests next matched what RemNote showed 97% of the time, and 85% of the time when it predicted a partial card.
+
+On a card [on another scheduler](#cards-on-other-schedulers), the panel leaves out **Memory**, dates and the reason the card is due, and shows only what the scores decide.
 
 ### Forgetting Curve
 
@@ -507,9 +545,30 @@ The opening window is always one of the two or somewhere between them. The butto
 
 Zooming out goes well past where the chart opens. The forecast is computed until **Easy** decays to 50% — the point at which that memory is as likely gone as recalled — so you can follow every branch far beyond the next repetition and watch the four separate. On a mature card that is a long way out: FSRS's curve is a power law with a heavy tail, and 50% arrives at roughly ninety times the stability, so do not be surprised to find the axis running into centuries.
 
+#### Comparing two weight sets { #comparison-weights }
+
+Before you adopt a new set of FSRS weights — a fresh result from RemNote's **Optimize Weights**, or from an [external optimizer](#export-revlog) — you can see what it would do to your cards. Paste it into **FSRS Comparison Weights** in the [FSRS settings](Plugin-Settings-Reference.md#fsrs), and every forgetting curve replays the card a second time with those weights, drawn as thin, faint **magenta** lines over the real ones:
+
+| Magenta line | Shadows |
+|---|---|
+| Solid | The history |
+| Long dashes | **If not reviewed** |
+| Short dashes | **If Good** |
+| Staircase (bottom panel) | The stability after each repetition, and after a Good answer now |
+
+Each one keeps the dash length of the line it shadows but leaves out every other dash, so it reads as the same kind of line while standing apart from the forecast's other dashed lines. Again, Hard and Easy get no comparison line, to keep the chart readable.
+
+A line under the legend sums up the difference for the card on screen, current → comparison: its stability now, its retrievability now, when it would fall to your target retention (roughly when it is due), and the interval a Good answer would earn.
+
+The comparison is an overlay only. The axes, the opening window, the **History** / **Forecast** presets and the zoom refit all follow your **FSRS Global Weights**, so a comparison line that leaves the view is cut off rather than rescaling the chart. Hover any point to read both sets' values side by side. Leave the setting blank, or paste the same weights as the Global ones, and the comparison disappears.
+
+To compare the two sets over your whole knowledge base rather than card by card, tick **Use comparison weights** in [Memory Analytics](Prioritization-&-Sorting.md#card-memory-analytics) or [FSRS Calibration](Prioritization-&-Sorting.md#fsrs-calibration).
+
 #### What the curve is, and is not
 
-The curve is computed by the plugin's own FSRS implementation, from the weights and retention in [FSRS settings](Plugin-Settings-Reference.md#fsrs) — **not** from the scheduler RemNote actually runs on the card, which the plugin API does not expose. It therefore describes your real scheduling only where those settings match it. If your cards use a per-document scheduler, or Anki SM-2, or FSRS with different weights, treat the curve as an estimate of that model rather than a record of RemNote's decisions.
+The curve is computed by the plugin's own FSRS implementation, from the weights and retention in [FSRS settings](Plugin-Settings-Reference.md#fsrs) — **not** from the scheduler RemNote actually runs on the card, which the plugin API does not expose. It therefore describes your real scheduling only where those settings match it. If your cards use a per-document scheduler, or Anki SM-2, or FSRS with different weights, treat the curve as an estimate of that model rather than a record of RemNote's decisions. See [Cards on other schedulers](#cards-on-other-schedulers).
+
+On a list or set card, the curve follows the main card only, so [partial repetitions](#partial-list-and-set-cards) don't appear on it.
 
 To hide it in the Queue Dashboard, set **Forgetting Curve** to *Hidden* in [Queue Dashboard settings](Plugin-Settings-Reference.md#queue-dashboard). In the Repetition History popup it follows **Display FSRS DSR Stats**.
 
@@ -519,22 +578,114 @@ The plugin includes a built-in implementation of the [FSRS v6.1.1 algorithm](htt
 
 #### Required Setup: FSRS Weights
 
-To get accurate D/S/R values that match RemNote's internal calculations, you need to provide your FSRS weights in the plugin settings:
+To get accurate D/S/R values that match RemNote's internal calculations, the plugin needs your FSRS weights. These settings are saved separately for each knowledge base, so set them in each one you study in. You can [import them with a script](#import-scheduler-data), or copy them by hand:
 
 1.  Go to **RemNote Settings → Schedulers → Global Default Scheduler**.
 2.  Copy the weights array (19 or 21 comma-separated numbers).
 3.  Go to **Plugin Settings → Incremental RemNote → FSRS Global Weights**.
 4.  Paste the weights string (e.g., `[1, 3, 10, 45, 7.011, 0.46, ...]`).
 
-If left empty, the official FSRS v6.1.1 default weights are used, which will produce approximate but likely inaccurate values for your specific study patterns.
+If left empty, the official FSRS v6.1.1 default weights are used, which will produce approximate but likely inaccurate values for your specific study patterns. A knowledge base that has not saved its own weights uses these defaults, not the weights of your main knowledge base. The main knowledge base keeps the weights you entered before this setting became per knowledge base.
 
 ![DSR Settings](assets/DSR-settings.png){ width="800" }
+
+#### Import your scheduler data { #import-scheduler-data }
+
+Instead of copying settings by hand, you can let a script read them. It's optional, and needs a computer with Python 3 and the RemNote desktop app:
+
+1.  Get [`scripts/export_scheduler_cards.py`](https://github.com/hugomarins/incremental-remnote/blob/main/scripts/export_scheduler_cards.py) and run it:
+
+    ```bash
+    python3 export_scheduler_cards.py
+    ```
+
+    It only reads your local RemNote database, and writes a file to your `Downloads` folder.
+
+2.  In RemNote, run the command **Import RemNote Scheduler Data** and choose that file.
+3.  The popup shows what would change. Choose **Import and update settings**, or **Import list only** to leave your settings as they are.
+
+The file has two parts:
+
+*   **Your Global Default Scheduler's settings**, which fill [FSRS Global Weights](#required-setup-fsrs-weights) and [Requested Retention](#requested-retention) for this knowledge base.
+*   **The [cards on other schedulers](#cards-on-other-schedulers)**.
+
+The script reads one knowledge base each time, by default your main one. For another, run it with `--list` to see their ids, then with `--kb <id>`, and import the file while that knowledge base is open. The popup refuses a file from a different knowledge base.
+
+The script and the popup warn you if your Global Default Scheduler isn't FSRS-6:
+
+| Your Global Default Scheduler | FSRS Global Weights | Requested Retention |
+|---|---|---|
+| FSRS-6 (21 weights) | Filled, with no warning | Filled |
+| FSRS with no saved weights | Set to the defaults, with no warning | Filled |
+| FSRS-5 (19 weights) | Filled, with a warning | Filled |
+| FSRS with another number of weights | Left as it is, with a warning | Filled |
+| Not FSRS, such as Anki SM-2 | Left as it is, with a warning | Left as it is |
+
+A retention outside the setting's 70–99% range is also left as it is, with a warning. Neither the script nor the import changes anything in RemNote's schedulers.
+
+Run the script and import again after you change your scheduler's weights.
+
+#### Optimizing weights outside RemNote { #export-revlog }
+
+RemNote's **Download revlog.csv** button (in **Settings → Schedulers**) gives you a file for an external optimizer such as [fsrs-optimizer](https://github.com/open-spaced-repetition/fsrs-optimizer), but that file keeps only the **first review of each day**. Every same-day review is lost — learning and relearning steps, Mastery Drill passes — and with it everything the short-term weights (w17–w19) learn from. A day whose first entry is not a rating (a manual date change, say) loses its real rating too. RemNote's own **Optimize Weights** reads the same data, with the short-term weights switched off.
+
+[`scripts/export_fsrs_revlog.py`](https://github.com/hugomarins/incremental-remnote/blob/main/scripts/export_fsrs_revlog.py) writes the same file straight from your local RemNote database, keeping every review:
+
+```bash
+python3 export_fsrs_revlog.py                      # your main knowledge base
+python3 export_fsrs_revlog.py --since 2021-01-01   # only cards first reviewed after this date
+python3 export_fsrs_revlog.py --kb <id>            # another knowledge base (--list shows them)
+```
+
+It writes `revlog-<id>.csv` to your `Downloads` folder. It applies RemNote's other filters (history before a card's last Reset, partial [list and set](#partial-list-and-set-cards) repetitions, cards reviewed on a single day), drops entries that are not ratings, and labels each review with the card's real phase: learning, review or relearning. `--since` works like the optimizer's own *revlog start date*: a card is left out entirely if its first review comes before that date. `--remnote-compatible` writes exactly what RemNote's button writes instead, for checking.
+
+Then run the optimizer on it through [`scripts/run_fsrs_optimizer.py`](https://github.com/hugomarins/incremental-remnote/blob/main/scripts/run_fsrs_optimizer.py), which takes the same arguments as `python3 -m fsrs_optimizer`:
+
+```bash
+python3 run_fsrs_optimizer.py ~/Downloads/revlog-<id>.csv
+```
+
+When it asks, enter your own timezone and answer **y** to the short-term component. The wrapper fixes one crash in fsrs-optimizer 6.5.0: a card with a long run of passes made its SM-2 comparison overflow, which stopped the run after the weights were printed.
+
+Before adopting the weights it prints, paste them into [FSRS Comparison Weights](#comparison-weights) to see what they would change.
+
+#### How accurate the figures are { #how-accurate-the-figures-are }
+
+With the same weights as the card's scheduler, the plugin's Difficulty, Stability and per-grade forecasts match RemNote's FSRS. This was checked on a real knowledge base of about 38,000 FSRS cards, all within 0.001%.
+
+Two things can still make a figure differ from what you see in RemNote:
+
+*   **Different weights.** The plugin has one set of weights, so the match only holds for cards whose scheduler uses those weights. See [Cards on other schedulers](#cards-on-other-schedulers).
+*   **Intervals.** The interval a grade would schedule is calculated from Stability, without RemNote's rounding to whole days or its random fuzz, so it can be slightly off from RemNote's date.
+
+Retrievability (R) uses the real time since the last review, so it decreases smoothly during the day. RemNote counts whole UTC days when it calculates the next Stability, and the plugin does the same for that calculation.
+
+#### Partial list and set cards { #partial-list-and-set-cards }
+
+When RemNote shows only some items of a list or set card, that repetition is **partial**, and it doesn't count toward the main card's schedule. The plugin follows the same rule:
+
+*   **D, S, R and the Forgetting Curve** ignore partial repetitions, so they stay the same until the next full repetition. In the Flashcard Repetition History, a partial repetition's row shows the values carried over from the previous one, with `—` for its R and SInc.
+*   **FSRS Calibration** leaves them out.
+*   **Card Analytics** leaves them out of Retention, Lapses, Avg Grade and Avg pR, but still counts them in Reps, Time and Cost, because they are real study time.
+
+The due date works differently: the date the card shows is the earliest of the main card's date and the dates of items you recently forgot or partially recalled. So a list card can come back much sooner than its Stability suggests. The [Items panel](#multi-line-items-panel) shows which item is responsible.
+
+#### Cards on other schedulers { #cards-on-other-schedulers }
+
+RemNote lets you assign a different scheduler to a document, under **Settings → Schedulers**. The plugin can't see which scheduler a card uses, so it applies your [FSRS Global Weights](#required-setup-fsrs-weights) to every card. On cards using other weights, or Anki SM-2, the D, S and R shown are only the plugin's estimate.
+
+[Importing your scheduler data](#import-scheduler-data) also gives the plugin a list of those cards. Once the list is imported:
+
+*   **A label** such as `Questions · Anki SM-2` appears next to the FSRS figures in the Card Info Bar and the Flashcard Repetition History.
+*   **An "Exclude other schedulers" checkbox** appears in [Card Analytics](Prioritization-&-Sorting.md#card-memory-analytics) and [FSRS Calibration](Prioritization-&-Sorting.md#fsrs-calibration). It's off by default.
+
+The list syncs with your knowledge base, so it also works on your other devices. It doesn't update by itself: cards created under another scheduler count as Global until you run the script and import again. To delete the list, run the same command and choose **Remove list**.
 
 #### Requested Retention
 
 FSRS defines stability as *the interval at which recall probability is 90%*. That is why "S: 4.2y" and "your next review is in 4.2 years" are usually the same sentence — but only if your scheduler is aiming at 90%.
 
-If you set a different **requested retention** in RemNote, the interval you get is no longer the stability. Tell the plugin which value you use in **Plugin Settings → Incremental RemNote → Requested Retention** (default `90%`), and the card info bar reports the scheduling you will really see:
+If you set a different **requested retention** in RemNote, the interval you get is no longer the stability. Tell the plugin which value you use in **Plugin Settings → Incremental RemNote → Requested Retention** (default `90%`, saved for each knowledge base, and [can be imported](#import-scheduler-data)), and the card info bar reports the scheduling you will really see:
 
 *   **The interval behind the next stability.** The `→ 4.2y` after Stability is still the *stability* a Good rating produces; the interval it converts to is printed right after it — `→ 4.2y (int. 1.7y)` at 95%.
 *   **The U-Factor.** It divides by the interval you will actually get, so it stops overstating how far your reviews are being pushed out. Off the 90% default a second value appears in parentheses — `U-Factor: 3.11× (3.30×)` — the first the real one, the second the textbook figure at 90% retention.
@@ -545,9 +696,9 @@ The conversion follows straight from inverting the forgetting curve: the interva
 
 #### Limitation: Global Weights Only
 
-> ⚠️ **Important:** RemNote allows assigning different custom schedulers (with different FSRS weights) to different documents or folders. However, the plugin SDK does not expose which scheduler is assigned to a specific card. As a result, the plugin can only use a single set of **global weights** for all cards.
+> ⚠️ **Important:** RemNote allows assigning different custom schedulers (with different FSRS weights) to different documents or folders. However, the plugin SDK does not expose which scheduler is assigned to a specific card. As a result, the plugin can only use a single set of **global weights** for all the cards in a knowledge base.
 
-If you use multiple custom schedulers with different weights (or with Anki_SM2 scheduler), the computed D/S/R values will only be accurate for cards using the scheduler whose weights you configured. Cards assigned to other schedulers may show slightly different values than what RemNote computes internally.
+If you use multiple custom schedulers with different weights (or with Anki_SM2 scheduler), the computed D/S/R values will only be accurate for cards using the scheduler whose weights you configured. Cards assigned to other schedulers may show different values than what RemNote computes internally. You can [label them and leave them out of the analytics](#cards-on-other-schedulers).
 
 For most users who use a single global scheduler, this is not an issue — just paste your global scheduler's weights and the values will match.
 
@@ -571,7 +722,7 @@ The **Incremental Rem History** widget automatically records and displays the In
 *   **Searchable History:** Easily find previously viewed items using the search bar.
 *   **Context Aware:** Shows history specific to the current Knowledge Base.
 *   **Recency Tracking:** Displays how long ago you viewed each item.
-*   **Quick Navigation:** Click any item to jump back to it.
+*   **Quick Navigation:** Click any item to jump back to it, or **Shift+click** to open it in a new pane beside your current document.
 
 This widget helps you keep track of your reading session and backtrack if needed, complementing the queue's linear flow. It's also a good companion to the **[History and Final Drill](https://www.remnote.com/plugins/final_drill_and_history)** plugin.
 

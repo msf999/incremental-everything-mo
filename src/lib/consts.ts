@@ -1,3 +1,4 @@
+//This file exists so that every ID the plugin shares with RemNote, or passes between its own widgets, is spelled in exactly one place.
 /**
  * CSS selector matching THIS plugin's widget iframes.
  *
@@ -66,6 +67,11 @@ export const dismissedPowerupCode = 'dismissed';
 export const dismissedHistorySlotCode = 'dismissedHistory';
 export const dismissedDateSlotCode = 'dismissedDate';
 
+// Duplicate-source warning (lib/duplicate_source)
+export const sourceUrlIndexKey = 'source_url_index'; // synced: page key -> Incremental or Dismissed Rems with that source
+export const sourceUrlIndexScannedAtKey = 'source_url_index_scanned_at'; // synced: when a device last rebuilt it
+export const duplicateSourceDecisionKey = 'duplicate_source_decision'; // session: the popup's answer to the caller
+
 // Marks a "tombstone" rem whose content was removed by the
 // 'Preserve history & remove' command but whose review history was preserved on
 // its Dismissed powerup. Used purely as a CSS hook (data-rem-tags~="preservedhistory")
@@ -107,6 +113,9 @@ export const multiplierId = 'multiplier';
 export const betaSchedulerEnabledId = 'beta-scheduler-enabled';
 export const betaFirstReviewIntervalId = 'beta-first-review-interval';
 export const betaMaxIntervalId = 'beta-max-interval';
+// Same-day reviews (Editor Review, Companion, a second look) neither move the date
+// nor count twice for scheduling. See sameDayRepeatIndexes in scheduler_core.ts.
+export const ignoreSameDayReviewsId = 'ignore-same-day-reviews';
 // Per-type default scheduler. 'default' defers to the Default Scheduler setting
 // (betaSchedulerEnabledId); 'multiplier' / 'curve' prevail over it for that kind of
 // Incremental Rem. A scheduler pinned on the rem itself (schedulerSlotCode) beats both.
@@ -135,6 +144,10 @@ export type QueueToolbarPriorityMode = 'always' | 'off' | 'webOnly' | 'mobileOnl
 
 export const isolatedQueueModeId = 'isolated-queue-view-mode';
 export type IsolatedQueueMode = 'highlights' | 'rems' | 'both' | 'none';
+export const defaultVideoPlayerId = 'default-video-player';
+export type DefaultVideoPlayer = 'plugin' | 'remnote';
+export const tidyAutoCaptionsId = 'tidy-auto-captions';
+export const titleVideoExtractsId = 'title-video-extracts';
 export const priorityStepSizeId = 'priority-step-size';
 export const enableHideInQueueIntegrationId = 'enable-hide-in-queue-integration';
 
@@ -167,11 +180,18 @@ export const titleCaseAcronymsId = 'title-case-acronyms';
 export const sourceHighlightColorId = 'source-highlight-color';
 export type HighlightColorName = 'Red' | 'Orange' | 'Yellow' | 'Green' | 'Blue' | 'Purple';
 /** Create IncRem also pins the passage in a PDF's other view (page ↔ Text Reader) — lib/pdf_source_pins pinOtherViewOfHighlight. */
-export const pinOtherReaderViewOnCreateIncRemId = 'pin-other-reader-view-on-create-increm';export const enableMasteryDrillId = 'enable-mastery-drill';
+export const pinOtherReaderViewOnCreateIncRemId = 'pin-other-reader-view-on-create-increm';
+/** Cycle Image Size asks first when a press would resize more images than this — lib/image_size_session. */
+export const imageSizeConfirmAboveId = 'image-size-confirm-above';
+export const enableMasteryDrillId = 'enable-mastery-drill';
 /** Pre-inversion id, kept only so the migration can convert stored values. */
 export const legacySkipMasteryDrillId = 'skip_mastery_drill';
 export const oldItemThresholdId = 'old_item_threshold';
 export const masteryDrillMinDelayMinutesId = 'mastery_drill_min_delay_minutes';
+/** Hard-rated drill cards cool for this share of the interval the rating gave them… */
+export const masteryDrillHardIntervalPercentId = 'mastery_drill_hard_interval_percent';
+/** …capped here, in days. The Minimum Delay stays the floor. */
+export const masteryDrillHardMaxDaysId = 'mastery_drill_hard_max_days';
 export const disableFinalDrillNotificationId = 'disable_final_drill_notification';
 /** Where the drill runs: the popup's embedded queue, or RemNote's own queue. */
 export const masteryDrillModeId = 'mastery_drill_mode';
@@ -233,10 +253,14 @@ export const cardPriorityHiddenSlotStateKey = 'card-priority-hidden-slot-state';
 export const displayFsrsDsrId = 'display-fsrs-dsr';
 export const fsrsWeightsId = 'fsrs-weights';
 export const fsrsRequestedRetentionId = 'fsrs-requested-retention';
+/** A second weight set, drawn faintly over the forgetting curves for comparison only. */
+export const fsrsComparisonWeightsId = 'fsrs-comparison-weights';
 
 // --- Plugin-owned settings store (see lib/settings_migration.ts) ---
 /** Synced blob holding the values of every popup-tier setting. */
 export const ieSettingsValuesKey = 'ie_settings_v1';
+// Settings marked `perKnowledgeBase`, one key per KB: `<prefix>_<kbId>`.
+export const ieKbSettingsKeyPrefix = 'ie_settings_kb_v1';
 /** Seed version that last completed; gates the legacy registrations. */
 export const ieSettingsMigratedKey = 'ie_settings_migrated';
 /** Durable per-setting record of the last migration run. */
@@ -419,6 +443,17 @@ export const scrollToHighlightId = 'scroll-to-highlight';
 export const pageRangeWidgetId = 'page-range';
 export const parentSelectorWidgetId = 'parent_selector';
 
+// "Pick in editor" (lib/parent_pick.ts): the parent selector hands its context
+// to a floating card and closes, and the user confirms the destination from the
+// editor. The context and the card's widget id live in session storage; the
+// confirm command asks the card to place the Rem by bumping the request key.
+export const parentPickWidgetId = 'parent_pick_floating';
+export const parentPickContextKey = 'parent-pick-context';
+export const parentPickActiveIdKey = 'parent-pick-active-id';
+export const parentPickConfirmRequestKey = 'parent-pick-confirm-request';
+export const parentPickConfirmCommandId = 'place-pending-rem-here';
+export const parentPickCancelCommandId = 'cancel-parent-pick';
+
 // css
 export const collapseTopBarId = 'collapse-top-bar';
 
@@ -482,6 +517,17 @@ export type QueueSlotSwap = { slotRemId: string; showRemId: string | null; nonce
 // holds for its next slot. Written by callbacks.ts; read only by the activation bootstrap in
 // events.ts, which marks it seen after a plugin restart (queue_prefetch.markShownThisSession).
 export const queueHeldCandidateKey = 'queue-held-candidate';
+// Same arrangement for queue_beautiful_bar: it reports its content width, and the
+// Beautiful queue's top-right strip is sized to it (lib/queue_beautiful_bar_fit).
+export const queueBeautifulBarFitCssId = 'incremental-everything-queue-beautiful-bar-fit';
+export const queueBeautifulBarWidthKey = 'queue-beautiful-bar-width';
+// Same arrangement for the pinned Editor Review Timer: its instances write their
+// heights (per document id) and index.tsx moves RemNote's sticky headers below it.
+export const editorReviewTimerHeadersCssId = 'incremental-everything-editor-review-timer-headers';
+export const editorReviewTimerHeightsKey = 'editor-review-timer-heights';
+// Widget instance ids of the mounted timers, so only one pane shows the timer
+// (lib/editor_review_timer_primary).
+export const editorReviewTimerInstancesKey = 'editor-review-timer-instances';
 export const collapseTopBarCssId = 'incremental-everything-collapse-top-bar'; // CSS registration ID
 export const incrementalQueueActiveKey = 'incremental-queue-active';
 export const activeHighlightIdKey = 'active-highlight-id-key';
@@ -499,6 +545,26 @@ export const displayPriorityShieldId = 'display-priority-shield';
 export const deferSpoilerIncRemsId = 'defer-spoiler-increms';
 export const displayQueueToolbarPriorityId = 'display-queue-toolbar-priority';
 export const autoFocusQueueDashboardId = 'auto-focus-queue-dashboard';
+// Multiple-choice scissors (lib/mc_scissors.ts): a ✂ beside each option of a
+// native multiple-choice card that strikes the option through.
+export const mcScissorsSettingId = 'mc-scissors';
+export const mcScissorsWidgetId = 'mc_scissors';
+/** Session: the open scissors' floating widget ids, in display-index order. */
+export const mcScissorsIdsKey = 'mcScissorsWidgetIds';
+/** Session: display indices of the struck options on the current card. */
+export const mcScissorsStruckKey = 'mcScissorsStruck';
+// Multiple-choice answer sheet (lib/mc_assertions.ts): a T/F box per numbered
+// assertion (I., II., III.) of a "judge each sentence" question.
+export const mcAssertionSheetSettingId = 'mc-assertion-sheet';
+export const mcAssertionsWidgetId = 'mc_assertions';
+/** Session: the numerals of the current card's assertions ("I", "II", …). */
+export const mcAssertionLabelsKey = 'mcAssertionLabels';
+/** Session: one mark per assertion, in order: '' (empty), 'T' or 'F'. */
+export const mcAssertionMarksKey = 'mcAssertionMarks';
+/** The sheet's first box centre sits this share of the column below its top… */
+export const mcSheetTopEdge = 0.35;
+/** …and its last box centre this share above its bottom; the rest are spaced evenly between. */
+export const mcSheetBottomEdge = 0.1;
 // Timestamp flag set by the IncRem "Next" paths just before they advance the
 // queue (while their widget sandbox is still alive). A persistent QueueLoadCard
 // listener consumes it to restore the Practiced Queues dashboard — the refocus
@@ -547,6 +613,19 @@ export const debugHistoryBackupPrefix = 'debug_history_backup_';
 // they were removed as dead code.
 export const displayWeightedShieldId = 'display-weighted-shield';
 
+// Which shield the flashcard bar shows: the setting gives the default, a click on
+// the shield switches it, and the session key keeps that switch until QueueEnter.
+export const flashcardBarShieldId = 'flashcard-bar-shield';
+export type FlashcardBarShield = 'card' | 'priority';
+export const flashcardBarShieldModeKey = 'flashcard-bar-shield-mode';
+
+// The priority colour map (lib/priority_color_scale.ts): percentile on the
+// unified IncRems + cards scale for each priority 0–100. Session key for the
+// widgets to read; the local copy gives the next startup colours before the
+// caches are warm.
+export const priorityColorScaleKey = 'priority-color-scale';
+export const priorityColorScaleLocalKey = 'priority-color-scale-local';
+
 // --- Keys for Open Editor in a new tab/window (PDFs) ---
 export const remnoteEnvironmentId = 'remnote-environment';
 
@@ -556,6 +635,20 @@ export const noIncRemTimerWidgetId = 'no-inc-rem-timer-widget';
 export const incRemDisabledDeviceKey = 'inc-rem-disabled-device';
 // Local key: the sources open in each RemNote window (see lib/window_sources.ts).
 export const openSourcesByWindowKey = 'open-sources-by-window';
+// Local key: a source waiting for another window to open it (see lib/open_in_window.ts).
+export const openInWindowRequestKey = 'open-in-window-request';
+// Session key: this window's id for those requests.
+export const openInWindowOwnIdKey = 'open-in-window-own-id';
+// Local keys: the window following the queue, and the sources it should show (see lib/follow_queue_sources.ts).
+export const followQueueWindowKey = 'follow-queue-window';
+export const followQueueTargetKey = 'follow-queue-target';
+// Session keys for the following window's bar: its widget id, the sources on show, and a press of Stop.
+export const followQueueBarIdKey = 'follow-queue-bar-id';
+export const followQueueShownKey = 'follow-queue-shown';
+export const followQueueStopKey = 'follow-queue-stop';
+export const followQueueBarPositionKey = 'follow-queue-bar-position';
+// Above the PDF reader's bottom toolbar, and left of its page number and zoom buttons.
+export const followQueueBarDefaultPosition = { bottom: 66, right: 64 };
 
 export const cardPriorityCacheRefreshKey = 'cardPriorityCacheRefreshKey';
 // Rem IDs whose cards exist but whose parent rem could not be found during the
@@ -563,8 +656,6 @@ export const cardPriorityCacheRefreshKey = 'cardPriorityCacheRefreshKey';
 // loadCardPriorityCache, read by the 'Update all inherited Card Priorities'
 // cleanup so it can skip re-scanning to find them.
 export const orphanRemIdsKey = 'orphan-rem-ids-key';
-// Pending priority save job: written by priority_light popup before closing,
-// picked up and executed by tracker.ts in the persistent index widget.
 // Setting id AND registerCSS id for the table-cell priority badges.
 export const showPriorityBandsInTablesId = 'showPriorityBandsInTables';
 // FORK (2026-10-11, owner request): the one switch for everything priority-band — the
@@ -585,7 +676,13 @@ export const priorityBandColorsReloadKey = 'priority-band-colors-reload';
 // so it survives a reload once switched on. Toggled by the
 // `toggle-priority-band-logging` command.
 export const priorityBandVerboseLogsKey = 'priority-band-verbose-logs';
+// Pending priority save job: written by priority_light popup before closing,
+// picked up and executed by tracker.ts in the persistent index widget.
 export const pendingPrioritySaveKey = 'pendingPrioritySave';
+// The card priority a popup just saved, for the queue's displays to show until the
+// tracker's card-priority cache write catches up. One small setSession, so it
+// survives popup teardown — see lib/card_priority/pending_priority.ts.
+export const pendingCardPriorityKey = 'pendingCardPriority';
 // Rem ids a priority popup should apply to when opened in batch mode (Opt+P /
 // Ctrl+Opt+P over a multi-rem selection, e.g. several table rows). Written by the
 // command, read by priority.tsx / priority_light.tsx. Distinct from
@@ -606,6 +703,16 @@ export const pendingIntervalBatchSaveKey = 'pendingIntervalBatchSave';
 // in the index widget also means the writes survive popup teardown and can be wrapped
 // in the plugin_operation_active / incRemBatchActive suppression flags.
 export const pendingIncRemCreateTailKey = 'pendingIncRemCreateTail';
+// IncRem review jobs (queue Next/Dismiss, Ctrl+D, Reschedule, Execute Repetition, Editor
+// Review Timer): the surface appends one here and moves on at once; tracker.ts drains them in
+// the persistent index widget. A queue, not a slot, so reviews in quick succession
+// cannot overwrite each other. See lib/incremental_rem/review_jobs.ts.
+export const pendingReviewJobQueueKey = 'pendingReviewJobQueue';
+// Follow-up of 'Transfer Incremental Data to Parent Rem' (cache, bands, host indexes,
+// cascade): the command commits both Rems and appends a job here; tracker.ts drains it.
+// A queue so transfers in quick succession cannot overwrite each other. See
+// lib/incremental_rem/transfer.ts.
+export const pendingIncRemTransferTailKey = 'pendingIncRemTransferTail';
 // Rem ids that were made Incremental moments ago and whose priority popup is about
 // to open (extract-with-priority, Toggle Incremental, the PDF/HTML/video highlight
 // "Create IncRem" flows). The popup reads this list once on mount, clears it, and
@@ -680,9 +787,34 @@ export const PRIORITY_GRAPH_DATA_KEY_PREFIX = 'priority_graph_data_';
 
 // Video Extract Powerup
 export const videoExtractPowerupCode = 'videoExtract';
+/**
+ * Session: `{ remId, at }`, the Rem whose notes the queue's local video player
+ * shows, refreshed while it's on screen. The editor player widget, which that
+ * notes pane hosts too, stays empty for it.
+ */
+export const localVideoQueueNotesKey = 'local-video-queue-notes';
+/**
+ * Session: `{ remId, videoId, at }`, a nested Video Extract just opened for
+ * review whose video page should open in a pane beside it. Done by the index
+ * widget (lib/video_review_bar.ts): the widget that opened the review may not
+ * outlive the navigation.
+ */
+export const pendingVideoPaneKey = 'pending-video-pane';
 export const videoExtractUrlSlotCode = 'videoUrl';
 export const videoExtractStartSlotCode = 'startTime';
 export const videoExtractEndSlotCode = 'endTime';
+// A video file on this computer, played from the helper (lib/local_video.ts):
+// the library it is in and its path inside it.
+export const localVideoPowerupCode = 'localVideo';
+export const localVideoLibrarySlotCode = 'library';
+export const localVideoPathSlotCode = 'path';
+// A local video that explains a flashcard, on the card's own Rem: shown under
+// its answer once revealed (widgets/card_video.tsx) and under the Rem's title
+// in the editor. Not Incremental. Same slots as the Local Video powerup.
+export const cardVideoPowerupCode = 'cardVideo';
+
+// The floating review bar over RemNote's video page (lib/video_review_bar.ts).
+export const videoReviewBarIdKey = 'video-review-bar-id';
 
 // IncRem Notes Sidebar (right sidebar widget)
 // Stable rem id published by ExtractViewer while a Rem-type IncRem is shown in
@@ -705,6 +837,10 @@ export const currentHostDocumentIdKey = 'current-host-document-id';
 export const sourceFloatingWidgetId = 'pdf_source_floating';
 export const sourceFloatingTargetKey = 'source-floating-target';
 export const sourceFloatingActiveIdKey = 'source-floating-active-id';
+// Where the float was last dragged to (by its header), so the next open lands
+// there. Kept in {top, right} form — the iframe can't read the host's width.
+export const sourceFloatingPositionKey = 'source-floating-position';
+export const sourceFloatingDefaultPosition = { top: 48, right: 24 };
 
 
 // Convert literal \[..\] / \(..\) / **..** left by PDF text-layer extraction
@@ -716,6 +852,7 @@ export const aiTranscribeHighlightCommandId = 'ai-transcribe-highlight';
 export const restoreHighlightBeforeAiCommandId = 'restore-highlight-before-ai';
 // Pin the source passage of the focused Rem's text in the open PDF (lib/source_pins).
 export const pinSourceQuoteCommandId = 'pin-source-quote';
+export const pinSourceQuotesInTreeCommandId = 'pin-source-quotes-in-tree';
 // Store externally linked images/audio in RemNote itself (lib/localize_media.ts).
 export const localizeMediaCommandId = 'localize-external-media';
 export const localizeMediaTreeCommandId = 'localize-external-media-tree';
@@ -724,6 +861,18 @@ export const localizeMediaTreeCommandId = 'localize-external-media-tree';
 export const logosBridgeEnabledId = 'logos-bridge-enabled';
 export const logosAutoOpenId = 'logos-auto-open';
 export const openInLogosCommandId = 'open-in-logos';
+
+// Local Media Bridge (lib/media_bridge.ts + scripts/media_bridge/): uploads images
+// that outside tools (the RemNote MCP) write as http://127.0.0.1:3460 links.
+export const mediaBridgeEnabledId = 'media-bridge-enabled';
+// Upscale the focused rem's image with ChatGPT (Codex CLI) through the helper's
+// /upscale endpoint, review, replace in place (lib/upscale_image.ts).
+export const upscaleImageCommandId = 'upscale-image-chatgpt';
+export const UPSCALE_IMAGE_POPUP = 'upscale_image_popup';
+
+// --- Cards on a scheduler other than the Global Default (lib/scheduler_cards.ts) ---
+// Synced and per KB: `<prefix>_<kbId>` is the manifest, `<prefix>_<kbId>_<n>` the shards.
+export const schedulerCardsKeyPrefix = 'scheduler-cards';
 
 // --- Priority Queue cooling (lib/priority_review_document/cooling*.ts) ---
 // The cooling SET is never stored: it is a function of card data, recomputed on
@@ -783,3 +932,10 @@ export const coolingInQueuesId = 'cooling-in-queues';
 // Queue setting, off by default: the "just created" rule (coolingNewCardDaysId) also skips
 // cards in RemNote's spaced-repetition queues. Never in Learn New. Needs coolingInQueuesId on.
 export const coolingNewCardsInQueuesId = 'cooling-new-cards-in-queues';
+// Queue setting, off by default: new bidirectional concepts practise back → front until that card
+// is passed (lib/recognition_first.ts).
+export const recognitionFirstId = 'recognition-first';
+// How long the back → front card's interval must be before front → back is released. 0 = first pass.
+export const recognitionFirstMinDaysId = 'recognition-first-min-days';
+// Synced, per KB: Rem id → when Recognition First set it to back → front only.
+export const recognitionFirstHeldKeyPrefix = 'recognition-first-held';

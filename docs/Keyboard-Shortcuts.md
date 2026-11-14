@@ -61,29 +61,46 @@ This table lists all the custom keyboard shortcuts that are unique to the Increm
 | :--- | :--- | :--- | :--- |
 | `Alt` + `Shift` + `I` | Open Incremental Rems Main View | Opens the main view popup showing all Incremental Rems with filtering and sorting. | Global |
 | `Ctrl` + `Shift` + `H` | [Open Repetition History](Repetition-History-and-Statistics.md) | Routes to the right view: **Single History** for an Incremental Rem, **[Flashcard History](Plugin-Widgets-Reference.md#211-flashcard-repetition-history)** (all of the Rem's cards) for a flashcard, **Aggregated History** for a folder with incremental descendants. A Rem that is both offers a button across. *(May conflict on Windows — see [Windows Notes](#windows-notes))* | Editor and Queue |
+| `Ctrl` + `Alt` + `I` | [Copy Rem ID](Utilities-Finding-and-Navigating.md#copy-rem-id) | Copies the ID of the focused Rem (or of each selected Rem, one per line) to the clipboard — handy for pointing an AI assistant at a Rem through the MCP. | Editor and Queue |
 | `Ctrl` + `Shift` + `I` | [Toggle Ignore Tag](Plugin-Commands-Reference.md#other-utilities) | Adds/removes the `#ignore` tag on the focused Rem **or a multi-rem selection** (run from the Omnibar). Ignored rems are shrunk and dimmed (full opacity on hover/focus) and the tag chip is hidden — used during IR to mark already-read snippets that don't deserve becoming Incremental. | Editor Only |
+
+### Chrome Companion Extension
+
+On web pages, with the [Chrome Companion Extension](Chrome-Companion-Extension.md) installed and text selected:
+
+| Shortcut | Command Name | Function | Context |
+| :--- | :--- | :--- | :--- |
+| `Alt` + `X` | [Add Extract](Chrome-Companion-Extension.md#extracts) | Makes the selection an Incremental Rem | Web page, text selected |
+| `Alt` + `Shift` + `X` | [Add Extract with priority](Chrome-Companion-Extension.md#setting-a-priority) | Asks for a priority first | Web page, text selected |
+| `Alt` + `H` | [Add Highlight](Chrome-Companion-Extension.md#add-highlight) | Adds the selection as a Rem that isn't Incremental, highlighted yellow | Web page, text selected |
 
 ### Editing Utilities
 
 | Shortcut | Command Name | Function | Context |
 | :--- | :--- | :--- | :--- |
 | `Shift` + `F8` | [Bulletize Inline Selected Text](Utilities-Text-and-Lists.md#bulletize-inline-selected-text) | Toggles a `• ` prefix on each line of a multi-line selection **within a single rem**. Restores bullets that a PDF highlight flattened into soft-wrapped text; a collapsed cursor bulletizes the whole rem. *(Uses `Shift+F8` because `Opt+Shift+8` types `°` on macOS and `Ctrl+Opt+Shift+8` is RemNote's blue-highlight shortcut.)* | Editor Only |
+| `Ctrl` + `Shift` + `F8` | [Inlinize Detected List](Utilities-Text-and-Lists.md#inlinize-detected-list-inl) | Rebuilds a list that a PDF highlight flattened onto one line: a line break + `• ` before each detected item (`1 2 3`, `a) b)`, `( )` blanks, `•`/`-`), still in the focused rem. Press again to switch to a blank line between items with no bullets. `Ctrl` on macOS too. | Editor Only |
+| `Ctrl` + `Shift` + `T` | [True/False: Mark as True](Utilities-True-or-False-Cards.md#mark-as-true-or-false) | Turns the statement into a [True or False card](Utilities-True-or-False-Cards.md) answered ✅, keeping whatever the back already holds. Works on a multi-Rem selection, and on the card on screen while you practise. | Editor and Queue |
+| `Ctrl` + `Shift` + `F` | [True/False: Mark as False](Utilities-True-or-False-Cards.md#mark-as-true-or-false) | The same, answered ❌; on a card marked true it flips the verdict. *(May conflict on Windows — see [Windows Notes](#windows-notes))* | Editor and Queue |
+| `Ctrl` + `Alt` + `Shift` + `J` | [True/False: Judge by Emoji](Utilities-True-or-False-Cards.md#judge-by-emoji) | Marks question cards without clozes as true or false from the mark on their back (✅ ✔️ ☑️ ✓ or ❌ ✖️), or else the words true, false, verdadeiro/a or falso/a, which you confirm one by one. On a single Rem it also covers its descendants, asking first with the counts. `Ctrl` on macOS too. | Editor and Queue |
 | `Alt` + `Shift` + `F` | [Find Rem — Reference or Open](Utilities-Finding-and-Navigating.md#find-rem-reference-or-open) | Floating picker that finds Rems RemNote's `[[` search can't surface (all-common-word names). Enter/click inserts a reference at the cursor (cloze-aware, accent-insensitive); Ctrl/Cmd+Enter inserts it as a pin (no text); Opt/Alt+Enter inserts the Rem's text then a pin ("Text with Pin", preserving formatting/images); Shift+Enter/Shift+click opens the Rem in a new pane; Ctrl/Cmd+Shift+Enter appends a pin at the end of the Rem while keeping the selected text (linking a card to its source). | Editor Only |
 | `Shift` + `F3` | [Text Case Converter](Utilities-Text-and-Lists.md#text-case-converter) | Cycles the selection through **Title Case** → **UPPERCASE** → **lowercase**, auto-detecting the current case. Rich-text safe; also works on multi-rem selections. | Editor Only |
 | `Alt` + `Shift` + `M` | [Convert Extracted Markup to Rich Text](Plugin-Commands-Reference.md#convert-extracted-markup-to-rich-text) | Turns literal `\[…\]`, `$…$`, `**bold**`, `*italic*` and `--` left by PDF highlight extraction into real formulas, formatting and dashes, in the focused Rem and all its descendants. | Editor Only |
-| `Alt` + `Shift` + `G` | [Cycle Image Size](Utilities-Cleaning-Up.md#cycle-image-size) | Sizes the images of the card or Rem (and three levels below) that were never sized in RemNote, so they stop showing cropped in the queue. Each press steps through **Fit** → **Large** → **Medium** → **Original**. | Editor and Queue |
+| `Alt` + `Shift` + `G` | [Cycle Image Size](Utilities-Cleaning-Up.md#cycle-image-size) | Resizes the images of the card or Rem (and three levels below), including imported ones that show cropped in the queue. Each press steps through **Fit** → **Large** → **Medium** → **Small** → **Original**; it asks first before changing images you have sized. | Editor and Queue |
 
-> **No default shortcut (run by quick code or from the Omnibar).** The list-from-PDF-highlight commands ship **unbound** to avoid conflicts — invoke them by quick code: **`inl`** ([Inlinize Detected List](Utilities-Text-and-Lists.md#inlinize-detected-list-inl)), **`brl`** ([Break Inline List Into Children](Utilities-Text-and-Lists.md#break-inline-list-into-children-brl)), and **`rlr`** ([Restore List Rem](Utilities-Text-and-Lists.md#restore-list-rem-rlr)). They act on the **focused rem** (no selection needed). Assign your own bindings in RemNote's keyboard-shortcut settings if you use them often.
+> **No default shortcut (run by quick code or from the Omnibar).** The other two list-from-PDF-highlight commands ship **unbound** to avoid conflicts — invoke them by quick code: **`brl`** ([Break Inline List Into Children](Utilities-Text-and-Lists.md#break-inline-list-into-children-brl)) and **`rlr`** ([Restore List Rem](Utilities-Text-and-Lists.md#restore-list-rem-rlr)). Like Inlinize, they act on the **focused rem** (no selection needed). Assign your own bindings in RemNote's keyboard-shortcut settings if you use them often.
 
 ### Sources & Reading
 
 | Shortcut | Command Name | Function | Context |
 | :--- | :--- | :--- | :--- |
 | `Alt` + `O` | [Open Hovered Source in Popup](Utilities-Finding-and-Navigating.md#open-source-in-popup) | **Hover a reference pin first**, then press: opens the PDF/HTML source behind it in a centered **modal** viewer, without navigating away and **without tearing down the queue** (auto-scrolls to the highlight). Hovering a non-source reference only shows a toast. | Editor and Queue |
-| `Alt` + `Shift` + `O` | [Open Hovered Source in Floating Window](Utilities-Finding-and-Navigating.md#floating-window-interaction-closing) | Same viewer, opened as a **non-blocking floating window** (~48% width, right side) so the card stays visible for peeking back and forth. Stays open when you click inside the PDF, **auto-closes when you advance the card**, and `Esc` closes it without closing the queue. | Editor and Queue |
+| `Alt` + `Shift` + `O` | [Open Hovered Source in Floating Window](Utilities-Finding-and-Navigating.md#floating-window-interaction-closing) | Same viewer, opened as a **non-blocking floating window** (40% width, right side) so the card stays visible for peeking back and forth. Stays open when you click inside the PDF, **auto-closes when you advance the card**, and `Esc` closes it without closing the queue. | Editor and Queue |
 | `Ctrl` + `Shift` + `F1` | [Copy Rem Sources](PDF-Incremental-Reading-Workflow.md#2-copying-and-pasting-sources) | Copies all sources of the **focused Rem** into a session clipboard (and registers it in the PDF index). | Editor Only |
 | `Alt` + `Shift` + `V` | [Paste Rem Sources](PDF-Incremental-Reading-Workflow.md#2-copying-and-pasting-sources) | Adds the copied sources to **every selected Rem** (or the focused Rem). Sources already present are skipped, so it is safe to re-run. | Editor Only |
 | `Alt` + `Shift` + `Q` | [Pin Source Quote](Source-Pins.md) | Finds the focused Rem's text in the open PDF or article, reuses the highlight that covers it or creates one, and pins it to the Rem. | Editor Only |
+| `Ctrl` + `Alt` + `Shift` + `Q` | [Pin Source Quote (Quote Rems in descendants)](Source-Pins.md#quote-rems-in-descendants) | Runs Pin Source Quote on every Quote Rem in the focused Rem and its descendants (or in each selected Rem's subtree). `Ctrl` on macOS too. | Editor Only |
+| `Alt` + `Shift` + `Enter` | [Place Pending Rem Here](Create-Incremental-Rem-from-PDF-Highlights.md#pick-in-editor) | After **📍 Pick in editor** in the Select Parent popup, creates the new Rem under the Rem that has the cursor. Outside the IncRem under review, press it twice to confirm. *(Not `Cmd/Ctrl+Shift+Enter`: that is RemNote's Add Portal.)* | Editor Only |
 
 ### In Logos Bible Software (LogosBridge helper)
 
@@ -118,6 +135,7 @@ Function keys carry the utilities whose natural letter combination was already t
 | `Ctrl` + `F7` | [Set Read Point (Bookmark)](Reviewing-Items-in-the-Editor.md#read-points-for-rem-type-incremental-rems) | Editor and Queue |
 | `Ctrl` + `Shift` + `F7` | [View Read Points (History)](Reviewing-Items-in-the-Editor.md#read-points-for-rem-type-incremental-rems) | Editor and Queue |
 | `Ctrl` + `Shift` + `F1` | [Copy Rem Sources](PDF-Incremental-Reading-Workflow.md#2-copying-and-pasting-sources) | Editor |
+| `Ctrl` + `Shift` + `F8` | [Inlinize Detected List](Utilities-Text-and-Lists.md#inlinize-detected-list-inl) | Editor |
 
 ### Shift + key
 
@@ -149,17 +167,21 @@ Function keys carry the utilities whose natural letter combination was already t
 
 | Shortcut | Command | Context |
 | :--- | :--- | :--- |
+| `Ctrl` + `Shift` + `F` | [True/False: Mark as False](Utilities-True-or-False-Cards.md#mark-as-true-or-false) | Editor and Queue |
 | `Ctrl` + `Shift` + `H` | [Open Repetition History](Repetition-History-and-Statistics.md) | Editor and Queue |
 | `Ctrl` + `Shift` + `I` | [Toggle Ignore Tag](Plugin-Commands-Reference.md#other-utilities) | Editor |
 | `Ctrl` + `Shift` + `J` | [Execute Repetition / Review & Open](Reviewing-Items-in-the-Queue.md#review-in-editor) | Editor and Queue |
+| `Ctrl` + `Shift` + `T` | [True/False: Mark as True](Utilities-True-or-False-Cards.md#mark-as-true-or-false) | Editor and Queue |
 | `Ctrl` + `Shift` + `F1` | [Copy Rem Sources](PDF-Incremental-Reading-Workflow.md#2-copying-and-pasting-sources) | Editor |
 | `Ctrl` + `Shift` + `F7` | [View Read Points (History)](Reviewing-Items-in-the-Editor.md#read-points-for-rem-type-incremental-rems) | Editor and Queue |
+| `Ctrl` + `Shift` + `F8` | [Inlinize Detected List](Utilities-Text-and-Lists.md#inlinize-detected-list-inl) | Editor |
 
 ### Alt (Opt) + Shift + key
 
 | Shortcut | Command | Context |
 | :--- | :--- | :--- |
 | `Alt` + `Shift` + `C` | Batch Assign Card Priority | Editor |
+| `Alt` + `Shift` + `Enter` | [Place Pending Rem Here](Create-Incremental-Rem-from-PDF-Highlights.md#pick-in-editor) | Editor |
 | `Alt` + `Shift` + `F` | [Find Rem — Reference or Open](Utilities-Finding-and-Navigating.md#find-rem-reference-or-open) | Editor |
 | `Alt` + `Shift` + `I` | Open Incremental Rems Main View | Global |
 | `Alt` + `Shift` + `L` | [Priority Queue](Priority-Review-Document.md#the-priority-queue-popup) | Editor |
@@ -174,6 +196,7 @@ Function keys carry the utilities whose natural letter combination was already t
 
 | Shortcut | Command | Context |
 | :--- | :--- | :--- |
+| `Ctrl` + `Alt` + `I` | [Copy Rem ID](Utilities-Finding-and-Navigating.md#copy-rem-id) | Editor and Queue |
 | `Ctrl` + `Alt` + `P` | [Quick Set Priority](Prioritization-&-Sorting.md#light-priority-popup) (light popup) | Editor and Queue |
 | `Ctrl` + `Alt` + `↑` | [Quick Increase Priority Number](Prioritization-&-Sorting.md#quick-priority-shortcuts) (less important) | Editor and Queue |
 | `Ctrl` + `Alt` + `↓` | [Quick Decrease Priority Number](Prioritization-&-Sorting.md#quick-priority-shortcuts) (more important) | Editor and Queue |
@@ -185,6 +208,13 @@ Function keys carry the utilities whose natural letter combination was already t
 | `Cmd` + `L` / `Ctrl` + `L` | [Learn - Practice Priority Queue (Full Knowledge Base)](Priority-Review-Document.md#practise-it) | Global |
 | `Cmd` + `→` / `Ctrl` + `→` | [Next Item in Queue](Reviewing-Items-in-the-Queue.md#next) | Queue |
 
+### Ctrl + Alt (Opt) + Shift + key
+
+| Shortcut | Command | Context |
+| :--- | :--- | :--- |
+| `Ctrl` + `Alt` + `Shift` + `J` | [True/False: Judge by Emoji](Utilities-True-or-False-Cards.md#judge-by-emoji) | Editor and Queue |
+| `Ctrl` + `Alt` + `Shift` + `Q` | [Pin Source Quote (Quote Rems in descendants)](Source-Pins.md#quote-rems-in-descendants) | Editor |
+
 ### Not bound by default
 
 These commands ship **without** a shortcut, so nothing collides with your own bindings. Run them from the Command Palette (`Cmd/Ctrl+K`) or by their quick code, or assign a key in RemNote's keyboard-shortcut settings:
@@ -193,13 +223,13 @@ These commands ship **without** a shortcut, so nothing collides with your own bi
 | :--- | :--- |
 | Batch Priority Change (IncRems & Flashcards) | — (Command Palette / Document Menu) |
 | [Transfer Incremental Data to Parent Rem](Create-Incremental-Rem-from-PDF-Highlights.md#transfer-to-parent) | `ttp` |
-| [Inlinize Detected List](Utilities-Text-and-Lists.md#inlinize-detected-list-inl) | `inl` |
 | [Break Inline List Into Children](Utilities-Text-and-Lists.md#break-inline-list-into-children-brl) | `brl` |
 | [Restore List Rem](Utilities-Text-and-Lists.md#restore-list-rem-rlr) | `rlr` |
 | Open Sorting Criteria | `sort` |
 | Open Priority Shield Graph | `shi` |
 | Open Weighted Shield Popup | `wsh` |
 | PDF Control Panel | `pdf` |
+| [Cancel Parent Pick](Create-Incremental-Rem-from-PDF-Highlights.md#pick-in-editor) | `cpp` |
 
 The [Plugin Commands Reference](Plugin-Commands-Reference.md) lists every command, bound or not.
 
@@ -226,7 +256,17 @@ These keys are active **while a plugin popup or floating window is open** — th
 | [Image Scan popup](Utilities-Finding-and-Navigating.md#filter-a-document-by-images) | `↑` / `↓` | Move between the two scopes (this Rem / whole knowledge base) |
 | | `Enter` | Run the selected scope — or, on the report, close the popup |
 | | `Esc` | Cancel and close (ignored **while a scan is running**, so a reflex Esc can't abort it) |
+| [Judge by Emoji confirmation](Utilities-True-or-False-Cards.md#judge-by-emoji) | `↑` / `↓` | Move through the cards and buttons |
+| | `Space` | Tick or untick the card |
+| | `←` / `→` | Go to the buttons, and between them |
+| | `Enter` | Mark the ticked cards (or press the button you are on) |
+| | `Esc` | Cancel and close |
+| [Copy Rem ID popup](Utilities-Finding-and-Navigating.md#copy-rem-id) | `Enter` or `Ctrl`/`Cmd` + `C` | Copy the ID and close |
+| | `Esc` | Close without copying |
 | [Floating source window](Utilities-Finding-and-Navigating.md#floating-window-interaction-closing) | `Esc` | Close the window **without** closing the queue |
+| [Select Parent popup](Create-Incremental-Rem-from-PDF-Highlights.md#keyboard-shortcuts) | `E` | Close the list and [pick the parent in the editor](Create-Incremental-Rem-from-PDF-Highlights.md#pick-in-editor) |
+| [Pick-in-editor card](Create-Incremental-Rem-from-PDF-Highlights.md#pick-in-editor) | `Esc` | Cancel the pick, **even while typing in the editor** |
+| | `←` / `→` + `Enter` | Move between the card's buttons and press one (when the card has focus) |
 
 ---
 ## Important Native RemNote Shortcuts
@@ -252,6 +292,7 @@ On Windows and Linux, RemNote's `Cmd` shortcuts use `Ctrl`, so these plugin shor
 
 | Shortcut | Plugin command | RemNote command (Windows / Linux) |
 | :--- | :--- | :--- |
+| `Ctrl` + `Shift` + `F` | [True/False: Mark as False](Utilities-True-or-False-Cards.md#mark-as-true-or-false) | Filter Document |
 | `Ctrl` + `Shift` + `H` | [Open Repetition History](Repetition-History-and-Statistics.md) | Hide Parents & Siblings From Document |
 | `Ctrl` + `Alt` + `P` | [Quick Set Priority](Prioritization-&-Sorting.md#light-priority-popup) | Add All Properties |
 | `Ctrl` + `Alt` + `↑` / `↓` | [Quick Increase / Decrease Priority Number](Prioritization-&-Sorting.md#quick-priority-shortcuts) | Increase / Decrease Video Playback Speed on Learning Page |

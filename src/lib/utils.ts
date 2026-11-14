@@ -56,20 +56,65 @@ export async function getDailyDocReferenceForDate(plugin: RNPlugin, date: Date) 
 }
 
 /**
+ * The priority ramp: [percentile, hue] stops, interpolated linearly in between.
+ *
+ * Deliberately NOT a straight line from red to blue. What a priority colour has
+ * to tell apart is the top of the list, so the top 35% is given 130° of hue —
+ * five colours with names (red, orange, yellow, lime, green) — the next quarter
+ * runs through teal to sky blue, and everything below the 60th percentile shares
+ * the last 30° of blue. Stops rather than a curve because HSL
+ * hue is not perceptually even: 90–150° all reads as "green", and a power curve
+ * would spend part of the top zone's extra range there.
+ */
+export const PRIORITY_HUE_STOPS: ReadonlyArray<readonly [number, number]> = [
+  [0, 0],
+  [10, 28],
+  [19, 52],
+  [27, 85],
+  [35, 130],
+  [45, 175],
+  [60, 210],
+  [100, 240],
+];
+
+/** Hue on the priority ramp for a percentile (0-100). */
+export function percentileToHue(percentile: number): number {
+  const p = Math.max(0, Math.min(100, percentile));
+  for (let i = 1; i < PRIORITY_HUE_STOPS.length; i++) {
+    const [p1, h1] = PRIORITY_HUE_STOPS[i];
+    if (p <= p1) {
+      const [p0, h0] = PRIORITY_HUE_STOPS[i - 1];
+      return Math.round((h0 + ((p - p0) / (p1 - p0)) * (h1 - h0)) * 10) / 10;
+    }
+  }
+  return PRIORITY_HUE_STOPS[PRIORITY_HUE_STOPS.length - 1][1];
+}
+
+/**
  * Converts a percentile (1-100) into an HSL color string.
  * Lower percentiles (higher priority) are mapped to red/orange (hue ~0).
  * Higher percentiles (lower priority) are mapped to green/blue (hue ~240).
+ * The mapping follows PRIORITY_HUE_STOPS, so it is steeper in the top 35%.
  * @param percentile A number from 1 to 100.
- * @returns An HSL color string (e.g., "hsl(120, 80%, 55%)").
+ * @returns An HSL color string (e.g., "hsl(130, 80%, 55%)").
  */
 export function percentileToHslColor(percentile: number): string {
   const roundedPercentile = Math.round(percentile);
   const clampedPercentile = Math.max(1, Math.min(100, roundedPercentile));
-  const hue = (clampedPercentile / 100) * 240;
+  const hue = percentileToHue(clampedPercentile);
   const saturation = '80%';
   const lightness = '55%';
 
   return `hsl(${hue}, ${saturation}, ${lightness})`;
+}
+
+/**
+ * The whole ramp as a CSS gradient, for tracks and legends that draw the scale
+ * itself. Built from the same stops so it cannot drift from the colours above.
+ */
+export function priorityRampGradient(direction = 'to right'): string {
+  const stops = PRIORITY_HUE_STOPS.map(([p, hue]) => `hsl(${hue}, 80%, 55%) ${p}%`);
+  return `linear-gradient(${direction}, ${stops.join(', ')})`;
 }
 
 
@@ -108,111 +153,22 @@ export function calculateRelativePercentile<T extends { priority: number; remId:
 }
 
 /**
- * Calculates a "volume-aware" percentile rank for a priority shield.
- * Unlike standard percentile which depends on the exact position of a specific item,
- * this calculation treats all items with the same priority as a block.
- *
- * The rank is calculated as:
- * Rank = (Count of Higher Priority Items) + (Count of Non-Due Items with Same Priority)
- *
- * This ensures that as you complete items with the *same* priority, the shield naturally moves up.
- *
- * @param allItems The full list of items in the universe (KB or Doc scope).
- * @param topMissedPriority The priority value of the "top missed" item (the shield's current level).
- * @param isDuePredicate A function to determine if an item is currently "due" (unreviewed).
- * @returns A number from 1-100 representing the completion progress.
+ * {@link calculateRelativePercentile} with `currentRemId` ranked at `priority`
+ * instead of the value the list holds — for a display that read a newer priority
+ * from the Rem than the cache it ranks against.
  */
-export function calculateVolumeBasedPercentile<T extends { priority: number }>(
+export function calculateRelativePercentileAt<T extends { priority: number; remId: string }>(
   allItems: T[],
-  topMissedPriority: number,
-  isDuePredicate: (item: T) => boolean
-): number {
-  if (!allItems || allItems.length === 0) {
-    return 100; // Empty universe is considered complete/100%
-  }
-
-  // Pre-filter: Ignore rems that explicitly have 0 cards (e.g. Disabled Cards)
-  // so they don't artificially inflate the completion metric.
-  const validItems = allItems.filter((item: any) => item.cardCount === undefined || item.cardCount > 0);
-
-  if (validItems.length === 0) {
-    return 100;
-  }
-
-  // 1. Count items with strictly higher priority (lower priority value number)
-  const higherPriorityCount = validItems.filter((x) => x.priority < topMissedPriority).length;
-
-  // 2. Count items with the SAME priority that are ALREADY PROCESSED (not due)
-  const samePriorityProcessedCount = validItems.filter(
-    (x) => x.priority === topMissedPriority && !isDuePredicate(x)
-  ).length;
-
-  const currentRank = higherPriorityCount + samePriorityProcessedCount;
-  const percentile = (currentRank / validItems.length) * 100;
-
-  // Round to 1 decimal place
-  return Math.round(percentile * 10) / 10;
+  currentRemId: RemId,
+  priority: number
+): number | null {
+  return calculateRelativePercentile(
+    allItems.map((x) => (x.remId === currentRemId ? { ...x, priority } : x)),
+    currentRemId
+  );
 }
 
-/**
- * Calculates a weighted priority completion metric across all items.
- *
- * The metric represents "what fraction of the total priority weight has been processed",
- * using exponential decay W(p) = e^(-k * p/100) with k ≈ 2.3026 so that
- * a 0-percentile item weighs ~10× a 100-percentile item.
- *
- * Shield = (processedWeight / totalWeight) × 100
- *
- * This ALWAYS increases as items are processed, with bigger jumps for
- * high-priority items. 100 = fully processed, 0 = nothing processed.
- *
- * @param allItems Full universe of items (KB or doc scope).
- * @param isDuePredicate Returns true if the item is due and unreviewed.
- * @returns Weighted completion percentage (0–100), or 100 if no items / no due items.
- */
-export function calculateWeightedShield<T extends { priority: number; remId: string }>(
-  allItems: T[],
-  isDuePredicate: (item: T) => boolean
-): number {
-  if (!allItems || allItems.length === 0) return 100;
-
-  // Pre-filter: Ignore rems that explicitly have 0 cards
-  const validItems = allItems.filter((item: any) => item.cardCount === undefined || item.cardCount > 0);
-  if (validItems.length === 0) return 100;
-
-  // 1. Sort by priority to compute each item's percentile rank.
-  //    Percentile is per ITEM, by its position in the sorted list. It used to be
-  //    stored in a Map keyed by remId, which meant every card of a multi-card
-  //    Rem was overwritten by the last one's rank — so they all shared a
-  //    percentile, a weight, and a bucket. That is what made this table's
-  //    buckets disagree with the Card Priority × Memory Analytics deciles.
-  const sorted = [...validItems].sort((a, b) => a.priority - b.priority);
-  const n = sorted.length;
-
-  // 2. Compute total weight and due (unprocessed) weight
-  // k = ln(10) ≈ 2.3026 → a 0% item weighs 10× more than a 100% item
-  const k = 2.3026;
-  let totalWeight = 0;
-  let dueWeight = 0;
-
-  for (let idx = 0; idx < n; idx++) {
-    const item = sorted[idx];
-    const p = ((idx + 1) / n) * 100;
-    const weight = Math.exp(-k * p / 100);
-    totalWeight += weight;
-
-    if (isDuePredicate(item)) {
-      dueWeight += weight;
-    }
-  }
-
-  if (totalWeight === 0) return 100;
-
-  // Shield = fraction of total weight that's been processed
-  const processedFraction = (totalWeight - dueWeight) / totalWeight;
-  const result = processedFraction * 100;
-  return Math.round(result * 10) / 10; // 1 decimal
-}
+export { calculateVolumeBasedPercentile, calculateWeightedShield } from './shield_math';
 
 /**
  * A single bucket in the weighted shield breakdown (e.g. 0-10%, 10-20%, ...).
@@ -525,8 +481,8 @@ export function getRetrievabilityColor(r: number): string {
  * A popup height that follows the screen instead of being fixed.
  *
  * A number chosen once for one monitor is wrong on every other: 900px fills a
- * laptop edge to edge and wastes half a desktop display. This takes three
- * quarters of the screen, which leaves room for the window chrome and RemNote's
+ * laptop edge to edge and wastes half a desktop display. This takes four
+ * fifths of the screen, which leaves room for the window chrome and RemNote's
  * own margins, and clamps it so neither end can be absurd.
  *
  * It reads the *display*, not the RemNote window, because that is the only
@@ -541,5 +497,5 @@ export function getRetrievabilityColor(r: number): string {
 export function screenFittedHeight(min: number, max = 1500): number {
   const available = typeof window !== 'undefined' ? window.screen?.availHeight : undefined;
   if (typeof available !== 'number' || !Number.isFinite(available)) return min;
-  return Math.min(Math.max(Math.round(available * 0.8), min), max);
+  return Math.min(Math.max(Math.round(available * 0.9), min), max);
 }

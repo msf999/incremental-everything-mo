@@ -1,3 +1,5 @@
+// First: times every RemNote call and keeps recent log lines for stall reports.
+import { startStallMonitor } from '../lib/stall_diagnostics';
 import { declareIndexPlugin, ReactRNPlugin } from '@remnote/plugin-sdk';
 import { registerStartupShieldCoolingScan } from '../lib/priority_review_document/shield_cooling_scan';
 import '../style.css';
@@ -7,6 +9,8 @@ import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { handleMobileDetectionOnStartup, shouldUseLightMode } from '../lib/mobileUtils';
 import { registerMobileExperimentCss } from '../lib/mobile_experiments'; // MOBILE-EXPERIMENT
+import { refreshSourceUrlIndexIfDue } from '../lib/duplicate_source';
+import { startCompanionListener } from '../lib/companion';
 import { loadCardPriorityCache } from '../lib/card_priority/cache';
 import { writeCardPriorityCache } from '../lib/card_priority/persistence';
 import { checkFlashcardPrioritisationOptOut } from '../lib/card_priority/opt_out';
@@ -29,18 +33,29 @@ import {
   registerCoreQueueDisplayCommands,
   registerHideInQueueLegacyCommands,
 } from '../register/queue_display_commands';
+import { registerMcScissors } from '../lib/mc_scissors';
 import { registerTrueFalseClusterTracker, registerTrueFalseCommands, registerTrueFalsePowerups } from '../register/true_false';
-import { autoRefreshPriorityQueueId, enableHideInQueueIntegrationId, enableFlashcardPrioritisationId, pdfHighlightBordersReloadKey, priorityBandColorsReloadKey, cardInfoBarHeightKey } from '../lib/consts';
+import { autoRefreshPriorityQueueId, enableHideInQueueIntegrationId, enableFlashcardPrioritisationId, pdfHighlightBordersReloadKey, priorityBandColorsReloadKey, priorityColorScaleKey, cardInfoBarHeightKey, queueBeautifulBarWidthKey, editorReviewTimerHeightsKey } from '../lib/consts';
 import { registerCardInfoBarDockCss } from '../lib/card_info_bar_dock';
 import { installQueueInfoBarDock } from '../lib/queue_info_bar_dock'; // FORK (Deviation 14)
+import { registerQueueBeautifulBarFitCss } from '../lib/queue_beautiful_bar_fit';
+import { registerEditorReviewTimerHeadersCss } from '../lib/editor_review_timer_sticky';
 import { refreshKbPriorityQueueAtStartup } from '../lib/priority_review_document/queue_doc';
 import { bandVerboseLogsEnabled } from '../lib/priority_bands';
 import { registerIncrementalRemTracker } from '../register/tracker';
 import { registerLogosBridge } from '../lib/logos_bridge';
+import { registerMediaBridge } from '../lib/media_bridge';
+import { registerExternalPriorityBridge } from '../lib/external_priority_bridge';
+import { registerExternalCardVideoBridge } from '../lib/external_card_video_bridge';
 import { registerWindowSourcesPresence } from '../lib/window_sources';
+import { registerOpenInWindowListener } from '../lib/open_in_window';
+import { registerFollowQueueSources, startFollowingQueueSources } from '../lib/follow_queue_sources';
+import { registerVideoReviewBar } from '../lib/video_review_bar';
+import { registerImageSizeSession } from '../lib/image_size_session';
 import { cleanupOrphanedReviewGraphs } from '../lib/priority_review_document/cleanup';
 import { migrateAuthoritativeAggregatesToShards } from '../lib/authoritative_aggregates';
 import { registerJumpToRemHelper } from '../register/window';
+import { refreshPriorityColorScale, restorePriorityColorScale } from '../lib/priority_color_scale';
 import { registerPluginHidingCSS, registerPdfHighlightCSS, registerClozeExtractCSS, registerTagBadgeCSS, registerIgnoreTagCSS, registerHighlightBandBadgeCSS, registerTableBandBadgeCSS, registerHasImageCSS, registerPinReferenceCSS } from '../lib/ui_helpers';
 import { installForkGates, registerForkWidgets, registerForkSettingsSignpost, FORK_FEATURES } from '../lib/fork_gates';
 import { getIESetting } from '../lib/settings';
@@ -55,6 +70,7 @@ async function onActivate(plugin: ReactRNPlugin) {
   console.log('Plugin.app methods:', Object.keys(plugin.app));
   console.log('Plugin.storage methods:', Object.keys(plugin.storage));
 
+  startStallMonitor(plugin); // FORK (Deviation 13): a no-op unless FORK_FEATURES.stallDiagnostics
   (window as any).__plugin = plugin;
   registerJumpToRemHelper(plugin);
 
@@ -85,6 +101,9 @@ async function onActivate(plugin: ReactRNPlugin) {
   await registerTrueFalsePowerups(plugin);
   // FORK (Deviation 13): True/False cards are card authoring — gated with the cloze tools.
   if (FORK_FEATURES.clozeTools) registerTrueFalseClusterTracker(plugin);
+  // FORK (Deviation 13, 10297b3 sync): the multiple-choice scissors and the True/False answer
+  // sheet are flashcard-queue extras; their listener, CSS and floating widgets stay off.
+  if (FORK_FEATURES.flashcardQueueExtras) await registerMcScissors(plugin);
   // Settings appear in RemNote's own panel only while this KB still has to read
   // them across — the migration reads through getSetting, which throws for an
   // unregistered id. For an up-to-date KB this list is empty, so the plugin's
@@ -140,12 +159,36 @@ async function onActivate(plugin: ReactRNPlugin) {
   registerPrefetchTrackers(plugin);
   // Long-polls the local Logos helper while the Logos Bridge setting is on.
   if (FORK_FEATURES.pdfReader) registerLogosBridge(plugin); // FORK (Deviation 13): reading-source integration
+  // Long-polls the local media-bridge helper while its setting is on, and stores
+  // in RemNote the images outside tools wrote as links to it (lib/media_bridge.ts).
+  if (FORK_FEATURES.mediaTools) registerMediaBridge(plugin); // FORK (Deviation 13, 10297b3 sync)
+  // Answers card-priority and card-video requests from other plugins
+  // (docs/Priority-Bridge-for-Other-Plugins.md). Card videos first: the
+  // priority bridge announces `ready`, on which clients resend both.
+  // FORK (Deviation 13, 10297b3 sync): both write card priorities / card videos on behalf of
+  // other plugins — off (the card-priority engine is disabled here).
+  if (FORK_FEATURES.pluginBridges) {
+    registerExternalCardVideoBridge(plugin);
+    registerExternalPriorityBridge(plugin);
+  }
   // Publishes this window's open PDFs/articles so a command run in another
   // RemNote window can find them.
   if (FORK_FEATURES.pdfReader) registerWindowSourcesPresence(plugin); // FORK (Deviation 13): feeds only pin-source-quote
+  // FORK (Deviation 13, 10297b3 sync): both belong to the source viewer (pdfReader) — the
+  // first polls the local store every 1.5 s for the lifetime of the window.
+  if (FORK_FEATURES.pdfReader) {
+    // Opens a source another window asks this one to show.
+    void registerOpenInWindowListener(plugin, startFollowingQueueSources);
+    // Shows the sources of the queue's cards in the window that asks to follow it.
+    void registerFollowQueueSources(plugin);
+  }
   await registerWidgets(plugin);
   await registerForkWidgets(plugin); // FORK (Deviation 13): combined History tab
   installQueueInfoBarDock(plugin); // FORK (Deviation 14): dock queue_info_bar in the Beautiful queue
+  // The review timer's floating bar over RemNote's video page.
+  if (FORK_FEATURES.editorReviewTimer) registerVideoReviewBar(plugin); // FORK (Deviation 13, 10297b3 sync)
+  // Runs Cycle Image Size's presses, and what its popup and floating widget ask for.
+  if (FORK_FEATURES.mediaTools) registerImageSizeSession(plugin); // FORK (Deviation 13, 10297b3 sync)
 
   // Register CSS rules
   // PDF highlight CSS is (re)registered reactively: the "peek" toggle (command +
@@ -154,11 +197,15 @@ async function onActivate(plugin: ReactRNPlugin) {
   // key and re-registers here in the index widget. It also runs once on activation
   // (key undefined) to do the initial registration. registerPdfHighlightCSS reads
   // the persisted local flag itself to decide whether to draw the marker borders.
+  // The priority colour map saved by the last run, so badges and bands colour on
+  // the unified scale before this run's caches are warm (lib/priority_color_scale).
+  await restorePriorityColorScale(plugin);
+
   plugin.track(async (rp) => {
     await rp.storage.getSession(pdfHighlightBordersReloadKey); // reactive trigger
-    // Also re-runs when the band→percentile colour mapping changes: the PDF
-    // marker tint is emitted inside this stylesheet.
-    await rp.storage.getSession(priorityBandColorsReloadKey);
+    // Also re-runs when the priority colour map changes: the PDF marker tint is
+    // emitted inside this stylesheet.
+    await rp.storage.getSession(priorityColorScaleKey);
     await registerPdfHighlightCSS(plugin);
   });
 
@@ -168,6 +215,20 @@ async function onActivate(plugin: ReactRNPlugin) {
   plugin.track(async (rp) => {
     const barHeight = await rp.storage.getSession<number>(cardInfoBarHeightKey);
     await registerCardInfoBarDockCss(plugin, barHeight);
+  });
+
+  // The Beautiful queue's top-right strip fits queue_beautiful_bar's content, which the
+  // widget reports (lib/queue_beautiful_bar_fit). Also runs at activation with the default.
+  plugin.track(async (rp) => {
+    const width = await rp.storage.getSession<number>(queueBeautifulBarWidthKey);
+    await registerQueueBeautifulBarFitCss(plugin, width);
+  });
+
+  // The pinned Editor Review Timer sits where RemNote draws its sticky headers, so
+  // they are moved below it by the height the timer reports (lib/editor_review_timer_sticky).
+  plugin.track(async (rp) => {
+    const heights = await rp.storage.getSession<Record<string, number>>(editorReviewTimerHeightsKey);
+    await registerEditorReviewTimerHeadersCss(plugin, heights);
   });
 
   // Band badge colours come from the RELATIVE position of each band in the
@@ -192,6 +253,8 @@ async function onActivate(plugin: ReactRNPlugin) {
         }`
       );
     }
+    // Rebuild the colour map first: every badge, bar and band colours from it.
+    await refreshPriorityColorScale(plugin);
     await registerTableBandBadgeCSS(plugin);
     await registerHighlightBandBadgeCSS(plugin);
     if (cachesWarm) startup.settle('priorityBands', 'done');
@@ -222,6 +285,9 @@ async function onActivate(plugin: ReactRNPlugin) {
   }
 
   await registerMenus(plugin);
+
+  // Answers the Chrome companion extension when it runs in this frame; idle otherwise.
+  if (FORK_FEATURES.chromeCompanion) startCompanionListener(plugin); // FORK (Deviation 13, 10297b3 sync)
 
   // Mobile and Web Browser Light Mode Features
   await handleMobileDetectionOnStartup(plugin);
@@ -325,6 +391,17 @@ async function onActivate(plugin: ReactRNPlugin) {
     startup.track('hiddenSlotCheck', hiddenSlotCheck);
   } else {
     startup.settle('hiddenSlotCheck', 'skipped');
+  }
+
+  // Keeps the duplicate-source index current. Well after startup, since it is the
+  // lowest-priority work here, and not in light mode, where the Synced index built
+  // by a full-mode device is used as it stands.
+  if (FORK_FEATURES.duplicateSources && !useLightMode) { // FORK (Deviation 13, 10297b3 sync)
+    setTimeout(() => {
+      refreshSourceUrlIndexIfDue(plugin).catch((err) =>
+        console.warn('[DuplicateSource] Index scan failed', err)
+      );
+    }, 120000);
   }
 
   // The band stylesheets are normally re-registered warm by the caches' own

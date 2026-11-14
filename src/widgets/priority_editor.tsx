@@ -4,14 +4,16 @@ import {
   useRunAsync,
   useTrackerPlugin,
 } from '@remnote/plugin-sdk';
+import { withHoverTips } from '../components/HoverTipLayer';
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { getIncrementalRemFromRem } from '../lib/incremental_rem';
 import { getCardPriority, CardPriorityInfo } from '../lib/card_priority';
-import { allIncrementalRemKey, allCardPriorityInfoKey, pageRangeWidgetId, pendingPriorityDeltaQueueKey, priorityEditorDisplayModeId } from '../lib/consts';
+import { pageRangeWidgetId, pendingPriorityDeltaQueueKey, priorityEditorDisplayModeId } from '../lib/consts';
 import { withQueueMutex } from '../lib/mutex';
 import { PriorityDeltaEntry } from '../lib/quick_priority';
 import { IncrementalRem } from '../lib/incremental_rem';
-import { calculateRelativePercentile, formatDuration } from '../lib/utils';
+import { formatDuration } from '../lib/utils';
+import { priorityScalePercentile, usePriorityColorScale } from '../components/priorityColor';
 import { PriorityBadge, ReadPointIcon } from '../components';
 import {
   getActivePdfForIncRem,
@@ -172,10 +174,11 @@ export function PriorityEditor() {
     await plugin.app.toast('Active PDF updated');
   }, [plugin, remId, viewedPdfRemId, activePdfId]);
 
-  // SUPER OPTIMIZED: Combine priority queries into a single hook.
-  // Host range/history/stats are fetched in a separate tracker below so that
-  // priority cache flushes (during inheritance cascades) don't trigger refetches
-  // of unrelated host data.
+  // SUPER OPTIMIZED: Combine the Rem's own priority queries into a single hook.
+  // The priority caches are read in a separate tracker below, and host
+  // range/history/stats in another, so that cache flushes (during inheritance
+  // cascades) don't refetch the Rem, and a priority write doesn't wait on — or
+  // re-read — the ~8MB card cache before the new value can show.
   const remData = useTrackerPlugin(
     async (plugin) => {
       if (!remId) return null;
@@ -184,13 +187,11 @@ export function PriorityEditor() {
       if (!rem) return null;
 
       // Execute priority queries in parallel for maximum performance.
-      const [incRemInfo, cardInfo, cards, hasPowerup, allIncRems, allPrioritizedCardInfo, displayMode] = await Promise.all([
+      const [incRemInfo, cardInfo, cards, hasPowerup, displayMode] = await Promise.all([
         getIncrementalRemFromRem(plugin, rem),
         getCardPriority(plugin, rem),
         rem.getCards(),
         rem.hasPowerup('cardPriority'),
-        plugin.storage.getSession<IncrementalRem[]>(allIncrementalRemKey),
-        plugin.storage.getSession<CardPriorityInfo[]>(allCardPriorityInfoKey),
         getIESetting(plugin, priorityEditorDisplayModeId),
       ]);
 
@@ -200,25 +201,13 @@ export function PriorityEditor() {
       // round-trips this widget already makes per Rem.
       const hasReadPoint = incRemInfo ? await hasRemReadPoint(rem) : false;
 
-      // Calculate relative priorities inline
-      const incRemRelativePriority = (incRemInfo && allIncRems && allIncRems.length > 0)
-        ? calculateRelativePercentile(allIncRems, rem._id)
-        : 50;
-
-      // Calculate card relative priority inline using pre-calculated kbPercentile
-      const cardPriorityInfo = allPrioritizedCardInfo?.find(info => info.remId === rem._id);
-      const cardRelativePriority = cardPriorityInfo?.kbPercentile ?? null;
-
       return {
         rem,
         incRemInfo,
         cardInfo,
         hasCards: cards && cards.length > 0,
         hasPowerup,
-        incRemRelativePriority,
-        cardRelativePriority,
         hasReadPoint,
-        allPrioritizedCardInfo: allPrioritizedCardInfo || [],
         // FORK (Deviation 13): this fork offers on/off only — 'all' is upstream's
         // "also show a card-priority editor on rems with flashcards", and the
         // card-priority engine is disabled here. A value stored before the
@@ -261,12 +250,16 @@ export function PriorityEditor() {
   const cardInfo = remData?.cardInfo ?? null;
   const hasCards = remData?.hasCards ?? false;
   const hasCardPriorityPowerup = remData?.hasPowerup ?? false;
-  const incRemRelativePriority = remData?.incRemRelativePriority ?? null;
-  const cardRelativePriority = remData?.cardRelativePriority ?? null;
   const hasReadPoint = remData?.hasReadPoint ?? false;
-  const allPrioritizedCardInfo = remData?.allPrioritizedCardInfo ?? [];
   // FORK (Deviation 13): 'incRemOnly' is this fork's "on" — see the coercion above.
   const displayMode = remData?.displayMode ?? 'incRemOnly';
+
+  // Badge colours come from the priority colour map (PriorityBadge): the
+  // priority's place among all IncRems and cards. No per-row ranking, so this
+  // widget, mounted once per visible Rem, never reads the multi-megabyte caches.
+  const colorScale = usePriorityColorScale();
+  const incRemRelativePriority = incRemInfo ? priorityScalePercentile(colorScale, incRemInfo.priority) ?? null : null;
+  const cardRelativePriority = cardInfo ? priorityScalePercentile(colorScale, cardInfo.priority) ?? null : null;
 
   // Read point (the reading position of a rem-type outline), resolved in full:
   // the path down to it, and the text of every rem along the way. That costs a
@@ -1161,4 +1154,4 @@ export function PriorityEditor() {
   );
 }
 
-renderWidget(PriorityEditor);
+renderWidget(withHoverTips(PriorityEditor));

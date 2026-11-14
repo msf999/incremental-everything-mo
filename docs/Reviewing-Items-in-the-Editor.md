@@ -27,8 +27,8 @@ The **Execute Repetition** command (`Ctrl+Shift+J`) lets you register a review o
    ![Execute Repetition popup](assets/review-in-editor.png){ width="500" }
 
 4. Choose from the available options:
-   - **Manual time entry**: Enter the time you spent (in seconds) and click Submit.
-   - **Timer mode**: Start a timer, review the content, then stop and submit.
+   - **Manual time entry**: Enter the time you spent (in minutes) in **Review time** and click **Confirm Review**.
+   - **Timer mode**: Click **⏱️ Start Timer**, review the content, then stop and submit. If you already typed a **Review time**, the timer starts from it instead of from zero, just like *Review in Editor* in the queue carries your reading time forward.
    - **📝 Note** (optional): an observation stored on this repetition's history entry — shown later in the [Repetition History popup](Plugin-Widgets-Reference.md#212-increm-repetition-history-aggregated-view). If you choose **Start Timer**, the note is handed to the timer and saved when the session ends (you can still extend it there).
 
 ### Key Behavior
@@ -38,6 +38,8 @@ The **Execute Repetition** command (`Ctrl+Shift+J`) lets you register a review o
 - **Multi-PDF support**: If the Inc Rem has **more than one PDF source**, a PDF dropdown appears just above the Page Controls. Selecting a different PDF pins it as active for this Inc Rem (★ marks the `#preferthispdf` one) — Start Timer will then open and scroll to that PDF, and any subsequent reading-time writes target it. See the [PDF-Incremental-Reading-Workflow#multiple-pdf-sources--active-pdf-switcher-and-preferthispdf](PDF-Incremental-Reading-Workflow.md#multiple-pdf-sources-active-pdf-switcher-and-preferthispdf) section for the resolution chain.
 - **Records review time**: The time you enter is saved in the repetition history.
 - **Schedules next review**: Uses the same [scheduler](IncRem-Scheduler.md) as the queue's "Next" button.
+- **Same-day review**: If the Rem was already reviewed today and isn't due yet, the popup says *"Same-day review"* and fills in the days to the date already in force. Confirm them unchanged to keep that date, or type other days. See [Same-day reviews](IncRem-Scheduler.md#same-day-reviews).
+- **Closes instantly**: **Confirm Review** closes the popup right away and the repetition is saved in the background a moment later. If it can't be saved (for example, the Rem was deleted meanwhile), a dialog tells you. If you changed the priority, the inherited priorities of the flashcards below the Rem are updated too.
 - **Indicator in history**: Shows with a ⌨️ indicator in the Repetition History widget.
 - **Ahead-of-Schedule Warning Banner**: If you review an Incremental Rem before its scheduled due date, an amber warning banner will appear at the top of the popup informing you how many days early you are:
 
@@ -110,7 +112,7 @@ Sequential Review solves this by creating a dedicated, queue-like experience tha
 
 Once you click the button, you are transported to the editor for the first item in the list, and the **Editor Review Timer** widget appears at the bottom of your screen. 
 
-The timer provides a range of powerful controls to manage your session without the risk of overlapping text in smaller windows.
+The timer provides a range of powerful controls to manage your session without the risk of overlapping text in smaller windows. **Next**, **Dismiss** and **End Review** act instantly: the repetition is saved in the background a moment later, and a dialog tells you if it could not be (for example, the Rem was deleted meanwhile).
 
 1.  **Review your material**: Read, edit, extract highlights, or create flashcards using the full power of the editor.
 2.  **Pause if needed**: If you need to step away mid-review, click the **⏸ Pause** button to freeze the timer. Click **▶ Resume** to continue. Only active (non-paused) time is recorded when the repetition is saved.
@@ -119,9 +121,10 @@ The timer provides a range of powerful controls to manage your session without t
     * *What happens under the hood*: Just like the "Dismiss" button in the queue, this records your final review time, transfers your history to the **Dismissed** powerup, and **removes the Incremental status** from the Rem, effectively clearing it from your active learning universe. It also stamps the Rem's priority onto its `cardPriority` tag, so the value outlives the Incremental powerup and anchors every flashcard created under that Rem afterwards — see [Priority Sources](Priorities-for-Flashcards.md#priority-sources). The dismissal also appears in the [Incremental Rem History](Plugin-Widgets-Reference.md#221-incremental-rem-history) sidebar with a 🔴 **Dismissed** badge.
     * *When there are no further items queued* (e.g. single-item flows via `Ctrl+Shift+J`), Dismiss finalizes the item and ends the timer in place. When a queueList is present (Sequential Review), it dismisses the current item and advances to the next one.
 4.  **Move to the next item**: When you are finished with the current review but want the item to remain incremental for future sessions, click the **Next (N) →** button on the timer widget.
-    * *What happens under the hood*: The plugin instantly records your repetition (logging the time spent and pushing the Next Rep Date forward), saves this reading history to the Incremental Tracker, and instantly teleports you to the editor of the *next* item in your sorted list.
+    * *What happens under the hood*: The plugin records your repetition in the background (logging the time spent and pushing the Next Rep Date forward), saves this reading history to the Incremental Tracker, and instantly teleports you to the editor of the *next* item in your sorted list, with a fresh, unpaused timer.
 5.  **Finish the session**: If you want to stop reviewing before the list is empty, simply click **"End Review"** on the green primary button. The destination sub-label ("and Back to IncRem List") confirms where you will land.
 6.  **Cancel Timer**: Discard the current item's timer and stay in the editor.
+7.  **↗ Go to Rem**: Return to the Rem under review in this pane. **Shift+click** opens it in a new pane beside the current document instead (or switches to the pane already showing it), so whatever you have open stays put.
 
 ### Multi-PDF Support in the Timer
 
@@ -138,6 +141,16 @@ The switcher is hidden when the Inc Rem has zero or one PDF sources. See [PDF-In
 The timer widget is designed to be fully responsive. If used in a narrow sidebar or a collapsed window, the buttons and controls will automatically wrap into multiple lines to prevent overlap and ensure the timer remains legible.
 
 ![Editor Review Timer with new Dismiss button and two-line labels](assets/review-timer-done-button.png){ width="800" }
+
+#### Always in view { #timer-stays-in-view }
+
+The timer stays pinned to the top of the pane while you scroll, so **Next**, **Dismiss** and **End Review** are always within reach, however long the document is.
+
+In a split view, only **one pane** shows the timer: the top-most one, or the left-most of the panes on the same row. It stays there while you move through items with **Next**. If you close that pane, the timer moves to the next pane in that order within a couple of seconds. Panes in other RemNote tabs don't count.
+
+RemNote's **sticky headers** (the parent Rems that stay visible while you scroll their descendants) are moved down to sit just below the timer, and return to the top of the pane when the review ends. Panes without the timer keep their sticky headers at the top.
+
+RemNote does not show this bar inside the PDF viewer itself: press **Notes** to open the Rem that holds the PDF, and the timer is there.
 
 This flow provides the best of both worlds: the queue sorting, combined with the unrestricted creative workspace of the full editor!
 

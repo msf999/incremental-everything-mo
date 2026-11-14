@@ -1,4 +1,5 @@
 import { renderWidget, usePlugin, useTrackerPlugin } from '@remnote/plugin-sdk';
+import { withHoverTips } from '../components/HoverTipLayer';
 import React, { CSSProperties, useEffect, useMemo, useState } from 'react';
 import {
   SpeedCalibrationPeriod,
@@ -55,7 +56,9 @@ const FORK_VISIBLE_IDS_BY_GROUP = FORK_IE_LAYOUT.map(({ group, ids, blocks }) =>
 const FORK_VISIBLE_IDS = FORK_VISIBLE_IDS_BY_GROUP.flatMap((g) => g.ids);
 
 /** Section label/blurb/help: fork sections first, then upstream's. */
-const groupSpec = (group: string): { label: string; blurb?: string; helpPath?: string; warning?: string } =>
+const groupSpec = (
+  group: string
+): { label: string; blurb?: string; helpPath?: string; warning?: string; warningLink?: { label: string; path: string } } =>
   FORK_IE_GROUPS[group] ?? (IE_SETTING_GROUPS as any)[group] ?? { label: group };
 
 /**
@@ -272,6 +275,7 @@ function SettingRow({ id, spec, value, onChange, hiddenDependents }: RowProps) {
         <span style={{ fontSize: 13, fontWeight: 600 }}>{spec.title}</span>
         {spec.helpPath && <HelpLink path={spec.helpPath} label={spec.title} />}
         {spec.reloadRequired && <Badge tone="neutral">needs reload</Badge>}
+        {spec.perKnowledgeBase && <Badge tone="neutral">this knowledge base</Badge>}
         {modified && <Badge tone="neutral">modified</Badge>}
       </div>
 
@@ -643,10 +647,30 @@ export function IESettingsWidget() {
                       border: '1px solid rgba(245, 158, 11, 0.45)',
                       backgroundColor: 'rgba(245, 158, 11, 0.10)',
                       color: 'var(--rn-clr-content-primary, #0f172a)',
+                      whiteSpace: 'pre-line',
                     }}
                   >
                     <strong>⚠️ </strong>
                     {groupSpec(group).warning}
+                    {groupSpec(group).warningLink && (
+                      <>
+                        {' '}
+                        <button
+                          onClick={() => openDocs(groupSpec(group).warningLink!.path)}
+                          style={{
+                            padding: 0,
+                            border: 'none',
+                            background: 'transparent',
+                            color: 'var(--rn-clr-content-accent, #2563eb)',
+                            textDecoration: 'underline',
+                            cursor: 'pointer',
+                            font: 'inherit',
+                          }}
+                        >
+                          {groupSpec(group).warningLink!.label}
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
                 {(() => {
@@ -702,4 +726,4 @@ export function IESettingsWidget() {
   );
 }
 
-renderWidget(IESettingsWidget);
+renderWidget(withHoverTips(IESettingsWidget));

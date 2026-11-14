@@ -11,13 +11,17 @@
  *            "When I press Hard vs Easy, does FSRS adjust stability sensibly?"
  *
  * Avg pR convention matches `card_analytics.ts` so R-dev numbers are comparable:
- *   - skip the first gradeable rep of each post-RESET lifetime (no prior state),
+ *   - only reps that test a prediction are scored (lib/scored_reps.ts): never
+ *     the first gradeable rep of a lifetime (no prior state), never a rep on the
+ *     same calendar day as the previous one (a learning/relearning step). Both
+ *     still drive the FSRS replay;
  *   - for learning/relearning reps where FSRS leaves r=null, fall back to the
  *     forgetting curve computed from the previous gradeable rep's stability.
  */
 
 import { RNPlugin, QueueInteractionScore } from '@remnote/plugin-sdk';
-import { computeFSRSStatesPerReview, forgettingCurve, resolveWeights } from './fsrs';
+import { computeFSRSStatesPerReview, countsForMainCard, forgettingCurve, resolveWeights } from './fsrs';
+import { dayDiff, isScoredRep } from './scored_reps';
 import {
   S0Breakdown,
   S0GradeAcc,
@@ -46,21 +50,9 @@ function stabilityBucket(days: number): number {
   return S_BUCKET_BOUNDS_DAYS.length;
 }
 
-/**
- * Calendar-day index helpers for the S₀ slice. fsrs-optimizer measures the
- * first interval in whole days (`real_days.diff()`) and discards `delta_t == 0`
- * rows, so "same day" must mean same calendar day, not "under 24h elapsed".
- * Rounding the millisecond difference absorbs DST shifts.
- */
-function startOfLocalDay(ms: number): number {
-  const d = new Date(ms);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-}
-
-function dayDiff(fromMs: number, toMs: number): number {
-  return Math.round((startOfLocalDay(toMs) - startOfLocalDay(fromMs)) / 86400000);
-}
+// Calendar days: fsrs-optimizer measures intervals in whole days
+// (`real_days.diff()`) and discards `delta_t == 0` rows, so "same day" means
+// same calendar day, not "under 24h elapsed". See lib/scored_reps.ts.
 
 function rBucket(predR: number): number {
   // predR is 0..1; clamp and floor into 20 bins.
@@ -127,6 +119,8 @@ export interface FSRSCalibrationBreakdown {
   initialStability: S0Breakdown;
 
   totalCards: number;
+  /** Cards left out by the "Exclude other schedulers" checkbox. */
+  excludedOtherSchedulerCards: number;
   ignorePreReset: boolean;
 
   // Period metadata — mirrors CardAnalyticsBreakdown so the view can sync its
@@ -172,13 +166,16 @@ export async function computeFSRSCalibrationBreakdown(
   ignorePreReset: boolean,
   period: PeriodSpec,
   onProgress?: (done: number, total: number) => void,
+  /** Cards to leave out entirely, from lib/scheduler_cards.ts. */
+  excludedCardIds?: Set<string> | null,
 ): Promise<FSRSCalibrationBreakdown> {
   const { startMs, endMs } = period;
   const { w } = resolveWeights(weights);
   const DECAY = -w[20];
   const FACTOR = Math.pow(0.9, 1 / DECAY) - 1;
 
-  const allCards = (await plugin.card.getAll()) || [];
+  const everyCard = (await plugin.card.getAll()) || [];
+  const allCards = excludedCardIds ? everyCard.filter((c) => !excludedCardIds.has(c._id)) : everyCard;
 
   // Pre-allocate the accumulators for all three grids.
   const accA: CellAcc[][] = Array.from({ length: R_BUCKET_COUNT }, () =>
@@ -205,7 +202,9 @@ export async function computeFSRSCalibrationBreakdown(
     const history = card.repetitionHistory ?? [];
     if (history.length === 0) continue;
 
-    const sorted = [...history].sort((a: any, b: any) => a.date - b.date);
+    // Partial multi-line reps test only some items, so they say nothing about the
+    // main card's predicted R.
+    const sorted = history.filter(countsForMainCard).sort((a: any, b: any) => a.date - b.date);
     let effective: any[] = sorted;
     if (ignorePreReset) {
       const lastResetIdx = sorted.map((h: any) => h.score).lastIndexOf(QueueInteractionScore.RESET);
@@ -293,7 +292,12 @@ export async function computeFSRSCalibrationBreakdown(
         continue;
       }
 
-      if (h.date >= startMs && h.date < endMs) {
+      // A same-day step still moves FSRS (it advances the pointers below) but
+      // is not scored: see lib/scored_reps.ts.
+      const scored = isScoredRep(effective[lastGradeableIdx].date, h.date);
+
+      // The optimizer's `average_recall` is taken over `delta_t > 0` rows too.
+      if (scored && h.date >= startMs && h.date < endMs) {
         globalReps++;
         if (h.score !== QueueInteractionScore.AGAIN) globalRetained++;
       }
@@ -312,7 +316,7 @@ export async function computeFSRSCalibrationBreakdown(
       if (predR !== null && !Number.isFinite(predR)) predR = null;
 
       const inPeriod = h.date >= startMs && h.date < endMs;
-      if (inPeriod && predR !== null) {
+      if (scored && inPeriod && predR !== null) {
         const retained = h.score !== QueueInteractionScore.AGAIN ? 1 : 0;
 
         // ----- Grid A: predR × prior S -----
@@ -370,7 +374,10 @@ export async function computeFSRSCalibrationBreakdown(
       // Advance the pointers regardless of period membership.
       lastLastGradeableIdx = lastGradeableIdx;
       lastGradeableIdx = i;
-      lastPredR = predR;
+      // Grid C keys on the previous rep's predicted R. After a same-day step
+      // that R was a minutes-old ~100%, not a test of the model, so the next
+      // rep is left out of Grid C rather than filed as "on time".
+      lastPredR = scored ? predR : null;
     }
 
     if ((cardIdx + 1) % YIELD_EVERY === 0) {
@@ -429,6 +436,7 @@ export async function computeFSRSCalibrationBreakdown(
     ),
 
     totalCards: N,
+    excludedOtherSchedulerCards: everyCard.length - N,
     ignorePreReset,
     period: period.id,
     periodStartMs: period.startMs,

@@ -3,16 +3,17 @@ import React, { useEffect, useState } from 'react';
 import { PriorityBadge } from './PriorityBadge';
 import {
   displayQueueToolbarPriorityId,
-  allIncrementalRemKey,
   allCardPriorityInfoKey,
   currentIncRemKey,
+  pendingCardPriorityKey,
 } from '../lib/consts';
-import { CardPriorityInfo, getCardPriority } from '../lib/card_priority';
-import { getIncrementalRemFromRem, IncrementalRem } from '../lib/incremental_rem';
+import { CardPriorityInfo, estimateCardRemPercentile, getCardPriority } from '../lib/card_priority';
+import { getIncrementalRemFromRem } from '../lib/incremental_rem';
 import { getPendingCacheUpdate } from '../lib/card_priority/cache';
-import { calculateRelativePercentile } from '../lib/utils';
+import { PendingCardPriority, pendingCardPriorityFor } from '../lib/card_priority/pending_priority';
 import { getEffectivePerformanceMode } from '../lib/mobileUtils';
 import { useIESetting } from '../lib/settings';
+import { getQueueVisibleCard } from '../lib/queue_visible_card';
 
 /**
  * The current queue item's priority badge; click opens the priority popup.
@@ -40,7 +41,8 @@ export function QueuePriorityBadge({ active = true }: { active?: boolean }) {
     let isMounted = true;
     const checkCard = async () => {
       try {
-        const card = await plugin.queue.getCurrentCard();
+        // Cluster-aware: follows the sibling on screen, not the cluster's anchor card.
+        const card = await getQueueVisibleCard(plugin);
         if (isMounted) setPolledCardRemId(card?.remId);
       } catch (e) {
         // ignore
@@ -80,11 +82,11 @@ export function QueuePriorityBadge({ active = true }: { active?: boolean }) {
   );
   const useLightMode = effectiveMode === 'light';
 
-  // Incremental data
-  const allIncRems = useTrackerPlugin(
-    (rp) => rp.storage.getSession<IncrementalRem[]>(allIncrementalRemKey),
+  // What a priority popup just saved, until the tracker's cache write catches up.
+  const pendingCardPriority = useTrackerPlugin(
+    (rp) => rp.storage.getSession<PendingCardPriority>(pendingCardPriorityKey),
     []
-  ) || [];
+  );
 
   // Card cache data
   const allPrioritizedCardInfo = useTrackerPlugin(
@@ -119,19 +121,22 @@ export function QueuePriorityBadge({ active = true }: { active?: boolean }) {
   if (incRemInfo) {
     priority = incRemInfo.priority;
     source = 'incremental';
-    if (!useLightMode && allIncRems.length > 0) {
-      percentile = calculateRelativePercentile(allIncRems, incRemInfo.remId);
-    }
+    // Its colour comes from the priority colour map (PriorityBadge); no ranking here.
   } else {
     // Card logic
     const cardCacheInfo = allPrioritizedCardInfo?.find(info => info.remId === rem._id);
-    const finalCardInfo = cardCacheInfo || lightCardInfo;
+    const baseCardInfo = cardCacheInfo || lightCardInfo;
+    const pending = pendingCardPriorityFor(pendingCardPriority, rem._id, baseCardInfo);
 
-    if (finalCardInfo) {
-      priority = finalCardInfo.priority;
-      source = finalCardInfo.source;
+    if (baseCardInfo) {
+      priority = pending?.priority ?? baseCardInfo.priority;
+      source = pending?.source ?? baseCardInfo.source;
       if (!useLightMode && cardCacheInfo) {
-        percentile = cardCacheInfo.kbPercentile;
+        // The cached kbPercentile was ranked with the old priority; estimate the
+        // new one's place until the cache catches up.
+        percentile = priority !== cardCacheInfo.priority && allPrioritizedCardInfo
+          ? estimateCardRemPercentile(allPrioritizedCardInfo, rem._id, priority)
+          : cardCacheInfo.kbPercentile;
       }
     }
   }

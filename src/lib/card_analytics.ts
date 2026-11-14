@@ -15,9 +15,11 @@ import { CardPriorityInfo } from './card_priority/types';
 import {
   computeFSRSState,
   computeFSRSStatesPerReview,
+  countsForMainCard,
   forgettingCurve,
   resolveWeights,
 } from './fsrs';
+import { isScoredRep } from './scored_reps';
 
 export interface CardBucketStats {
   label: string;          // "0-10%" or "All KB"
@@ -54,7 +56,8 @@ export interface CardBucketStats {
   stalePct: number;       // staleCount / active
   // Throughput — all aggregates use gradeable reps (Again/Hard/Good/Easy)
   // over the full history, with each rep's responseTime capped at cardCapMs
-  // (matches study_dashboard / practiced_queues).
+  // (matches study_dashboard / practiced_queues). Partial multi-line reps count
+  // here because they are real work; the Outcome and FSRS stats below leave them out.
   totReps: number;        // total gradeable reps
   totTimeMs: number;      // total capped response time
   avgReps: number;        // totReps / cards
@@ -64,8 +67,8 @@ export interface CardBucketStats {
   avgCostMinPerYear: number; // mean of per-card cost over cards with cost
   // Outcome
   avgLapses: number;      // mean over non-new cards
-  retention: number;      // 0-100, (gradeableReps - agains) / gradeableReps
-  avgPredR: number;       // 0-100, mean predicted R over every step where r != null
+  retention: number;      // 0-100, pass rate over the scored reps (lib/scored_reps.ts)
+  avgPredR: number;       // 0-100, mean predicted R over the same scored reps
   rDevPP: number;         // retention - avgPredR (percentage points)
   avgGrade: number;       // 1-4
   // FSRS current state (today)
@@ -105,6 +108,8 @@ export interface CardAnalyticsBreakdown {
    * `byPriorityPrefix[100]` equals `overall` (modulo label / priorityRange).
    */
   byPriorityPrefix: CardBucketStats[];
+  /** Cards left out by the "Exclude other schedulers" checkbox. */
+  excludedOtherSchedulerCards: number;
   /** False when no paused-deck scan was available, so `paused` counts read 0
    *  because nothing was looked at — not because nothing is paused. */
   pausedScanApplied: boolean;
@@ -123,7 +128,9 @@ interface AccData {
   // Throughput aggregates (all over gradeable reps in the FULL history, capped responseTime)
   totGradeableReps: number;
   totTimeMs: number;
-  totAgains: number;
+  /** Scored reps (lib/scored_reps.ts) — the denominator for retention AND Avg pR. */
+  totScoredReps: number;
+  totScoredAgains: number;
   // Outcome aggregates
   totLapses: number;
   nonNewCards: number;
@@ -152,7 +159,14 @@ interface PerCardStats {
   gradeableReps: number;
   /** Sum of response time across gradeable reps, each capped at cardCapMs. */
   totalTimeMs: number;
-  agains: number;
+  /**
+   * Main-card reps in the period that test a prediction (lib/scored_reps.ts),
+   * and the Agains among them: retention is taken over exactly the reps Avg pR
+   * is, so R-dev compares like with like.
+   */
+  scoredReps: number;
+  scoredAgains: number;
+  /** Every main-card Again in the period, first reps and same-day steps included. */
   lapses: number;
   cost: number | null;
   sumPredR: number;
@@ -182,7 +196,8 @@ function mergeAcc(a: AccData, b: AccData): AccData {
     staleCount: a.staleCount + b.staleCount,
     totGradeableReps: a.totGradeableReps + b.totGradeableReps,
     totTimeMs: a.totTimeMs + b.totTimeMs,
-    totAgains: a.totAgains + b.totAgains,
+    totScoredReps: a.totScoredReps + b.totScoredReps,
+    totScoredAgains: a.totScoredAgains + b.totScoredAgains,
     totLapses: a.totLapses + b.totLapses,
     nonNewCards: a.nonNewCards + b.nonNewCards,
     sumCost: a.sumCost + b.sumCost,
@@ -211,7 +226,8 @@ function makeAcc(): AccData {
     staleCount: 0,
     totGradeableReps: 0,
     totTimeMs: 0,
-    totAgains: 0,
+    totScoredReps: 0,
+    totScoredAgains: 0,
     totLapses: 0,
     nonNewCards: 0,
     sumCost: 0,
@@ -246,7 +262,8 @@ function gradeValue(score: QueueInteractionScore): number | null {
   }
 }
 
-function computeCardStats(
+/** Exported for tests. */
+export function computeCardStats(
   card: any,
   weights: number[] | null,
   now: number,
@@ -274,7 +291,7 @@ function computeCardStats(
   // ---- Period-filtered tallies (Reps, Time, Lapses, Retention, Grade) ----
   let gradeableReps = 0;
   let totalTimeMs = 0;
-  let agains = 0;
+  let lapses = 0;
   let sumGrade = 0;
   let gradeCount = 0;
 
@@ -284,14 +301,14 @@ function computeCardStats(
     gradeableReps++;
     const t = Math.min(Math.max(0, h.responseTime || 0), cardCapMs);
     totalTimeMs += t;
-    if (h.score === QueueInteractionScore.AGAIN) agains++;
+    if (!countsForMainCard(h)) continue;
+    if (h.score === QueueInteractionScore.AGAIN) lapses++;
     const g = gradeValue(h.score);
     if (g !== null) {
       sumGrade += g;
       gradeCount++;
     }
   }
-  const lapses = agains;
 
   // ---- Always-current population flags (isNew, isDue, isStale) ------------
   //
@@ -349,13 +366,17 @@ function computeCardStats(
   // only over reps in the period — same period filter as Reps/Time/Retention.
   let sumPredR = 0;
   let predRCount = 0;
+  let scoredReps = 0;
+  let scoredAgains = 0;
   let d: number | null = null;
   let s: number | null = null;
   let rToday: number | null = null;
 
   if (!isNew) {
     try {
-      const steps = computeFSRSStatesPerReview(effective, weights);
+      // Main-card reps only, so `steps` and the walk below index the same list.
+      const mainHistory = effective.filter(countsForMainCard);
+      const steps = computeFSRSStatesPerReview(mainHistory, weights);
       // FSRS leaves step.r null for learning/relearning state reps; we want
       // Avg pR's denominator to match Retention's (every gradeable rep except
       // the first of each FSRS "lifetime"), so we compute the forgetting-curve
@@ -365,8 +386,8 @@ function computeCardStats(
       const FACTOR = Math.pow(0.9, 1 / DECAY) - 1;
 
       let lastGradeableIdx: number | null = null;
-      for (let i = 0; i < effective.length; i++) {
-        const h = effective[i];
+      for (let i = 0; i < mainHistory.length; i++) {
+        const h = mainHistory[i];
 
         // RESET ends the current "lifetime" — the next gradeable rep is
         // effectively a brand-new card and gets skipped just like the first
@@ -385,22 +406,26 @@ function computeCardStats(
           continue;
         }
 
-        if (inPeriod(h)) {
+        // Same-day steps move the replay but are not scored (lib/scored_reps.ts).
+        if (inPeriod(h) && isScoredRep(mainHistory[lastGradeableIdx].date, h.date)) {
           const step = steps[i];
           let r: number | null = step?.r ?? null;
           if (r === null) {
             // Learning/relearning rep: replicate the FSRS forgetting curve
             // using the previous gradeable rep's stability.
             const prevS = steps[lastGradeableIdx]?.s ?? 0;
-            const prevDate = effective[lastGradeableIdx].date;
+            const prevDate = mainHistory[lastGradeableIdx].date;
             const elapsedDays = (h.date - prevDate) / (1000 * 60 * 60 * 24);
             if (prevS > 0 && elapsedDays >= 0) {
               r = forgettingCurve(elapsedDays, prevS, DECAY, FACTOR);
             }
           }
+          // Retention is counted on the same reps, so the two share a denominator.
           if (r !== null && Number.isFinite(r)) {
             sumPredR += r;
             predRCount++;
+            scoredReps++;
+            if (h.score === QueueInteractionScore.AGAIN) scoredAgains++;
           }
         }
 
@@ -426,7 +451,8 @@ function computeCardStats(
     isPaused,
     gradeableReps,
     totalTimeMs,
-    agains,
+    scoredReps,
+    scoredAgains,
     lapses,
     cost,
     sumPredR,
@@ -464,7 +490,8 @@ function accumulate(acc: AccData, stats: PerCardStats, priority: number) {
 
   acc.totGradeableReps += stats.gradeableReps;
   acc.totTimeMs += stats.totalTimeMs;
-  acc.totAgains += stats.agains;
+  acc.totScoredReps += stats.scoredReps;
+  acc.totScoredAgains += stats.scoredAgains;
 
   if (!stats.isNew) {
     acc.totLapses += stats.lapses;
@@ -515,12 +542,12 @@ function finalize(acc: AccData, label: string): CardBucketStats {
   const avgCost = acc.cardsWithCost > 0 ? acc.sumCost / acc.cardsWithCost : 0;
   const avgLapses = acc.nonNewCards > 0 ? acc.totLapses / acc.nonNewCards : 0;
   const retention =
-    acc.totGradeableReps > 0
-      ? ((acc.totGradeableReps - acc.totAgains) / acc.totGradeableReps) * 100
+    acc.totScoredReps > 0
+      ? ((acc.totScoredReps - acc.totScoredAgains) / acc.totScoredReps) * 100
       : 0;
   const avgPredR = acc.predRCount > 0 ? (acc.sumPredR / acc.predRCount) * 100 : 0;
   // R-deviation only meaningful when both retention and predicted R have a basis.
-  const rDevPP = acc.totGradeableReps > 0 && acc.predRCount > 0 ? retention - avgPredR : 0;
+  const rDevPP = acc.totScoredReps > 0 && acc.predRCount > 0 ? retention - avgPredR : 0;
   const avgGrade = acc.gradeCount > 0 ? acc.sumGrade / acc.gradeCount : 0;
   const avgD = acc.fsrsCount > 0 ? acc.sumD / acc.fsrsCount : 0;
   const avgS = acc.fsrsCount > 0 ? acc.sumS / acc.fsrsCount : 0;
@@ -684,6 +711,8 @@ export async function computeCardAnalyticsBreakdown(
    * expected to say so, rather than let "we never looked" read as "none".
    */
   pausedRemIds?: Set<string> | null,
+  /** Cards to leave out entirely, from lib/scheduler_cards.ts. They don't shift anyone's percentile. */
+  excludedCardIds?: Set<string> | null,
 ): Promise<CardAnalyticsBreakdown> {
   const { startMs, endMs } = period;
   // Map remId → inherited rem priority. Filter out rems with explicit zero cards.
@@ -699,8 +728,10 @@ export async function computeCardAnalyticsBreakdown(
 
   const validCards: any[] = [];
   let cardsSkippedNoPriority = 0;
+  let excludedOtherSchedulerCards = 0;
   for (const c of allCards) {
-    if (remPriority.has(c.remId)) validCards.push(c);
+    if (excludedCardIds?.has(c._id)) excludedOtherSchedulerCards++;
+    else if (remPriority.has(c.remId)) validCards.push(c);
     else cardsSkippedNoPriority++;
   }
 
@@ -818,6 +849,7 @@ export async function computeCardAnalyticsBreakdown(
     totalCards: N,
     computedAt: Date.now(),
     pausedScanApplied: !!pausedRemIds,
+    excludedOtherSchedulerCards,
     cardsSkippedNoPriority,
     ignorePreReset,
     period: period.id,
