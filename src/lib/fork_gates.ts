@@ -114,11 +114,15 @@ export const FORK_FEATURES = {
       disabled PDF Control Panel's known-rem index). */
   remSourceCopyPaste: false,
   /** Upstream's priority-change history (v1.0.77): a 'priorityChange' entry in the
-      rem's Incremental history on every priority edit. Off: setIncRemPriority writes
-      the slot only (recordHistory forced false). Option, off — owner decision 2026-10-10. */
-  priorityChangeHistory: false,
-  /** Localize media (store linked images/audio in RemNote) and Cycle Image Size:
-      manual editor utilities. Option, off — owner decision 2026-10-10. */
+      rem's Incremental history on every priority edit. ON since 2026-11-14 (owner decision),
+      because `warmStartCache` needs it: that entry is the only thing a priority write leaves
+      on the tagged Rem itself, so it is what tells the warm start that a priority changed on
+      another device. Off, setIncRemPriority writes the slot only (recordHistory forced
+      false) — and `warmStartCache` must then go off with it. */
+  priorityChangeHistory: true,
+  /** Media tools: localize media (store linked images/audio in RemNote), Cycle Image Size,
+      the Local Media Bridge and the ChatGPT image upscaler. Disabled — owner decision
+      2026-11-14 (an option, off, from 2026-10-10 until then). */
   mediaTools: false,
   /** Review with Timer: the editor_review / editor_review_timer widgets, the
       review-increm-in-editor command (Ctrl+Shift+E) and the 📝 accordion button.
@@ -143,35 +147,33 @@ export const FORK_FEATURES = {
       turns web-page selections into Incremental Rems and records reading time. */
   chromeCompanion: false,
   /** Duplicate-source detection: the warning when a Rem made incremental shares a web page
-      with another one, the "Incremental Rems by Website" list, and the URL index scan. */
+      with another one, the "Incremental Rems by Website" list, and the URL index scan.
+      Option, off — owner decision 2026-11-14. */
   duplicateSources: false,
   /** Upstream's stall diagnostics (lib/stall_diagnostics.ts): wraps every SDK call in every
       plugin frame and probes the bridge every 5 s, to explain frozen widgets in the console.
       Off; switch on (and rebuild) when a freeze needs diagnosing. */
   stallDiagnostics: false,
-  /** "Copy Rem ID" (Ctrl+Opt+I) and its fallback popup. */
-  copyRemId: false,
-  /** Upstream's CSS for RemNote's own Rem Preview popup (longer breadcrumb names). Not a
-      plugin feature — it restyles a RemNote surface. */
-  previewBreadcrumbs: false,
+  /** "Copy Rem ID" (Ctrl+Opt+I) and its fallback popup. On — owner decision 2026-11-14. */
+  copyRemId: true,
+  /** Upstream's CSS for RemNote's own Rem Preview popup: about 13 characters per ancestor
+      in its breadcrumbs instead of 5. It restyles a RemNote surface, nothing of the plugin's.
+      On — owner decision 2026-11-14, after seeing upstream's before/after screenshots. */
+  previewBreadcrumbs: true,
   /**
-   * Upstream's warm-start Incremental Rem cache (v1.0.213, lib/incremental_rem/persistence.ts):
-   * at startup the cache is served from a copy kept in local storage, and only the Rems
-   * whose `updatedAt` moved (or that sit in a "dirty set") are read again.
-   *
-   * OFF here, so every startup reads every Incremental Rem as before (the same cost as before
-   * this sync; upstream's new 24-at-a-time reader keeps the widgets responsive meanwhile).
-   * Why: upstream's change signal for a PRIORITY write is the 'priorityChange' history entry
-   * that write appends — it moves the tagged Rem's `updatedAt`. This fork switches those
-   * entries off (`priorityChangeHistory` above), and the Priority slot itself is a child Rem,
-   * so a priority changed on another device, synced before this plugin starts listening,
-   * leaves no trace: the copy would serve the OLD priority until a sampled self-check or the
-   * weekly full read catches it. Same-device writes are covered (setIncRemPriority marks the
-   * Rem dirty), and Rotation is compared in the self-check — both fork additions — so the
-   * remaining exposure is cross-device only. Switch on together with `priorityChangeHistory`
-   * for upstream's full guarantee, or alone to accept that exposure.
+   * Upstream's warm start for the Incremental Rem cache (v1.0.213, lib/incremental_rem/
+   * persistence.ts + cache.ts): start-up serves the cache from a copy in local storage and
+   * re-reads only the Rems whose `updatedAt` moved, plus a "dirty set" the GlobalRemChanged
+   * listener records. ON since 2026-11-14 (owner decision), together with
+   * `priorityChangeHistory`: a priority write moves the tagged Rem's `updatedAt` only through
+   * the 'priorityChange' entry it appends to the hidden History slot (the Priority slot is a
+   * child Rem), so without that entry a priority changed on another device would be served
+   * stale until the sampled self-check or the weekly full read. KEEP THE TWO TOGETHER.
+   * Fork additions that close the same-device side: setIncRemPriority marks the Rem dirty,
+   * and the self-check compares Rotation. Off, every start-up is a cold load (the 24-at-a-time
+   * reader); "Refresh Rem Cache" forces one either way.
    */
-  warmStartCache: false,
+  warmStartCache: true,
 } as const;
 
 /**

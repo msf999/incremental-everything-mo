@@ -110,8 +110,14 @@ describe('IncRem cache warm start', () => {
     const warm = await loadAndPersist(w.plugin);
     assert.equal(warm.length, 600);
     // Only the self-check sample (100 IncRems × 4 slot reads) touches the slots.
-    assert.ok(w.stats.slotReads <= 100 * 4, `warm reads ${w.stats.slotReads}`);
-    assert.deepEqual(byId(warm).get('rem7'), byId(cold).get('rem7'));
+    // FORK: × 5 — the fork reads a fifth slot per Incremental Rem, Rotation (Deviation 5).
+    assert.ok(w.stats.slotReads <= 100 * 5, `warm reads ${w.stats.slotReads}`);
+    // FORK: compared as stored. A freshly read entry carries the fork's `rotation` key even when
+    // it is undefined, and a copy that went through storage does not; the values are the same.
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(byId(warm).get('rem7'))),
+      JSON.parse(JSON.stringify(byId(cold).get('rem7')))
+    );
     assert.equal((w.session.get(allIncrementalRemKey) as IncrementalRem[]).length, 600);
   });
 
@@ -143,7 +149,7 @@ describe('IncRem cache warm start', () => {
     w.stats.slotReads = 0;
     const third = byId(await loadAndPersist(w.plugin));
     assert.equal(third.get('rem5')!.priority, 99);
-    assert.ok(w.stats.slotReads <= 100 * 4, `third reads ${w.stats.slotReads}`);
+    assert.ok(w.stats.slotReads <= 100 * 5, `third reads ${w.stats.slotReads}`); // FORK: × 5, see above
   });
 
   it('falls back to a cold load when the copy disagrees in bulk', async () => {
