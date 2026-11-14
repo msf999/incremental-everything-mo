@@ -45,13 +45,19 @@ import { useIESetting } from '../lib/settings';
 import { IncrementalRem } from '../lib/incremental_rem';
 import { resolveQueuePriority } from '../lib/queue_priority_source';
 import { reportQueueInfoBarHeight } from '../lib/queue_info_bar_dock';
-import { calculateRelativePercentile, percentileToHslColor } from '../lib/utils';
+import { calculateRelativePercentile } from '../lib/utils';
+// 10297b3 sync: upstream's plugin-wide colour map and its hover-hint layer.
+import { priorityColor as colorForPriority, usePriorityColorScale } from '../components/priorityColor';
+import { withHoverTips } from '../components/HoverTipLayer';
 import { keepFocusWithRemNote } from '../lib/keep_focus_with_remnote'; // FORK (2026-10-11)
 import { useIncRemOnScreen } from '../lib/queue_screen'; // FORK (2026-10-11)
 
 function QueueInfoBar() {
   const plugin = usePlugin();
   const mode = useIESetting(queueInfoBarModeId);
+  // 10297b3 sync: one colour per priority across the plugin (upstream's colour map). A hook —
+  // it stays above the early returns.
+  const colorScale = usePriorityColorScale();
 
   const ctx = useRunAsync(
     async () => plugin.widget.getWidgetContext<WidgetLocation.FlashcardUnder>(),
@@ -88,25 +94,27 @@ function QueueInfoBar() {
 
   // FORK (2026-08-14, bug-hunt #22): broadcast which cluster sibling is visible.
   //
-  // These session signals are consumed by register/events.ts to attribute a
-  // rating and a flashcard-history entry to the sibling actually on screen rather
-  // than the cluster's anchor card. Their only writer used to be upstream's
-  // `card_info_bar`, which the fork gates deny — so the readers were permanently
-  // dead and attribution silently fell back to the anchor. This widget already
-  // tracks the visible card for its own stats, so it can restore the signal at no
-  // extra cost. (Both history writers are still on — see Deviation 13.)
+  // Upstream's writer of this session key is `card_info_bar`, which the fork gates deny —
+  // without this effect its readers would be permanently dead. This widget already tracks
+  // the visible card for its own stats, so it keeps the signal alive at no extra cost.
+  // Readers since the 10297b3 sync (2026-11-14): lib/cluster_rating_readback.ts (reads a
+  // cluster sibling's rating back from its history — a sibling's rating fires no
+  // QueueCompleteCard — and feeds Flashcard History), lib/queue_visible_card.ts (the card on
+  // screen for the priority commands, Dismiss / Opt+X and the fork's toolbar chip), and, while
+  // their features are on, lib/queue_session.ts and lib/mastery_drill_native.ts.
+  // It names the card ON SCREEN, which right after a rating can already be the next one.
   useEffect(() => {
     if (!cardId) return;
     (async () => {
       try {
         await plugin.storage.setSession('clusterVisibleCardId', cardId);
-        await plugin.storage.setSession('clusterVisibleCardLoadTime', Date.now());
+        // 10297b3 sync: `clusterVisibleCardLoadTime` is no longer written — upstream dropped
+        // it from card_info_bar's broadcast and nothing reads it any more.
         // FORK (2026-08-15, review §2.7): `clusterVisibleRemId` is NOT written here.
         // Its one reader is register/true_false.ts, wired only with `clozeTools` (off);
         // the only other writer is the denied card_info_bar, and producing it cost a
         // plugin.card.findOne on every card transition — write it again before enabling
-        // clozeTools. The two keys above ARE read, by events.ts, to attribute a
-        // rating and a history entry to the cluster sibling actually on screen.
+        // clozeTools.
       } catch (e) {
         console.error('[QueueInfoBar] failed to broadcast cluster-visible signals', e);
       }
@@ -250,9 +258,11 @@ function QueueInfoBar() {
     : null;
   // FORK (#13): an unreadable priority is the placeholder 50, so colouring by it
   // would show a confident mid-band tint for a value nobody knows. Neutral instead.
+  // 10297b3 sync: the colour comes from upstream's colour map when one exists (the same
+  // colour the Rem's badge has in the editor), else from the rank, else from the bare value.
   const priorityColor =
     pri && !pri.unreadable
-      ? percentileToHslColor(percentile ?? pri.priority)
+      ? colorForPriority(colorScale, pri.priority, percentile)
       : QUEUE_PRIORITY_NEUTRAL_COLOR;
 
   return (
@@ -277,4 +287,4 @@ function QueueInfoBar() {
   );
 }
 
-renderWidget(QueueInfoBar);
+renderWidget(withHoverTips(QueueInfoBar));

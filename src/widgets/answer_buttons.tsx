@@ -5,6 +5,7 @@ import {
   WidgetLocation,
 } from '@remnote/plugin-sdk';
 import { withHoverTips } from '../components/HoverTipLayer';
+import { priorityColor as colorForPriority, usePriorityColorScale } from '../components/priorityColor'; // 10297b3 sync
 import React, { useMemo, useRef, useState, useLayoutEffect, useEffect } from 'react';
 import * as _ from 'remeda';
 import dayjs from 'dayjs';
@@ -399,6 +400,10 @@ export function AnswerButtons() {
 
 
   // ✅ MEMOIZE CALCULATIONS (but they must run every render, not conditionally)
+  // 10297b3 sync: upstream's plugin-wide colour map (one colour per priority). A hook — it
+  // stays here, above the early returns.
+  const colorScale = usePriorityColorScale();
+
   const percentiles = useMemo(() => {
     if (!coreData) return { kb: null, doc: null };
 
@@ -708,11 +713,13 @@ export function AnswerButtons() {
   // chip reading "could not be read" in the toolbar and, two inches below, a
   // confidently coloured border plus a ringed band asserting the item sits at 50.
   const priorityUnreadable = incRemInfo.prioritySource === 'fallback';
+  // 10297b3 sync: with a colour map the colour is the priority's place on it — the same
+  // colour the Rem's badge has in the editor and the chip has in the toolbar; without one,
+  // the rank and then the bare value, as before (colorForPriority's own fallback order,
+  // which tests `??` and so keeps a 0.0 rank — the #52/#59 point above).
   const priorityColor = priorityUnreadable
     ? QUEUE_PRIORITY_NEUTRAL_COLOR
-    : percentiles.kb !== null
-      ? percentileToHslColor(percentiles.kb)
-      : percentileToHslColor(incRemInfo.priority);
+    : colorForPriority(colorScale, incRemInfo.priority, percentiles.kb);
   const buttonStyles = getButtonStyles();
 
   // When both a reader bookmark and an outline read point exist, the reader

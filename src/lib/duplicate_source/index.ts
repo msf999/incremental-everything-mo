@@ -42,6 +42,7 @@ import {
   withRemUnderKeys,
 } from './rules';
 import { canonicalUrlKey, domainOfPageKey } from './url_key';
+import { FORK_FEATURES } from '../fork_gates'; // FORK (Deviation 13)
 
 export const DUPLICATE_SOURCE_POPUP = 'duplicate_source_popup';
 export const SOURCE_SITES_POPUP = 'source_sites_popup';
@@ -172,6 +173,12 @@ async function waitForChoice(plugin: RNPlugin, requestId: string): Promise<Dupli
  * be torn down under it.
  */
 export async function confirmNoDuplicateSource<T extends PluginRem>(plugin: RNPlugin, rems: T[]): Promise<T[]> {
+  // FORK (Deviation 13, 10297b3 sync): the duplicate-source check is off with its group. This
+  // gate is load-bearing, not cosmetic: the check asks through `duplicate_source_popup`, which
+  // the fork denies, and an unanswered question counts as Cancel — so with only the popup
+  // denied, the second Rem made incremental from the same web page would silently NOT be made
+  // incremental. It also keeps the fork from writing the synced source-URL index.
+  if (!FORK_FEATURES.duplicateSources) return rems;
   try {
     const candidates = (
       await Promise.all(

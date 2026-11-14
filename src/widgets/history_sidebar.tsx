@@ -16,6 +16,7 @@ import { renderWidget } from '@remnote/plugin-sdk';
 import { IncrementalHistory } from './incremental_history';
 import { FlashcardHistory } from './flashcard_history';
 import { RemHistory } from './rem_history';
+import { withHoverTips } from '../components/HoverTipLayer'; // 10297b3 sync: upstream draws hover hints itself
 
 function Section({
   title,
@@ -69,4 +70,4 @@ function CombinedHistorySidebar() {
   );
 }
 
-renderWidget(CombinedHistorySidebar);
+renderWidget(withHoverTips(CombinedHistorySidebar));

@@ -215,7 +215,7 @@ import type { QueueCommandTarget } from '../lib/queue_target'; // FORK (2026-10-
 // (lib/incremental_rem/review_jobs.ts) and dropped these imports. The fork's keyboard Next
 // (runNextInQueueAction) and Ctrl+G still save first and advance after, so they keep them.
 import { handleNextRepetitionClick } from '../lib/incremental_rem';
-import { addPageToHistory, getIncrementalReadingPosition } from '../lib/pdfUtils';
+import { addPageToHistory, getIncrementalReadingPosition, resolveSessionBookmarkCarry } from '../lib/pdfUtils';
 import { getIESetting } from '../lib/settings';
 import { copyTextToClipboard } from '../lib/clipboard';
 
@@ -3713,7 +3713,10 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       if (pdfRem) {
         const currentPage = await getIncrementalReadingPosition(plugin, rem._id, pdfRem._id);
         if (currentPage) {
-          await addPageToHistory(plugin, rem._id, pdfRem._id, currentPage);
+          // 10297b3 sync (upstream v1.0.164): carry the session bookmark forward, or this
+          // entry buries it and the Scroll button looks stale.
+          const carryHighlightId = await resolveSessionBookmarkCarry(plugin, rem._id, pdfRem._id, currentPage);
+          await addPageToHistory(plugin, rem._id, pdfRem._id, currentPage, undefined, carryHighlightId);
         }
       }
     }
@@ -3882,7 +3885,9 @@ export async function registerCommands(plugin: ReactRNPlugin) {
         if (pdfRem) {
           const currentPage = await getIncrementalReadingPosition(plugin, rem._id, pdfRem._id);
           if (currentPage) {
-            await addPageToHistory(plugin, rem._id, pdfRem._id, currentPage);
+            // 10297b3 sync (upstream v1.0.164): carry the session bookmark forward.
+            const carryHighlightId = await resolveSessionBookmarkCarry(plugin, rem._id, pdfRem._id, currentPage);
+            await addPageToHistory(plugin, rem._id, pdfRem._id, currentPage, undefined, carryHighlightId);
           }
         }
       }

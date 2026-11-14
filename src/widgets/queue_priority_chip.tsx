@@ -30,7 +30,12 @@ import {
 import { getQueuePriorityBadgeStyle, QUEUE_PRIORITY_NEUTRAL_COLOR } from '../components/QueueDistribution';
 import { IncrementalRem } from '../lib/incremental_rem';
 import { resolveQueuePriority } from '../lib/queue_priority_source';
-import { calculateRelativePercentile, percentileToHslColor } from '../lib/utils';
+import { calculateRelativePercentile } from '../lib/utils';
+// 10297b3 sync: upstream's plugin-wide colour map, its hover-hint layer, and its
+// cluster-aware "card on screen" (the sibling shown, not the cluster's anchor card).
+import { priorityColor, usePriorityColorScale } from '../components/priorityColor';
+import { withHoverTips } from '../components/HoverTipLayer';
+import { getQueueVisibleCard } from '../lib/queue_visible_card';
 import { useIESetting } from '../lib/settings';
 import { keepFocusWithRemNote } from '../lib/keep_focus_with_remnote'; // FORK (2026-10-11)
 import { useQueueScreen } from '../lib/queue_screen'; // FORK (2026-10-11)
@@ -58,6 +63,10 @@ export function shouldShowQueuePriorityChip(
 function QueuePriorityChip() {
   const plugin = usePlugin();
   const mode = useIESetting(queueToolbarPriorityModeId);
+  // 10297b3 sync: the colour of a priority comes from upstream's colour map (one colour per
+  // priority across the whole plugin), so the chip matches the Rem's badge in the editor.
+  // A hook — it stays up here, above the early returns.
+  const colorScale = usePriorityColorScale();
 
   const isWeb =
     useTrackerPlugin(async (rp) => !!(await rp.storage.getSession<boolean>(isWebPlatformKey)), []) ??
@@ -96,7 +105,9 @@ function QueuePriorityChip() {
     const checkCard = async () => {
       const mine = ++issued;
       try {
-        const card = await plugin.queue.getCurrentCard();
+        // 10297b3 sync: inside a Card Cluster getCurrentCard() stays on the cluster's anchor
+        // card; upstream's helper refines it with the sibling queue_info_bar reports on screen.
+        const card = await getQueueVisibleCard(plugin);
         if (!isMounted || mine < applied) return;
         applied = mine;
         setPolledCardRemId(card?.remId);
@@ -162,7 +173,9 @@ function QueuePriorityChip() {
   const percentile = resolved.sourceRemId && !resolved.unreadable
     ? calculateRelativePercentile(allIncRems, resolved.sourceRemId)
     : null;
-  const color = percentileToHslColor(percentile ?? resolved.priority);
+  // The written percentage stays the fork's shared rank (below); only the COLOUR follows the
+  // map, with the rank — then the bare value — as the fallback until a map exists.
+  const color = priorityColor(colorScale, resolved.priority, percentile);
   const doc = resolved.sourceRemId ? docPercentile?.[resolved.sourceRemId] ?? null : null;
 
   // Everything that used to sit in the info bar — where the priority comes from,
@@ -251,4 +264,4 @@ function QueuePriorityChip() {
   );
 }
 
-renderWidget(QueuePriorityChip);
+renderWidget(withHoverTips(QueuePriorityChip));
