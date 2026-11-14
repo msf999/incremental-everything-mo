@@ -645,9 +645,10 @@ export function AnswerButtons() {
         await openEditorAction();
         return;
       }
+      // FORK (10297b3 sync, review): the day, not the raw time — see handleNextRepetitionClick.
       const updatedIncRem: IncrementalRem = {
         ...incRemInfo,
-        nextRepDate: reviewResult.newNextRepDate,
+        nextRepDate: dayjs(reviewResult.newNextRepDate).startOf('day').valueOf(),
         history: reviewResult.newHistory,
       };
       await updateIncrementalRemCache(plugin as any, updatedIncRem);

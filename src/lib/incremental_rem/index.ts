@@ -123,7 +123,8 @@ export interface SetIncRemPriorityOptions {
  * clobbered anything appended since the object was read. Returns null when the
  * slot is missing or unparseable, so callers can fall back rather than wipe it.
  */
-async function readRemHistory(
+// Exported for the review-job runner (./review_jobs), which dismisses an unreadable Rem with it.
+export async function readRemHistory(
   plugin: RNPlugin,
   remId: string
 ): Promise<IncrementalRep[] | null> {
@@ -471,9 +472,14 @@ export async function handleNextRepetitionClick(
     if (!reviewResult) return;
 
     // 2. Manually patch the object using the new data
+    // FORK (10297b3 sync, review): the day, not the raw time. The Rem stores the Daily Document
+    // of the next date, so a fresh read gives that day's midnight; the raw value (now + interval)
+    // kept an item reviewed at 22:00 out of the queue until 22:00 on its due day for as long as
+    // the plugin stayed running. Upstream fixed this in the job path it moved Next to
+    // (reviewedEntry, ./review_jobs), which the fork's Reschedule and Dismiss already use.
     const updatedIncRem: IncrementalRem = {
       ...incRem,
-      nextRepDate: reviewResult.newNextRepDate,
+      nextRepDate: dayjs(reviewResult.newNextRepDate).startOf('day').valueOf(),
       history: reviewResult.newHistory,
     };
 

@@ -527,6 +527,22 @@ export function QueueComponent() {
           ) : (
             <Reader actionItem={remAndType} queueIncRemId={remId} />
           )
+        ) : !FORK_FEATURES.videoSurface &&
+          (remAndType.type === 'youtube' ||
+            remAndType.type === 'youtube-highlight' ||
+            remAndType.type === 'local-video' ||
+            remAndType.type === 'local-video-highlight') ? (
+          // FORK (10297b3 sync, Deviation 13 — `videoSurface`, off): upstream's rebuilt video
+          // players are not mounted. Its YouTube player cannot run inside a plugin frame any
+          // more, so it CREATES a document in the knowledge base ("▶️ Incremental RemNote video
+          // player", with an Embed Website child whose URL and size slots it rewrites) and loads
+          // a page hosted on upstream's site in it; the viewers also probe upstream's local
+          // helper on localhost. None of that without the owner's say: a YouTube-link item, a
+          // Video Extract and a local video are shown as the Rem, like every other item here
+          // (Deviation 11). A RemNote video Rem never gets here while the gate is off — it is
+          // type 'video' (lib/incremental_rem/action_items.ts) and plays in RemNote's own
+          // player below, as before the sync. Null until the IncRem resolves.
+          incRemRem ? <ExtractViewer rem={incRemRem} plugin={plugin} topRightClearance={topRightClearance} /> : null
         ) : remAndType.type === 'youtube' ? (
           !remAndType.nativeAvailable ? (
             <VideoViewer actionItem={remAndType} />

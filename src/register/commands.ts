@@ -94,11 +94,13 @@ import { buildDocumentScope } from '../lib/scope_helpers';
 import { initIncrementalRem } from './powerups';
 import { getIncrementalRemFromRem, getCurrentIncrementalRem, requestQueueDashboardRefocus } from '../lib/incremental_rem';
 import {
-  queueNextRepetition,
+  // FORK (10297b3 sync): upstream's `queueNextRepetition` is not imported — the fork's Next
+  // saves first and advances after (runNextInQueueAction below), it does not queue a job.
   captureQueueReviewSeconds,
   enqueueReviewJob,
   enqueueReviewJobs,
   newReviewJobId,
+  reviewJobStateFor, // FORK (10297b3 sync): see incRemIdForQueueShortcut
 } from '../lib/incremental_rem/review_jobs';
 import { safeRemTextToString, registerRemsAsPdfKnown, getActivePdfForIncRem, getAllPDFsInRem, getDescendantsToDepth, getRemCardContent, resolveSourcePopupTarget } from '../lib/pdfUtils';
 import { getHoveredReference } from './events';
@@ -1990,6 +1992,11 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     action: async () => {
       await plugin.app.toast('Rebuilding the IncRem cache from the database…');
       const loaded = await loadIncrementalRemCache(plugin, { forceCold: true });
+      // FORK (10297b3 sync, review): the priority colour map is a snapshot taken at startup,
+      // and since the sync the fork's chip and info bars are coloured from it. Its other manual
+      // refresh sits in a command this fork registers only with Priority Bands on, so this
+      // command rebuilds it too (the index widget re-reads the cache on this key).
+      await plugin.storage.setSession(priorityBandColorsReloadKey, Date.now());
       await plugin.app.toast(`IncRem cache rebuilt: ${loaded.length} Incremental Rems.`);
     },
   });
@@ -3458,12 +3465,20 @@ export async function registerCommands(plugin: ReactRNPlugin) {
         // body no longer reads the IncRem here — the dismissal runs as a review job — so the
         // fork reads it for this check.)
         const incRemInfo = await getIncrementalRemFromRem(plugin, rem);
-        const alreadyReviewed = !!incRemInfo && Date.now() < incRemInfo.nextRepDate;
+        // FORK (10297b3 sync, review): a Rem that carries the powerup but cannot be read stays
+        // where it is, with a message — as before the sync. Upstream's job runner treats "cannot
+        // be read" as "dismissed already", so the queue moved on and nothing was dismissed.
+        if (!incRemInfo) {
+          await plugin.app.toast('Could not retrieve Incremental Rem information.');
+          return;
+        }
+        const alreadyReviewed = Date.now() < incRemInfo.nextRepDate;
         const recordsRep = isActiveIncRemTurn && !alreadyReviewed;
         const reviewTimeSeconds = recordsRep ? (await captureQueueReviewSeconds(plugin)) ?? 0 : 0;
 
-        // Same as the Dismiss button: card priority, the move to Dismissed and
-        // the powerup removal run in the tracker (lib/incremental_rem/review_jobs.ts).
+        // The move to Dismissed and the powerup removal run in the tracker, a moment after
+        // this command returns (lib/incremental_rem/review_jobs.ts). Upstream's Dismiss BUTTON
+        // does the same; the fork's button (answer_buttons.tsx) still writes before it advances.
         // FORK: the job runner there gates the card-priority step on FORK_FEATURES.cardSurface
         // (Deviation 13) and stamps the rep through priorityStampFor (#13).
         await enqueueReviewJob(plugin, {
@@ -3484,6 +3499,14 @@ export async function registerCommands(plugin: ReactRNPlugin) {
           // persistent QueueLoadCard listener once the next card loads).
           await requestQueueDashboardRefocus(plugin, 'dismiss-command');
           await plugin.queue.removeCurrentCardFromQueue(true);
+          // FORK (10297b3 sync, review): until the sync the powerup was removed together with
+          // this advance, so a shortcut pressed straight after found a Rem that was no longer
+          // incremental and did nothing. Now the removal runs later, in the tracker, while
+          // currentIncRemKey still names this Rem until the next item's widget has loaded: a
+          // quick Opt+T would review the Rem being dismissed and drop the next item unreviewed,
+          // and a second Dismiss would move the queue on once more. Keep the guard held, as
+          // Next, Skip and Open do (waitForNextQueueItem, below).
+          await waitForNextQueueItem(rem._id);
         } else {
           // No queue advance here, so nothing on screen changes — confirm which
           // rem was dismissed.
@@ -3628,6 +3651,17 @@ export async function registerCommands(plugin: ReactRNPlugin) {
   const incRemIdForQueueShortcut = async (): Promise<string | undefined> => {
     if ((await plugin.queue.getCurrentQueueScreenType()) === QueueItemType.Plugin) {
       const remId = await plugin.storage.getSession<string>(currentIncRemKey);
+      // FORK (10297b3 sync, review): Reschedule and a Dismiss by keyboard now leave their item
+      // BEFORE its change is written (a review job the tracker runs a moment later), and
+      // currentIncRemKey keeps naming that item until the next one's widget has loaded. A
+      // shortcut pressed in between would act on the Rem that was just left: record a review
+      // that races the job's own write, and drop the item now on screen. While the Rem the key
+      // names has a job that is waiting, running or just finished, the press is dropped — like
+      // a press during another queue action (runQueueActionOnce).
+      if (remId && (await reviewJobStateFor(plugin, remId)) !== 'none') {
+        console.log('[QueueShortcut] dropped: a review job is changing, or has just changed, the Rem the queue names');
+        return undefined;
+      }
       if (remId) return remId;
     } else if ((await plugin.queue.getCurrentCard())?.remId) {
       await plugin.app.toast('This command works on Incremental Rems only — rate flashcards with RemNote’s own keys.');

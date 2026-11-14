@@ -55,9 +55,16 @@ export const FORK_FEATURES = {
   referenceFinder: false,
   /** Ctrl+F7 read points (rem-position bookmarks). */
   readPoints: false,
-  /** Video tools: transcripts, local-video import and linking, card videos. The in-queue
-      video viewers stay (an existing video Incremental Rem still plays). Until the 10297b3
-      sync this flag gated upstream's video debug surface, which upstream has since removed. */
+  /** Upstream's rebuilt Incremental Video (v1.0.164+): the commands and popups (transcripts,
+      local-video import and linking, card videos) AND the players — the queue's plugin
+      players for a YouTube link, a Video Extract and a local video (widgets/queue.tsx), the
+      plugin / RemNote player choice for a RemNote video Rem (lib/incremental_rem/
+      action_items.ts) and the local-video player under document titles (widgets/
+      inc_rem_counter.tsx). The players are behind the flag because upstream's YouTube player
+      creates a document in the knowledge base ("▶️ Incremental RemNote video player") and
+      loads a page hosted on upstream's site in it. Off: a RemNote video Rem plays in
+      RemNote's own player, as before the sync; the other video items are shown as the Rem.
+      Until the 10297b3 sync this flag gated upstream's video debug surface, since removed. */
   videoSurface: false,
   /**
    * Debug / diagnostics / raw-slot repair commands and widgets.

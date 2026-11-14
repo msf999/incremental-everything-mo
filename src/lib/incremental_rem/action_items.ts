@@ -14,6 +14,7 @@ import {
   localVideoPowerupCode,
 } from '../consts';
 import { localVideoUrl, parseLocalVideoUrl, readLocalVideo } from '../local_video_ref';
+import { FORK_FEATURES } from '../fork_gates'; // FORK (10297b3 sync, Deviation 13)
 import { findExtractVideoRem } from '../video_extract_tree';
 
 /**
@@ -138,7 +139,10 @@ export const remToActionItemType = async (
   } else if (await rem.hasPowerup('vi')) {
     // A RemNote video Rem: its URL is the Video powerup's URL slot. With a
     // YouTube URL the plugin's player can show it as well as RemNote's.
-    const url = await rem.getPowerupProperty('vi', 'u');
+    // FORK (10297b3 sync, Deviation 13): only with upstream's video players switched on
+    // (`videoSurface`). Off, a video Rem is what it was before the sync — type 'video', shown
+    // as RemNote's own video page — and the URL slot is not read.
+    const url = FORK_FEATURES.videoSurface ? await rem.getPowerupProperty('vi', 'u') : undefined;
     if (url && ['youtube', 'youtu.be'].some((x) => url.includes(x))) {
       return { rem, type: 'youtube', url, nativeAvailable: true };
     }

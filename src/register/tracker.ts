@@ -11,7 +11,7 @@ import { withQueueMutex } from '../lib/mutex';
 // bundled into widget entries without issue, so bundling it here is safe and acyclic.
 import { runIncRemCreateTail, IncRemCreateTailJob } from '../lib/highlightActions';
 import { shouldUseLightMode } from '../lib/mobileUtils';
-import { runReviewJob, ReviewJob, IncRemCacheChanges } from '../lib/incremental_rem/review_jobs';
+import { runReviewJob, ReviewJob, IncRemCacheChanges, noteReviewJobsPickedUp, noteReviewJobFinished } from '../lib/incremental_rem/review_jobs'; // FORK: the two note* marks
 import { runIncRemTransferTail, IncRemTransferTailJob } from '../lib/incremental_rem/transfer';
 import { showMessageDialog } from '../lib/message_dialog';
 
@@ -668,6 +668,11 @@ export function registerIncrementalRemTracker(plugin: ReactRNPlugin) {
   // behind; each round patches the IncRem cache once for all its jobs. The id set
   // guards against a job read twice (an append racing the clear writes the old
   // entries back along with the new one).
+  // FORK (10297b3 sync): in this fork the jobs come from Reschedule, the Dismiss command /
+  // Opt+X and (while enabled) the editor review popups only — the queue's Next, Open, offset
+  // picker and Skip still write before they advance. The two note* calls below tell the
+  // queue's keyboard shortcuts which Rems have a job in flight (review_jobs.ts,
+  // reviewJobStateFor).
   let reviewJobsRunning = false;
   const doneReviewJobIds = new Set<string>();
   plugin.track(async (rp) => {
@@ -682,8 +687,9 @@ export function registerIncrementalRemTracker(plugin: ReactRNPlugin) {
       while (true) {
         const current = (await plugin.storage.getSession<ReviewJob[]>(pendingReviewJobQueueKey)) || [];
         if (current.length === 0) break;
-        await plugin.storage.setSession(pendingReviewJobQueueKey, null);
         const jobs = current.filter((j) => !doneReviewJobIds.has(j.id));
+        noteReviewJobsPickedUp(jobs); // FORK: before the key is cleared, so a job is never unaccounted for
+        await plugin.storage.setSession(pendingReviewJobQueueKey, null);
 
         const cacheChanges: IncRemCacheChanges = new Map();
         for (const job of jobs) {
@@ -704,6 +710,8 @@ export function registerIncrementalRemTracker(plugin: ReactRNPlugin) {
               detail: err instanceof Error ? err.message : String(err),
               tone: 'error',
             });
+          } finally {
+            noteReviewJobFinished(job); // FORK
           }
         }
 

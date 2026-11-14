@@ -45,7 +45,11 @@
 //     the priority slot (#3/#13);
 //   - the card-priority step runs only with FORK_FEATURES.cardSurface, and the PDF
 //     reading-position writes only with FORK_FEATURES.pdfReader (Deviation 13);
-//   - a job with no interval and no date keeps the date in force (#60).
+//   - a job with no interval and no date keeps the date in force (#60);
+//   - a dismissal of a Rem that still carries the powerup but cannot be read is carried out,
+//     with its raw history, instead of being reported as done and skipped;
+//   - reviewJobStateFor (below enqueueReviewJob) tells the queue's keyboard shortcuts that a
+//     Rem has a job waiting, running or just finished, so they do not act on it.
 
 import { RNPlugin } from '@remnote/plugin-sdk';
 import dayjs from 'dayjs';
@@ -54,6 +58,7 @@ import {
   setIncRemPriority,
   updateReviewRemData,
   requestQueueDashboardRefocus,
+  readRemHistory, // FORK (10297b3 sync): the raw History slot, for an unreadable Rem's dismissal
 } from './index';
 import { IncrementalRem, IncrementalRep, priorityStampFor } from './types'; // FORK (#13): priorityStampFor
 import { FORK_FEATURES } from '../fork_gates'; // FORK (Deviation 13)
@@ -190,6 +195,54 @@ export async function enqueueReviewJobs(plugin: RNPlugin, jobs: ReviewJob[]): Pr
 
 export const enqueueReviewJob = (plugin: RNPlugin, job: ReviewJob) => enqueueReviewJobs(plugin, [job]);
 
+// FORK (10297b3 sync, adversarial review) — which Rems have a review job that is not finished,
+// or finished a moment ago.
+//
+// A surface that queues a job leaves its item at once (Reschedule and the Dismiss command
+// advance the queue before anything is written), while `currentIncRemKey` goes on naming that
+// item until the next one's widget has loaded, about half a second later. The queue's keyboard
+// shortcuts take their item from that key (incRemIdForQueueShortcut, register/commands.ts), so
+// a press in between used to act on the Rem that was just left: Opt+T recorded a review that
+// raced the job's own write to the same History slot, and then dropped the item on screen.
+// Before the sync those surfaces wrote first and advanced after, so the same press found a
+// Rem already dismissed or already rescheduled.
+//
+// The marks live in this module's memory: the tracker that runs the jobs and the commands that
+// ask are both in the index widget. A job another frame has queued and the tracker has not
+// picked up yet is found in the session key itself.
+const REVIEW_JOB_TRACE_MS = 1500; // as long as waitForNextQueueItem waits for the next item
+const reviewJobsInFlight = new Map<string, number>(); // remId -> jobs picked up, not finished
+const reviewJobFinishedAt = new Map<string, number>(); // remId -> when its last job finished
+
+/** Tracker: the jobs of a drain round, marked BEFORE the round clears them from the session key. */
+export function noteReviewJobsPickedUp(jobs: ReviewJob[]): void {
+  for (const job of jobs) reviewJobsInFlight.set(job.remId, (reviewJobsInFlight.get(job.remId) ?? 0) + 1);
+}
+
+/** Tracker: one job has run, saved or not. */
+export function noteReviewJobFinished(job: ReviewJob): void {
+  const left = (reviewJobsInFlight.get(job.remId) ?? 1) - 1;
+  if (left > 0) reviewJobsInFlight.set(job.remId, left);
+  else reviewJobsInFlight.delete(job.remId);
+  const now = Date.now();
+  for (const [remId, at] of reviewJobFinishedAt) {
+    if (now - at > REVIEW_JOB_TRACE_MS) reviewJobFinishedAt.delete(remId);
+  }
+  reviewJobFinishedAt.set(job.remId, now);
+}
+
+/** 'unfinished': a job is waiting or running; 'justFinished': one ended within the last 1.5 s. */
+export async function reviewJobStateFor(
+  plugin: RNPlugin,
+  remId: string
+): Promise<'unfinished' | 'justFinished' | 'none'> {
+  if (reviewJobsInFlight.has(remId)) return 'unfinished';
+  const queued = (await plugin.storage.getSession<ReviewJob[]>(pendingReviewJobQueueKey)) || [];
+  if (queued.some((job) => job.remId === remId)) return 'unfinished';
+  const finishedAt = reviewJobFinishedAt.get(remId);
+  return finishedAt !== undefined && Date.now() - finishedAt < REVIEW_JOB_TRACE_MS ? 'justFinished' : 'none';
+}
+
 // ─── Click side ─────────────────────────────────────────────────────────────
 
 /**
@@ -301,7 +354,21 @@ export async function runReviewJob(
 
   const incRem = await getIncrementalRemFromRem(plugin, rem);
   if (!incRem) {
-    if (job.kind === 'dismiss') return {};
+    if (job.kind === 'dismiss') {
+      // FORK (10297b3 sync, review): null also means "still tagged, but unreadable" (its data
+      // fails the schema). Upstream returns here for both, so the command toasted "Incremental
+      // Rem dismissed." and the Rem stayed incremental, press after press. Only a Rem that no
+      // longer carries the powerup was dismissed already. An unreadable one is dismissed as
+      // before the sync — and with its history, which the old code dropped: the raw slot goes
+      // to the Dismissed powerup before the Incremental one takes its slots away.
+      if (!(await rem.hasPowerup(powerupCode))) return {};
+      const rawHistory = await readRemHistory(plugin, remId);
+      await transferToDismissed(plugin, rem, rawHistory ?? []);
+      await addDismissalToIncrementalHistory(plugin, remId);
+      await rem.removePowerup(powerupCode);
+      cache.set(remId, null);
+      return {};
+    }
     throw new Error('The Rem is no longer an Incremental Rem.');
   }
 

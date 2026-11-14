@@ -7,6 +7,7 @@ import { buildDocumentScope } from '../lib/scope_helpers';
 import { generateAndStoreGraphData } from '../lib/priority_graph_data';
 import { PriorityDistributionGraphComponent } from './priority_distribution_graph';
 import { LocalVideoEditorPlayer } from '../components/LocalVideoEditorPlayer';
+import { FORK_FEATURES } from '../lib/fork_gates'; // FORK (10297b3 sync, Deviation 13)
 import '../style.css';
 import '../App.css';
 
@@ -176,7 +177,9 @@ function IncRemCounter() {
           )}
         </div>
       )}
-      <LocalVideoEditorPlayer />
+      {/* FORK (10297b3 sync, Deviation 13): three listeners and a handful of reads under every
+          document title, for a powerup no Rem can get while the video commands are denied. */}
+      {FORK_FEATURES.videoSurface && <LocalVideoEditorPlayer />}
     </>
   );
 }
