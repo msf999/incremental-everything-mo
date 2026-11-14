@@ -31,6 +31,8 @@ import {
   currentIncRemKey, // FORK (2026-10-11)
   QueueSlotSwap, // FORK (2026-10-11)
   queueHeldCandidateKey, // FORK (2026-10-11)
+  queueReviewedInSessionKey, // FORK (2026-11-14)
+  queueLeftAfterReviewKey, // FORK (2026-11-15)
   currentIncrementalRemTypeKey,
   displayWeightedShieldId,
   flashcardBarShieldModeKey,
@@ -95,11 +97,13 @@ import { recordRatingWithoutEvent, registerQueueSessionTracking, saveCurrentSess
 import { openQueueDashboard } from '../lib/queue_dashboard';
 import { shouldUseLightMode } from '../lib/mobileUtils';
 import { primeQueuePrefetch, flushPendingServed, markShownThisSession } from '../lib/queue_prefetch';
+import { shownInThisVisit } from '../lib/queue_prefetch'; // FORK (2026-11-15)
 import dayjs from 'dayjs';
 import { getIESetting } from '../lib/settings';
 import { recordRemChangeEvent } from '../lib/rem_change_tape';
 import { isOperationSuppressed } from '../lib/operation_suppression';
 import { registerTagSubtreeCSSListeners } from '../lib/tag_subtree_css';
+import { queueOfPath } from '../lib/queue_url'; // FORK (2026-11-15, R-038)
 
 // Debounce/timeout constants
 const CARD_PROCESSING_DEBOUNCE_MS = 2000;
@@ -541,10 +545,35 @@ async function schedulePriorityQueueAutoRefresh(plugin: ReactRNPlugin, queueId: 
  *
  * @param plugin Plugin instance for accessing window and UI helpers.
  */
-export function registerURLChangeListener(plugin: ReactRNPlugin) {
+export function registerURLChangeListener(
+  plugin: ReactRNPlugin,
+  resetSessionItemCounter?: ResetSessionItemCounter // FORK (2026-11-15)
+) {
   let wasInQueue = false;
+  // FORK (2026-11-15): the queue the URL showed last — '' the daily queue, a document's id for
+  // its queue, null outside every queue (lib/queue_url.ts).
+  let lastQueue: string | null = null;
+  void plugin.window
+    .getURL()
+    .then((url) => {
+      const q = queueOfPath(url);
+      if (lastQueue === null && q.inQueue) lastQueue = q.subQueueId ?? '';
+    })
+    .catch(() => {});
   plugin.event.addListener(AppEvents.URLChange, undefined, async () => {
     const url = await plugin.window.getURL();
+    // FORK (2026-11-15, reproduced live): leaving a queue — or moving to another one — ends its
+    // visit: the GetNextCard bookkeeping and the prefetch go, as on QueueExit, which RemNote does
+    // not fire when the queue is left by navigation (Open, a link). Kept, that state was still
+    // "ready" when the same queue was opened again, and RemNote's first requests were answered
+    // from it before QueueEnter's handler reset it — the reset then forgot the item RemNote was
+    // holding, and it was served a second time later in the session.
+    // Outside a queue the reset is unconditional — the plugin may have started inside the queue,
+    // with no URL change yet to compare with — and it touches module state only.
+    const openQueue = queueOfPath(url);
+    const thisQueue = openQueue.inQueue ? openQueue.subQueueId ?? '' : null;
+    if (thisQueue === null || (lastQueue !== null && thisQueue !== lastQueue)) resetSessionItemCounter?.();
+    lastQueue = thisQueue;
     // Entering a queue: forget the editor selection, or a queue command run in the
     // next seconds would act on it instead of the card. Here as well as in
     // QueueEnter, which does not always fire (iOS). Only on the way in, so a
@@ -604,9 +633,19 @@ export function registerQueueEnterListener(
     { subQueueId: rawSubQueueId }: { subQueueId?: string },
     restoreShown?: RemId[]
   ) => {
-    const restoreShownAfterPrime = () => {
-      if (restoreShown?.length) markShownThisSession(plugin, restoreShown);
+    // FORK (2026-11-15, reproduced live): RemNote can ask GetNextCard for the first items before
+    // this handler gets here — twice within 3 ms when a document's queue was opened — and the
+    // resets below (resetSessionItemCounter, then each prime) would forget them: the item RemNote
+    // held for its next slot was served again later in the session. What this visit has already
+    // handed out is carried over like restoreShown: taken before each reset, marked after it.
+    const carried = new Set<RemId>(restoreShown ?? []);
+    const carryServed = () => {
+      for (const id of shownInThisVisit()) carried.add(id);
     };
+    const restoreShownAfterPrime = () => {
+      if (carried.size) markShownThisSession(plugin, Array.from(carried));
+    };
+    carryServed();
     // The regular-queue Mastery Drill's document exists for one session only: treat it like
     // the popup drill, as a KB-wide session, so no per-document shield or history is keyed to it.
     const subQueueId = isNativeDrillQueue(rawSubQueueId) ? undefined : rawSubQueueId;
@@ -667,6 +706,7 @@ export function registerQueueEnterListener(
 
     if (!scopeForItemSelection) {
       // No document scope to wait for (the global queue): prime straight away.
+      carryServed(); // FORK (2026-11-15): what GetNextCard served since the reset above
       void primeQueuePrefetch(plugin, subQueueId);
       restoreShownAfterPrime(); // FORK (10297b3 sync)
     }
@@ -686,6 +726,7 @@ export function registerQueueEnterListener(
       // after the priority and shield calculations below. Fire-and-forget: the
       // GetNextCard callback answers from module state once it lands, and yields
       // a flashcard turn if asked before.
+      carryServed(); // FORK (2026-11-15): what GetNextCard served while the scope was resolved
       void primeQueuePrefetch(plugin, subQueueId);
       restoreShownAfterPrime(); // FORK (10297b3 sync)
 
@@ -886,6 +927,10 @@ export function registerQueueEnterListener(
     await plugin.storage.setSession(queueSlotSwapKey, null);
     await plugin.storage.setSession(queueSwapRequestKey, null);
     await plugin.storage.setSession(queueHeldCandidateKey, null); // FORK (2026-10-11): the previous session's
+    await plugin.storage.setSession(queueReviewedInSessionKey, []); // FORK (2026-11-14): the counter's reviewed list
+    // FORK (2026-11-15): … and no item has been "just reviewed" in a session that is only starting —
+    // the queue widget's repeat check (widgets/queue.tsx) goes by this mark alone.
+    await plugin.storage.setSession(queueLeftAfterReviewKey, null);
     await runQueueEnter(data);
   });
 
@@ -908,7 +953,9 @@ export function registerQueueEnterListener(
   void (async () => {
     try {
       const url = await plugin.window.getURL();
-      if (!url || !url.includes('/flashcards')) return;
+      // FORK (2026-11-15, R-038): the queue that is open, read from the URL (lib/queue_url.ts).
+      const openQueue = queueOfPath(url);
+      if (!openQueue.inQueue) return;
 
       // WAIT for the IncRem cache before running, or the pre-calculation reads an
       // empty cache and produces a session with 0 due IncRems — worse than doing
@@ -955,7 +1002,13 @@ export function registerQueueEnterListener(
       const swap = await plugin.storage.getSession<QueueSlotSwap | null>(queueSlotSwapKey);
       if (swap?.slotRemId) shown.push(swap.slotRemId);
       if (swap?.showRemId) shown.push(swap.showRemId);
-      await runQueueEnter({ subQueueId: undefined }, shown);
+      // FORK (2026-11-15, R-038, reproduced live): the document's queue, not the whole knowledge
+      // base. With `subQueueId: undefined` a page reload or plugin restart inside a document's
+      // queue set no document scope: the counter showed the whole knowledge base's numbers,
+      // Incremental Rems from outside the document were served in it, and a document with no
+      // flashcards stayed on RemNote's finished screen (the empty-queue rescue waits for a
+      // prefetch primed for ITS queue).
+      await runQueueEnter({ subQueueId: openQueue.subQueueId }, shown);
       // Again afterwards: idempotent, and it covers a run in which neither prime was reached.
       if (shown.length) markShownThisSession(plugin, shown);
     } catch (err) {
@@ -1192,6 +1245,34 @@ export function registerGlobalRemChangedListener(plugin: ReactRNPlugin) {
   // search/navigation bursts where many different remIds fire in rapid succession.
   const remChangeDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+  // FORK (2026-11-15, review 3 #3): changes seen while a plugin job suppresses this listener,
+  // to be checked once it is over. A hand edit of an Incremental Rem's visible Priority, Next
+  // Rep Date or Rotation row changes the property CHILD, and the only thing that told the
+  // warm-start cache was the parent mark below the suppression return — so an edit made while
+  // a job ran (or for the rest of the session, after a flag left stuck) was served from the
+  // stored copy at the next start. Looking up each child during the job would add a bridge
+  // call to every event the suppression exists to skip; they are looked up afterwards instead.
+  const suppressedChildIds = new Set<RemId>();
+  const SUPPRESSED_CHILD_CAP = 1000;
+  let suppressedDrainTimer: ReturnType<typeof setTimeout> | null = null;
+  const drainSuppressedChildren = async () => {
+    suppressedDrainTimer = null;
+    if (await isOperationSuppressed(plugin)) {
+      suppressedDrainTimer = setTimeout(() => void drainSuppressedChildren(), 3000);
+      return;
+    }
+    const ids = Array.from(suppressedChildIds);
+    suppressedChildIds.clear();
+    for (const id of ids) {
+      try {
+        const child = await plugin.rem.findOne(id);
+        if (child?.parent && isKnownIncRemId(child.parent)) markIncRemDirty(plugin, child.parent);
+      } catch {
+        // gone, or unreadable: nothing to mark
+      }
+    }
+  };
+
   // Store captured history per remId (captured before debounce to avoid race condition)
   // Key: remId, Value: cloned history array
   const pendingHistoryMap = new Map<string, IncrementalRep[]>();
@@ -1227,6 +1308,16 @@ export function registerGlobalRemChangedListener(plugin: ReactRNPlugin) {
       // can be killed mid-flight must not leave a bare `true` behind.
       const isBatchActive = await isOperationSuppressed(plugin);
       if (isBatchActive) {
+        // FORK (2026-11-15, review 3 #3): a change to something that is not an Incremental Rem
+        // may be one of its property rows — checked when the job is over (see above).
+        if (
+          FORK_FEATURES.warmStartCache &&
+          isKnownIncRemId(data.remId) === false &&
+          suppressedChildIds.size < SUPPRESSED_CHILD_CAP
+        ) {
+          suppressedChildIds.add(data.remId);
+          if (!suppressedDrainTimer) suppressedDrainTimer = setTimeout(() => void drainSuppressedChildren(), 3000);
+        }
         return;
       }
 
@@ -1716,7 +1807,7 @@ export function registerEventListeners(
   registerQueueTurnTracking(plugin);
   registerQueueExitListener(plugin, resetSessionItemCounter);
   registerQueueEnterListener(plugin, resetSessionItemCounter);
-  registerURLChangeListener(plugin);
+  registerURLChangeListener(plugin, resetSessionItemCounter); // FORK (2026-11-15): the reset on leaving a queue
   registerQueueCompleteCardListener(plugin);
   registerClusterRatings(plugin);
   registerGlobalRemChangedListener(plugin);

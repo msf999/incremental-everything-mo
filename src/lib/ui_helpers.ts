@@ -72,6 +72,15 @@ export function registerQueueCounter(
   // it can be labelled and colour-coded. The top counter keeps the plain count;
   // callers still pass buckets (used only for the console line below).
   const distribution = priorityBuckets ? ` (${priorityBuckets.join(', ')})` : '';
+  writeQueueCounterCss(plugin, count, urgentCount);
+  console.log(`QUEUE ENTER: Queue counter updated to show ${count} due IncRems${distribution}`);
+}
+
+/**
+ * FORK (2026-11-14): the counter's stylesheet alone, without the QUEUE ENTER console line —
+ * lib/queue_prefetch.ts rewrites it between queue items whenever the still-due numbers move.
+ */
+export function writeQueueCounterCss(plugin: ReactRNPlugin, count: number, urgentCount?: number): void {
   const suffix = ` + ${count}` + (typeof urgentCount === 'number' ? ` (${urgentCount})` : '');
   const css = `
     .rn-queue__card-counter {
@@ -95,7 +104,6 @@ export function registerQueueCounter(
   `.trim();
 
   plugin.app.registerCSS(queueCounterId, css);
-  console.log(`QUEUE ENTER: Queue counter updated to show ${count} due IncRems${distribution}`);
 }
 
 export async function registerPluginHidingCSS(plugin: ReactRNPlugin) {

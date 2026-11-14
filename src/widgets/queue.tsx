@@ -29,7 +29,11 @@ import {
   queueSlotSwapKey, // FORK (Deviation 16)
   QueueSlotSwap,
   incremReviewStartTimeKey, // FORK (2026-10-11)
+  queueLeftAfterReviewKey, // FORK (2026-11-14)
+  QueueLeftAfterReview,
+  queueRepeatSkippedKey,
 } from '../lib/consts';
+import { recordQueueWidgetEvent } from '../lib/queue_diagnostics'; // FORK (2026-11-14)
 import { setCurrentIncrementalRem } from '../lib/incremental_rem';
 import { safeRemTextToString } from '../lib/pdfUtils';
 import { startIncRemEngagement, endIncRemEngagement } from '../lib/queue_session';
@@ -37,6 +41,14 @@ import { FORK_FEATURES } from '../lib/fork_gates';
 import { useIESettingOptional } from '../lib/settings';
 import { mobileExperiment } from '../lib/mobile_experiments'; // MOBILE-EXPERIMENT
 import { keepFocusWithRemNote } from '../lib/keep_focus_with_remnote'; // FORK (2026-10-11)
+// FORK (2026-11-14): fallback values for RemNote's --rn-clr-* variables, which never reach a
+// plugin frame on iOS (as in queue_info_bar and answer_buttons) — the queue body's text
+// would be black in dark mode. Zero specificity, so desktop is unchanged — but for the one
+// variable RemNote does not define, which the call below takes care of (lib/phone.ts).
+import '../rn_theme_vars.css';
+import { keepBorderVariableUndefinedOffPhone } from '../lib/phone'; // FORK (2026-11-15, review)
+
+keepBorderVariableUndefinedOffPhone();
 
 type ViewMode = 'isolated' | 'context';
 
@@ -80,6 +92,43 @@ export function QueueComponent() {
   useEffect(() => {
     autoAdvancedRef.current = false;
   }, [remId]);
+
+  // FORK (2026-11-14, owner report, reproduced live): the item just reviewed with Next showed
+  // up again at once, as "Already reviewed". RemNote can hold an item the plugin handed it
+  // twice (lib/queue_prefetch.ts, `held`, closes the way that happened); a returned item
+  // cannot be taken back, so this is the net under it. When this widget mounts for the very
+  // rem a review left a moment ago and RemNote is not walking back through its history
+  // (Previous), it is a repeat nobody asked for: move on, once. Deviation 8's row stays for
+  // what it is meant for — Previous, and an item another device reviewed.
+  //
+  // (2026-11-15, review.) The mark alone says "just reviewed": it is written only after a
+  // successful save, and the QueueEnter listener clears it, so a new session can never meet
+  // one. It used to be required as well that the rem was no longer due — which left out an
+  // item that stays due after its review (Rotation 0): its repeat came back on the normal
+  // row, where Next recorded a second review.
+  useEffect(() => {
+    if (!remId) return;
+    let cancelled = false;
+    (async () => {
+      const left = await plugin.storage.getSession<QueueLeftAfterReview | null>(queueLeftAfterReviewKey);
+      if (cancelled || !left || left.remId !== remId || Date.now() - left.at > 15000) return;
+      const lookback = await plugin.queue.inLookbackMode();
+      if (cancelled || lookback) return;
+      if (autoAdvancedRef.current) return;
+      autoAdvancedRef.current = true;
+      // The record first: the advance tears this widget down, and nothing after it runs.
+      await plugin.storage.setSession(queueLeftAfterReviewKey, null);
+      await recordQueueWidgetEvent(plugin, 'repeat:skipped', remId, { msAfterReview: Date.now() - left.at });
+      await plugin.storage.setSession(queueRepeatSkippedKey, { remId, at: Date.now() });
+      // Look again before moving on: those were three round trips, and if the item changed
+      // meanwhile (a press on Next, a 🔄) the advance would take the NEXT item away, unreviewed.
+      if (cancelled) return;
+      plugin.queue.removeCurrentCardFromQueue();
+    })().catch((e) => console.error('[QueueComponent] repeat check failed', e));
+    return () => {
+      cancelled = true;
+    };
+  }, [remId, plugin]);
 
   // All hooks must run before any early return — keep this block above the
   // `if (!remId) return null` guard further down.

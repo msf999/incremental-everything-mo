@@ -28,6 +28,19 @@ export function currentQueueTurn(): number {
   return turn;
 }
 
+/**
+ * FORK (2026-11-15, review 3 #1, reproduced by the reviewer under a stubbed SDK): a new turn
+ * when the Incremental Rem on screen changes without a queue event — the fork's 🔄 / Opt+R
+ * (Deviation 16) puts another rem into the same RemNote slot. Without it, Quick Priority reused
+ * the turn's resolved target and changed the rem that had been set aside, not the one shown.
+ * Called by the index widget's tracker on `currentIncRemKey` (lib/queue_prefetch.ts), so it
+ * also moves the turn when an ordinary advance's widget names its rem: a press resolved
+ * against the stale key in the half second before that is reported as "moved", not applied.
+ */
+export function bumpQueueTurn(): void {
+  turn++;
+}
+
 export type QueuePress = { turn: number; epoch: number };
 
 /** Where the queue and the selection stood at the keypress. Call it on the

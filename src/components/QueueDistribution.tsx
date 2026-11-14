@@ -11,8 +11,8 @@
 // LOWER = more important, hence the red-to-blue ramp left to right.
 import React, { useLayoutEffect, useRef, useState } from 'react';
 import { useTrackerPlugin } from '@remnote/plugin-sdk';
-import { allIncrementalRemKey } from '../lib/consts';
-import { IncrementalRem } from '../lib/incremental_rem';
+import { allIncrementalRemKey, allIncrementalRemSlimKey, queueReviewedInSessionKey } from '../lib/consts';
+import { IncrementalRem, SlimIncRem } from '../lib/incremental_rem';
 import { BAND_COUNT, bandColorPercentile, bandForPriority } from '../lib/priority_bands';
 import { percentileToHslColor } from '../lib/utils';
 
@@ -78,11 +78,22 @@ export function QueueDistribution(props: {
   highlightPriority?: number | null;
 }) {
   const bands = useTrackerPlugin(async (rp) => {
-    const all = (await rp.storage.getSession<IncrementalRem[]>(allIncrementalRemKey)) || [];
+    // The slim projection (rem id, due date, priority) is all this needs — about a tenth of
+    // the full cache, which is only the fallback for the moment before the slim key exists.
+    // 2026-11-14: a rem reviewed in this queue session is left out even while it is still due
+    // (Rotation 0), as in the queue counter — the bar's first band and the counter's
+    // parenthesised figure count the same items.
+    const [slim, reviewed] = await Promise.all([
+      rp.storage.getSession<SlimIncRem[]>(allIncrementalRemSlimKey),
+      rp.storage.getSession<string[] | null>(queueReviewedInSessionKey),
+    ]);
+    const all: SlimIncRem[] =
+      slim || (await rp.storage.getSession<IncrementalRem[]>(allIncrementalRemKey)) || [];
+    const done = new Set(reviewed || []);
     const now = Date.now();
     const counts = new Array<number>(BAND_COUNT).fill(0);
     for (const rem of all) {
-      if (now >= rem.nextRepDate) counts[bandForPriority(rem.priority)]++;
+      if (now >= rem.nextRepDate && !done.has(rem.remId)) counts[bandForPriority(rem.priority)]++;
     }
     return counts;
   }, []);

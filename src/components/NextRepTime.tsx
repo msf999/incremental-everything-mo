@@ -3,7 +3,8 @@ import dayjs from 'dayjs';
 import duration from 'dayjs/plugin/duration';
 import React from 'react';
 import { getNextSpacingDateForRem } from '../lib/scheduler';
-import { IncrementalRem, getRotationIntervalMs } from '../lib/incremental_rem';
+import { IncrementalRem } from '../lib/incremental_rem';
+import { parseRotation, nextRotationDate } from '../lib/rotation'; // FORK (2026-11-14)
 import { describeScheduler, ResolvedScheduler } from '../lib/scheduler_core';
 dayjs.extend(duration);
 
@@ -46,9 +47,11 @@ export function NextRepTime(props: NextRepTimeProps): React.ReactElement {
     let cancelled = false;
     const effect = async () => {
       setScheduler(undefined);
-      const rotMs = getRotationIntervalMs(props.rem.rotation);
-      if (rotMs !== null) {
-        setNextTime(Date.now() + rotMs);
+      // FORK: a Rotation overrides the scheduler — the same call the review writer makes
+      // (updateReviewRemData), so the label and the saved date cannot disagree.
+      const rotated = nextRotationDate(parseRotation(props.rem.rotation), Date.now(), props.rem.nextRepDate);
+      if (rotated) {
+        setNextTime(rotated.date);
         return;
       }
 
@@ -64,7 +67,7 @@ export function NextRepTime(props: NextRepTimeProps): React.ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [props.rem.remId, props.rem.rotation]);
+  }, [props.rem.remId, props.rem.rotation, props.rem.nextRepDate]);
 
   const duration = dayjs.duration(dayjs(nextTime).diff(dayjs()));
   const longVersion = durationToHumanReadable(duration);

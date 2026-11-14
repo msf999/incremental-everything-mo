@@ -2,7 +2,7 @@
 // UPDATED: Added filtering for powerup slots (Incremental and CardPriority)
 
 import React, { useState, useEffect } from 'react';
-import { useRef } from 'react'; // MOBILE-EXPERIMENT (M3/M4 only)
+import { useRef } from 'react'; // MOBILE-EXPERIMENT (M4 only)
 import { PluginRem, RNPlugin, DocumentViewer, RichText, BuiltInPowerupCodes, RichTextElementRemInterface, useTrackerPlugin } from '@remnote/plugin-sdk';
 import { powerupCode, allCardPriorityInfoKey, incremNotesSidebarRemIdKey, incremNotesSidebarWidgetId } from '../lib/consts';
 import { QueueBreadcrumb } from './QueueBreadcrumb'; // FORK (2026-10-11): ancestors with RemNote's icons
@@ -12,25 +12,40 @@ import {
   getDescendantsExcludingSlots
 } from '../lib/powerupSlotFilter';
 import { CardPriorityInfo } from '../lib/card_priority';
-import { MOBILE_DOCVIEW_CLASS, mobileExperiment, tagMobileDocumentOverlay } from '../lib/mobile_experiments'; // MOBILE-EXPERIMENT
+import { MOBILE_DOCVIEW_CLASS, isMobileApp, mobileExperiment, tagMobileDocumentOverlay } from '../lib/mobile_experiments'; // MOBILE-EXPERIMENT
+import { queueDocviewClassName } from '../lib/queue_docview'; // FORK (2026-11-14)
 import { MobileTextOutline } from './MobileTextOutline'; // MOBILE-EXPERIMENT M4
+import { MobileDocumentTree } from './MobileDocumentTree'; // MOBILE-EXPERIMENT M7
 
 // MOBILE-EXPERIMENT (lib/mobile_experiments.ts): all false outside RemNote's phone and
 // tablet apps, so on desktop every branch below that reads them renders as before.
 const M1_INLINE_LAYOUT = mobileExperiment('inlineLayout');
-const M2_SKIP_STATISTICS = mobileExperiment('skipStatistics');
-const M3_DELAY_DOCUMENT = mobileExperiment('delayDocument');
-const M4_BUTTONS = mobileExperiment('redrawAndTextButtons');
+const M2_COMPACT_FOOTER = mobileExperiment('compactFooter');
+const M4_TEXT_BUTTON = mobileExperiment('textButton');
 const M5_FACTS = mobileExperiment('diagnostics');
-// M3/M4 mount and unmount RemNote's overlay themselves; DOC_LIFECYCLE routes every such
+const M7_DOCUMENT_TREE = mobileExperiment('documentsAsTree');
+// M4/M7 mount and unmount RemNote's overlay themselves; DOC_LIFECYCLE routes every such
 // change through `shownDoc` (see below). With both off, the viewer renders as on desktop.
-const DOC_LIFECYCLE = M3_DELAY_DOCUMENT || M4_BUTTONS;
+const DOC_LIFECYCLE = M4_TEXT_BUTTON || M7_DOCUMENT_TREE;
 // The SDK only sends an unmount for an overlay once RemNote has answered its create
 // call; unmount it sooner and RemNote's overlay stays with no owner. A mounted overlay is
 // therefore kept for at least this long before anything replaces or removes it.
 const MIN_OVERLAY_LIFETIME_MS = 1000;
-// M5/M6: RemNote copies this onto its overlay element (see MOBILE_DOCVIEW_CLASS).
-const OVERLAY_CLASS_PROPS = tagMobileDocumentOverlay() ? { className: MOBILE_DOCVIEW_CLASS } : {};
+// RemNote copies a className onto its overlay element. Two things use that:
+//  - FORK (2026-11-14): the queue's document view opens at the top, and — everywhere but in
+//    RemNote's phone and tablet apps — is not typed into (lib/queue_docview.ts); `turn` counts
+//    the rems this view has shown, see there. `isMobileApp`, not `isPhone` (2026-11-15, review):
+//    it is the test that takes the ✎ sidebar button away (M2), and a view that cannot be typed
+//    into must never be one without that button — which is what RemNote's tablet app got;
+//  - MOBILE-EXPERIMENT M4/M5/M7: the phone's diagnostics and overlay rules (MOBILE_DOCVIEW_CLASS).
+const overlayClassProps = (turn: number) => ({
+  className: queueDocviewClassName(turn, !isMobileApp) + (tagMobileDocumentOverlay() ? ` ${MOBILE_DOCVIEW_CLASS}` : ''),
+});
+// M7: RemNote opens a Rem that has one of these powerups as its source — an uploaded file
+// (PDF), a video, a web link, an audio recording, a shared article or outline — and that
+// page draws on a phone, also for a Document (checked for the PDF and the link in the
+// phone layout, 2026-11-14). Such a Rem keeps RemNote's document page.
+const LEARNING_SOURCE_POWERUPS = ['f', 'vi', 'b', 'au', 'ssa', 'sslo'];
 
 // MOBILE-EXPERIMENT M1: the inline equivalents of the Tailwind classes on the same
 // elements, for a frame RemNote's stylesheet never reaches. The section's overflow and
@@ -55,13 +70,15 @@ const M1_STYLES: Record<string, React.CSSProperties> = {
   footerRow: { display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' },
 };
 
-// MOBILE-EXPERIMENT M4: the ↻ / ≡ buttons; `pressed` is the ≡ text view being open.
-// Unpressed text colour comes from M4_COLOUR_CSS (class ie-m4-fg), not from an inline style.
+// MOBILE-EXPERIMENT M4: the ≡ button (an icon, no words); `pressed` is the ≡ text view
+// being open. Unpressed text colour comes from M4_COLOUR_CSS (class ie-m4-fg), not from an
+// inline style.
 const m4ButtonStyle = (pressed: boolean): React.CSSProperties => ({
   flexShrink: 0,
   minHeight: 30,
-  padding: '4px 10px',
-  fontSize: 12,
+  minWidth: 34,
+  padding: '4px 8px',
+  fontSize: 16,
   fontWeight: 600,
   lineHeight: '18px',
   borderRadius: 6,
@@ -71,8 +88,9 @@ const m4ButtonStyle = (pressed: boolean): React.CSSProperties => ({
   cursor: 'pointer',
   whiteSpace: 'nowrap',
 });
-// MOBILE-EXPERIMENT M4: readable text in both themes in a frame without RemNote's CSS —
-// the SDK puts `dark` or `light` on this frame's body.
+// MOBILE-EXPERIMENT M4/M7: readable text in both themes in a frame without RemNote's CSS
+// (the ≡ button and text view, the tree's title line) — the SDK puts `dark` or `light` on
+// this frame's body.
 const M4_COLOUR_CSS =
   '.ie-m4-fg{color:#111827}body.dark .ie-m4-fg{color:#e5e7eb}' +
   '.ie-m4-dim{color:#64748b}body.dark .ie-m4-dim{color:#94a3b8}';
@@ -132,61 +150,76 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
       [rem._id]
     ) ?? false;
 
-  // MOBILE-EXPERIMENT M3/M4: whether RemNote has been asked for this rem's document yet
-  // (and how long after the queue body appeared), how often ↻ was pressed, and whether
-  // the ≡ text view is open. Each is recorded WITH the rem it belongs to and derived per
+  // MOBILE-EXPERIMENT M4/M7: whether the ≡ text view is open, and which of RemNote's
+  // views draws this rem. Each is recorded WITH the rem it belongs to and derived per
   // render, never reset by an effect: the 🔄 swap changes `rem` in place. On desktop none
   // of this changes anything.
-  const sectionRef = useRef<HTMLDivElement>(null);
-  const [documentRequest, setDocumentRequest] = useState<{ remId: string; afterMs: number } | null>(null);
-  const [redrawState, setRedrawState] = useState<{ remId: string; count: number } | null>(null);
   const [textViewRemId, setTextViewRemId] = useState<string | null>(null);
-  const documentRequested = !M3_DELAY_DOCUMENT || documentRequest?.remId === rem._id;
-  const documentRequestedAfterMs = documentRequest?.remId === rem._id ? documentRequest.afterMs : null;
-  const redraws = redrawState?.remId === rem._id ? redrawState.count : 0;
   const textView = textViewRemId === rem._id;
+  const [viewFact, setViewFact] = useState<{ remId: string; kind: 'page' | 'tree' } | null>(null);
+  useEffect(() => {
+    if (!M7_DOCUMENT_TREE) return;
+    let cancelled = false;
+    const remId = rem._id;
+    Promise.all([rem.isDocument(), ...LEARNING_SOURCE_POWERUPS.map((code) => rem.hasPowerup(code))]).then(
+      ([isDocument, ...sources]) => {
+        if (!cancelled) setViewFact({ remId, kind: isDocument && !sources.some(Boolean) ? 'tree' : 'page' });
+      },
+      () => {
+        // Unreadable: RemNote's document page, as before M7.
+        if (!cancelled) setViewFact({ remId, kind: 'page' });
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [rem._id]);
+  // M7: RemNote's hierarchy tree for a plain Document, its document page (as on desktop)
+  // for anything else. null until that is known for THIS rem: nothing is mounted before,
+  // because the page throws for a plain Document on a phone.
+  const viewKind: 'page' | 'tree' | null = !M7_DOCUMENT_TREE
+    ? 'page'
+    : viewFact?.remId === rem._id
+      ? viewFact.kind
+      : null;
 
-  // Taps on ↻ / ≡ less than a second apart are ignored (a double tap is one request).
+  // FORK (2026-11-14): how many rems this view has shown — 🔄 Another item puts a new rem into
+  // the same view, and the open-at-the-top hold has to start again for it
+  // (lib/queue_docview.ts).
+  const docTurnRef = useRef({ remId: rem._id, turn: 0 });
+  if (docTurnRef.current.remId !== rem._id) {
+    docTurnRef.current = { remId: rem._id, turn: docTurnRef.current.turn + 1 };
+  }
+  const docTurn = docTurnRef.current.turn;
+
+  // Taps on ≡ less than a second apart are ignored (a double tap is one request).
   const lastM4TapAtRef = useRef(0);
-  const m4TapAllowed = () => {
-    if (Date.now() - lastM4TapAtRef.current < 1000) return false;
-    lastM4TapAtRef.current = Date.now();
-    return true;
-  };
-  const redrawDocument = () => {
-    if (!m4TapAllowed()) return;
-    setTextViewRemId(null);
-    setRedrawState({ remId: rem._id, count: redraws + 1 });
-  };
   const toggleTextView = () => {
-    if (!m4TapAllowed()) return;
+    if (Date.now() - lastM4TapAtRef.current < 1000) return;
+    lastM4TapAtRef.current = Date.now();
     setTextViewRemId(textView ? null : rem._id);
   };
 
-  // The DocumentViewer actually rendered (DOC_LIFECYCLE only). Every change — M3's first
-  // request, ↻, ≡, the notes sidebar, a 🔄 swap — goes through here, and a viewer younger
+  // The view of RemNote's actually rendered (DOC_LIFECYCLE only). Every change — the
+  // first mount, ≡, the notes sidebar, a 🔄 swap — goes through here, and a view younger
   // than MIN_OVERLAY_LIFETIME_MS is kept until it is old enough. That is what prevents an
   // orphan: the SDK sends no unmount for an overlay RemNote has not yet confirmed, and
   // such an overlay then stays on screen, invisible-but-tappable, for the rest of the item
-  // (seen in testing: two overlays after a swap). `overlaysCreated` counts viewers per rem
-  // for the ≡ Text facts box.
-  const [shownDoc, setShownDoc] = useState<{ key: string; remId: string; mountedAt: number } | null>(null);
-  const overlaysCreatedRef = useRef<Record<string, number>>({});
+  // (seen in testing: two overlays after a swap).
+  const [shownDoc, setShownDoc] = useState<{
+    key: string;
+    remId: string;
+    kind: 'page' | 'tree';
+    mountedAt: number;
+  } | null>(null);
   const wantedDoc =
-    DOC_LIFECYCLE && !notesOpenForThisRem && !textView && documentRequested
-      ? { key: `${rem._id}:${redraws}`, remId: rem._id }
+    DOC_LIFECYCLE && !notesOpenForThisRem && !textView && viewKind
+      ? { key: `${rem._id}:${viewKind}`, remId: rem._id, kind: viewKind }
       : null;
   useEffect(() => {
     if (!DOC_LIFECYCLE) return;
     if ((shownDoc?.key ?? null) === (wantedDoc?.key ?? null)) return;
-    const apply = () => {
-      if (wantedDoc) {
-        overlaysCreatedRef.current[wantedDoc.remId] = (overlaysCreatedRef.current[wantedDoc.remId] ?? 0) + 1;
-        setShownDoc({ ...wantedDoc, mountedAt: Date.now() });
-      } else {
-        setShownDoc(null);
-      }
-    };
+    const apply = () => setShownDoc(wantedDoc ? { ...wantedDoc, mountedAt: Date.now() } : null);
     const age = shownDoc ? Date.now() - shownDoc.mountedAt : Infinity;
     if (age >= MIN_OVERLAY_LIFETIME_MS) {
       apply();
@@ -195,37 +228,6 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
     const timer = setTimeout(apply, MIN_OVERLAY_LIFETIME_MS - age);
     return () => clearTimeout(timer);
   }, [wantedDoc?.key, shownDoc?.key]);
-
-  useEffect(() => {
-    if (!M3_DELAY_DOCUMENT) return;
-    const remId = rem._id;
-    const startedAt = Date.now();
-    let done = false;
-    let settle: ReturnType<typeof setTimeout> | undefined;
-    const request = () => {
-      if (done) return;
-      done = true;
-      setDocumentRequest({ remId, afterMs: Date.now() - startedAt });
-    };
-    // Whatever the layout does, RemNote is asked within 1.5 s.
-    const fallback = setTimeout(request, 1500);
-    // Otherwise 250 ms after the section last changed size, once it has a real height
-    // (the frame starts 0 px tall until RemNote sizes it).
-    const section = sectionRef.current;
-    const observer = section
-      ? new ResizeObserver(() => {
-          if (done || section.getBoundingClientRect().height < 100) return;
-          clearTimeout(settle);
-          settle = setTimeout(request, 250);
-        })
-      : undefined;
-    if (section && observer) observer.observe(section);
-    return () => {
-      clearTimeout(fallback);
-      clearTimeout(settle);
-      observer?.disconnect();
-    };
-  }, [rem._id]);
 
 
   // -----------------------------------------------------------
@@ -279,7 +281,7 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
   useEffect(() => {
     setMetadata(null);
     // MOBILE-EXPERIMENT M2: no statistics pass on phones (see lib/mobile_experiments.ts).
-    if (M2_SKIP_STATISTICS) return;
+    if (M2_COMPACT_FOOTER) return;
 
     const calculateMetadata = async () => {
       console.log("[ExtractViewer] Starting OPTIMIZED metadata calculation (using cache)...");
@@ -379,7 +381,7 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
   // --- IMMEDIATE RENDER ---
   // We no longer rely on remData. We use null coalescing for the deferred state.
 
-  const isMetadataLoading = !metadata && !M2_SKIP_STATISTICS; // MOBILE-EXPERIMENT M2: never loads there
+  const isMetadataLoading = !metadata && !M2_COMPACT_FOOTER; // MOBILE-EXPERIMENT M2: never loads there
   const {
     childrenCount = '...',
     incrementalChildrenCount = '...',
@@ -433,7 +435,7 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
       {/* Breadcrumb Section. FORK (2026-10-11): the ancestors, with RemNote's folder and
           document icons — components/QueueBreadcrumb.tsx, which shows nothing until they are
           read, so the row no longer hides itself while loading. MOBILE-EXPERIMENT M4: the
-          row also carries the ↻ / ≡ buttons. */}
+          row also carries the ≡ button. */}
       <div
         className="breadcrumb-section px-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0 h-10 flex items-center overflow-x-auto"
         {...keepFocusWithRemNote} // FORK (2026-10-11)
@@ -442,33 +444,23 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
           ...(topRightClearance > 0 ? { paddingRight: topRightClearance } : {}), // FORK (2026-10-11)
         }}
       >
-        {M4_BUTTONS && (
+        {DOC_LIFECYCLE && <style>{M4_COLOUR_CSS}</style> /* MOBILE-EXPERIMENT M4/M7 */}
+        {M4_TEXT_BUTTON && (
           // MOBILE-EXPERIMENT M4. In the phone app RemNote's page header covers this row
-          // whenever the document is drawn, so in practice these are reachable exactly
-          // when it is not. Their clicks reach the row's keepFocusWithRemNote, which hands
-          // keyboard focus back after a tap (2026-10-11, review, reproduced on desktop: a
-          // stopPropagation here kept it in the plugin).
-          <div style={{ display: 'flex', gap: 6, marginRight: 10, flexShrink: 0 }}>
-            <style>{M4_COLOUR_CSS}</style>
-            <button
-              className="ie-m4-fg"
-              type="button"
-              title="Ask RemNote to draw this document again"
-              style={m4ButtonStyle(false)}
-              onClick={() => redrawDocument()}
-            >
-              ↻ Redraw
-            </button>
-            <button
-              className="ie-m4-fg"
-              type="button"
-              title={textView ? 'Back to RemNote’s document view' : 'Show this Rem as plain text, drawn by the plugin'}
-              style={m4ButtonStyle(textView)}
-              onClick={() => toggleTextView()}
-            >
-              {textView ? '≡ Document' : '≡ Text'}
-            </button>
-          </div>
+          // whenever RemNote's document page is drawn (not over its tree, M7). The click
+          // reaches the row's keepFocusWithRemNote, which hands keyboard focus back after
+          // a tap (2026-10-11, review, reproduced on desktop: a stopPropagation here kept
+          // it in the plugin).
+          <button
+            className="ie-m4-fg"
+            type="button"
+            title={textView ? 'Back to RemNote’s view' : 'Show this Rem as plain text, drawn by the plugin'}
+            aria-pressed={textView}
+            style={{ ...m4ButtonStyle(textView), marginRight: 10 }}
+            onClick={() => toggleTextView()}
+          >
+            ≡
+          </button>
         )}
         <QueueBreadcrumb rem={rem} plugin={plugin} />
       </div>
@@ -476,31 +468,29 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
       {/* DocumentViewer Section (Renders immediately using rem._id). Paused
           while this rem is open in the notes sidebar — see notesOpenForThisRem. */}
       <div
-        ref={sectionRef}
         className="document-viewer-section overflow-hidden"
-        style={M1_INLINE_LAYOUT || M4_BUTTONS ? M1_STYLES.section : undefined} // MOBILE-EXPERIMENT M1 (and M4: the ≡ view scrolls only inside a bounded section)
+        style={M1_INLINE_LAYOUT || DOC_LIFECYCLE ? M1_STYLES.section : undefined} // MOBILE-EXPERIMENT M1 (and M4/M7: the ≡ view and the tree's column need a bounded section)
       >
         {DOC_LIFECYCLE ? (
-          // MOBILE-EXPERIMENT M3/M4: the viewer RemNote was asked for (see shownDoc), else
-          // the notes hint or the plugin's own ≡ text view.
+          // MOBILE-EXPERIMENT M4/M7: the view RemNote was asked for (see shownDoc) — its
+          // tree under a title line for a Document, its document page otherwise — else the
+          // notes hint or the plugin's own ≡ text view.
           shownDoc ? (
-            <DocumentViewer
-              key={shownDoc.key}
-              width={'100%'}
-              height={'100%'}
-              documentId={shownDoc.remId}
-              {...OVERLAY_CLASS_PROPS} // MOBILE-EXPERIMENT M4/M5/M6: RemNote copies it onto its overlay
-            />
+            shownDoc.kind === 'tree' ? (
+              <MobileDocumentTree key={shownDoc.key} remId={shownDoc.remId} />
+            ) : (
+              <DocumentViewer
+                key={shownDoc.key}
+                width={'100%'}
+                height={'100%'}
+                documentId={shownDoc.remId}
+                {...overlayClassProps(docTurn)} // RemNote copies it onto its overlay
+              />
+            )
           ) : notesOpenForThisRem ? (
             notesHint
           ) : textView ? (
-            <MobileTextOutline
-              rem={rem}
-              plugin={plugin}
-              showFacts={M5_FACTS}
-              documentRequestedAfterMs={documentRequestedAfterMs}
-              overlaysCreated={overlaysCreatedRef.current[rem._id] ?? 0}
-            />
+            <MobileTextOutline rem={rem} plugin={plugin} showFacts={M5_FACTS} view={viewKind} />
           ) : null
         ) : notesOpenForThisRem ? (
           notesHint
@@ -509,7 +499,7 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
             width={'100%'}
             height={'100%'}
             documentId={rem._id}
-            {...OVERLAY_CLASS_PROPS} // MOBILE-EXPERIMENT M5/M6: empty on desktop
+            {...overlayClassProps(docTurn)} // FORK (2026-11-14): open at the top; RemNote copies it onto its overlay
           />
         )}
       </div>
@@ -521,17 +511,15 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
           borderColor: '#e5e7eb',
           backgroundColor: isMetadataLoading ? 'rgba(0,0,0,0.05)' : 'transparent',
           ...(M1_INLINE_LAYOUT ? M1_STYLES.footer : {}), // MOBILE-EXPERIMENT M1
+          ...(M2_COMPACT_FOOTER ? { paddingTop: 6, paddingBottom: 6 } : {}), // MOBILE-EXPERIMENT M2
         }}
       >
-        <div className="text-xs text-gray-500 dark:text-gray-400">
+        <div className={`text-xs text-gray-500 dark:text-gray-400${M2_COMPACT_FOOTER ? ' ie-m4-dim' : ''}`}>
           <div className="flex items-center gap-4 flex-wrap" style={M1_INLINE_LAYOUT ? M1_STYLES.footerRow : undefined /* MOBILE-EXPERIMENT M1 */}>
             <span>
               {isContextLoading ? 'Loading...' : (hasDocumentPowerup ? 'Document' : 'Extract')} • Incremental Rem
             </span>
-            {M2_SKIP_STATISTICS ? (
-              // MOBILE-EXPERIMENT M2
-              <span>Statistics are not calculated on phones</span>
-            ) : isMetadataLoading ? (
+            {M2_COMPACT_FOOTER ? null /* MOBILE-EXPERIMENT M2: one line on a phone */ : isMetadataLoading ? (
               <span>Calculating statistics...</span>
             ) : (
               <>
@@ -546,6 +534,11 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
                 </span>
               </>
             )}
+            {/* MOBILE-EXPERIMENT M2: no "✎ Open in sidebar" on a phone — the notes sidebar
+                is a full-screen sheet there and draws RemNote's document page, which stays
+                white for a Document. The button still shows while the sidebar holds this
+                rem (the key was set some other way), so the queue view can be brought back. */}
+            {(!M2_COMPACT_FOOTER || notesOpenForThisRem) && (
             <button
               onClick={async () => {
                 // Toggle. Open: point the sidebar at this Rem (which also pauses
@@ -566,7 +559,7 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
               title={
                 notesOpenForThisRem
                   ? 'Show this Rem in the queue again (the sidebar pane is closed with RemNote\'s own control)'
-                  : 'Open this Rem in the notes sidebar (popups and [[ search work there); the in-queue view pauses while it is open'
+                  : 'Write here: open this Rem in the notes sidebar, where typing, popups and [[ search work — the queue view itself is read-only, because RemNote would read the keys as queue shortcuts. The in-queue view pauses while it is open. Ctrl+P opens the same Rem in a preview popup instead.'
               }
               style={{
                 marginLeft: 'auto',
@@ -586,6 +579,7 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
             >
               {notesOpenForThisRem ? '✎ Show in queue' : '✎ Open in sidebar'}
             </button>
+            )}
           </div>
         </div>
       </div>

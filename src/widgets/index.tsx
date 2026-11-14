@@ -9,6 +9,7 @@ import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { handleMobileDetectionOnStartup, shouldUseLightMode } from '../lib/mobileUtils';
 import { registerMobileExperimentCss } from '../lib/mobile_experiments'; // MOBILE-EXPERIMENT
+import { registerQueueDocviewCss } from '../lib/queue_docview'; // FORK (2026-11-14)
 import { refreshSourceUrlIndexIfDue } from '../lib/duplicate_source';
 import { startCompanionListener } from '../lib/companion';
 import { loadCardPriorityCache } from '../lib/card_priority/cache';
@@ -294,6 +295,9 @@ async function onActivate(plugin: ReactRNPlugin) {
   // MOBILE-EXPERIMENT M5/M6 (lib/mobile_experiments.ts): labels and the reveal rule for
   // RemNote's queue overlay. Registers nothing outside RemNote's phone and tablet apps.
   await registerMobileExperimentCss(plugin);
+  // FORK (2026-11-14): a document shown in the queue opens at its top and is not typed into
+  // (lib/queue_docview.ts).
+  await registerQueueDocviewCss(plugin);
 
   // The card-priority cache, and the KB-wide pretagging pass inside it, are the
   // heaviest thing the plugin does: phase 2 applies the CardPriority powerup to

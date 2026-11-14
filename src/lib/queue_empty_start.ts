@@ -55,6 +55,18 @@ export function resetEmptyQueueRescue() {
   settled.clear();
 }
 
+/**
+ * FORK (2026-11-15, R-039, reproduced live): lets the rescue run once more in a queue where it
+ * has settled. GetNextCard calls this when it had nothing to serve with no flashcards left
+ * while more Incremental Rems are due, and has started a refill (a fast run of Skips emptied the
+ * buffer). RemNote is then about to show its finished screen and asks GetNextCard only once
+ * more, from that pop's trailing preload; the answer it parks there is shown only by a pop,
+ * which is what the rescue does — on the finished screen only (`readQueueScreen`).
+ */
+export function rearmEmptyQueueRescue(info: PrefetchQueueInfo) {
+  settled.delete(`${info.mode}|${info.subQueueId ?? ''}`);
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function waitUntil(cond: () => boolean, timeoutMs: number) {

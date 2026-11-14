@@ -11,7 +11,9 @@ import {
   deferSpoilerIncRemsId,
 } from './consts';
 import { urgentPriorityLimit } from './consts'; // FORK (Deviation 9)
+import { queueLeftAfterReviewKey, QueueLeftAfterReview, queueReviewedInSessionKey } from './consts'; // FORK (2026-11-14)
 import { queueSwapRequestKey, queueSlotSwapKey, incremReviewStartTimeKey, QueueSwapRequest, QueueSlotSwap } from './consts'; // FORK (Deviation 16)
+import { queueRepeatSkippedKey } from './consts'; // FORK (2026-11-14)
 import { getIESetting } from './settings';
 import { getIncrementalRemFromRem, IncrementalRem, SlimIncRem } from './incremental_rem';
 import {
@@ -22,6 +24,9 @@ import {
   getWeightSelectionK,
   applyPriorityWeightedLottery,
 } from './sorting';
+import { recordQueueEvent, formatQueueDiagnostics } from './queue_diagnostics'; // FORK (2026-11-14)
+import { writeQueueCounterCss } from './ui_helpers'; // FORK (2026-11-14)
+import { bumpQueueTurn } from './queue_turn'; // FORK (2026-11-15, review 3 #1)
 
 /**
  * Off-critical-path preparation of the next Incremental Rem to inject into the
@@ -108,6 +113,12 @@ const MAX_VERIFY_ROUNDS = 4;
  * rates the item.
  */
 const REFILL_DELAY_MS = 1200;
+/**
+ * FORK (2026-11-14): how long a rolled-back candidate waits for the queue widget's report
+ * before it counts as "not shown" (see `held`). The report normally arrives about half a
+ * second after the item appears, later when the bridge is busy.
+ */
+const HELD_GRACE_MS = 3000;
 
 type PrefetchState = {
   /** `${mode}|${subQueueId}` the buffer was built for; null when never built. */
@@ -135,10 +146,28 @@ type PrefetchState = {
    * there is genuinely no unspoiled one left to serve instead.
    */
   cleanExhausted: boolean;
-  /** Due-and-in-scope count, for the queue counter CSS. */
+  /**
+   * Due, in scope and not yet served. Upstream showed this number in the queue counter; the
+   * fork shows `stillDue` instead (below) and keeps this one for its own bookkeeping — the
+   * 🔄 swap asks it whether anything is left to verify.
+   */
   dueCount: number;
-  /** FORK (Deviation 9): how many of `dueCount` have priority below urgentPriorityLimit (10). */
-  urgentDueCount: number;
+  /**
+   * FORK (2026-11-14, owner request): what the queue counter SHOWS — the Incremental Rems in
+   * this session's scope that are still due, whether or not the queue has served them — and
+   * how many of those have a priority below urgentPriorityLimit (the parenthesised figure,
+   * Deviation 9).
+   *
+   * Serving an item does not change them, so neither does setting one aside with 🔄 or
+   * leaving one with Skip: such an item is still due. They fall when an item stops being due
+   * (a review, a reschedule, a dismissal — read off the cache) and for an item reviewed in
+   * this session that stays due all the same (Rotation 0; `reviewedThisSession`).
+   * Recounted by every build and by the trackers in registerPrefetchTrackers.
+   */
+  stillDue: number;
+  stillDueUrgent: number;
+  /** FORK (2026-11-14): the scope the last build read, for the recounts between builds. */
+  scopeSet: Set<RemId> | null;
   cardsPerRem: CardsPerRem;
   /** Mirror of noIncRemTimerKey: ms timestamp, or null when no timer is set. */
   timerEndsAt: number | null;
@@ -156,6 +185,23 @@ type PrefetchState = {
    * goes back on the buffer intact.
    */
   pending: SlimIncRem | null;
+  /**
+   * FORK (2026-11-14): candidates that a GetNextCard verdict rolled back ("same slot asked
+   * again", "dropped") wait here instead of going straight back to the head of the buffer.
+   *
+   * The verdict is read off RemNote's counters at the moment an item is popped — before
+   * the queue widget can report what is on screen — and when it is wrong, the rolled-back
+   * rem IS on screen. Putting it at the head of the buffer made the very same call serve it
+   * again: RemNote then held the item the user was reading as the next one too, and it came
+   * back right after Next as "Already reviewed" (the owner's report of 2026-11-14,
+   * reproduced live by forcing the verdict). A returned item cannot be taken back, so the
+   * only safe moment to decide is before it is returned.
+   *
+   * While a rem waits here it is not served. The widget's report burns it
+   * (noteIncRemDisplayed); if HELD_GRACE_MS pass without one, it was not shown after all
+   * and goes back to the head of the buffer (releaseHeld).
+   */
+  held: { rem: SlimIncRem; at: number }[];
   ready: boolean;
 };
 
@@ -180,12 +226,15 @@ const emptyState = (previous?: PrefetchState): PrefetchState => ({
   deferredBuffer: [],
   cleanExhausted: false,
   dueCount: 0,
-  urgentDueCount: 0,
+  stillDue: 0,
+  stillDueUrgent: 0,
+  scopeSet: null,
   cardsPerRem: previous?.cardsPerRem ?? DEFAULT_CARDS_PER_REM,
   timerEndsAt: previous?.timerEndsAt ?? null,
   deviceDisabled: previous?.deviceDisabled ?? false,
   seen: new Set<RemId>(),
   pending: null,
+  held: [],
   ready: false,
 });
 
@@ -211,6 +260,28 @@ let refillTimer: ReturnType<typeof setTimeout> | null = null;
 let primed = false;
 /** The sub-queue the session was primed for, so a wait from another session never matches. */
 let primedSubQueueId: string | undefined;
+/**
+ * FORK (2026-11-14): the rems reviewed in this queue session. Only the counter reads it, and
+ * only for a rem that is still due after its review (Rotation 0): the cache cannot tell such
+ * a rem from one not reviewed yet. Mirrors the session key `queueReviewedInSessionKey`, which
+ * the QueueEnter listener and resetQueueSession empty — so it survives a plugin restart in
+ * the middle of a session, which module memory would not. Not part of PrefetchState for the
+ * same reason: the restart's bootstrap resets that.
+ */
+let reviewedThisSession = new Set<RemId>();
+/**
+ * FORK (2026-11-15, review): the slim cache as tracker (a) last read it — it reads it on
+ * every cache write anyway. The counter is recounted from this, so that a review costs this
+ * frame one transfer of the cache instead of three, and a build publishes today's count, not
+ * the one of the cache it read when it started. Null until the cache has been written once.
+ */
+let latestSlim: SlimIncRem[] | null = null;
+/** FORK (2026-11-14): the rem of the last 'displayed' line in the queue's event record. */
+let lastDisplayedRecorded: RemId | null = null;
+/** A review mark older than this was not written just now (the first tracker run after a restart). */
+const REVIEW_MARK_MAX_AGE_MS = 10_000;
+/** The same for the queue widget's "I skipped a repeat" report. */
+const REPEAT_REPORT_MAX_AGE_MS = 10_000;
 
 const makeBuildKey = (info: PrefetchQueueInfo) => `${info.mode}|${info.subQueueId ?? ''}`;
 
@@ -246,13 +317,86 @@ export function readCardsPerRem(): CardsPerRem {
   return state.cardsPerRem;
 }
 
+// FORK (2026-11-14): the counter shows what is still due, not what is still unserved.
 export function readDueCount(): number {
-  return state.dueCount;
+  return state.stillDue;
 }
 
 // FORK (Deviation 9): the parenthesised figure of the queue counter.
 export function readUrgentDueCount(): number {
-  return state.urgentDueCount;
+  return state.stillDueUrgent;
+}
+
+/**
+ * FORK (2026-11-14): the counter's two numbers for a cache snapshot — see `stillDue`.
+ * The scope applies as it does to selection: only in a document queue, and only once the
+ * scope has been resolved.
+ */
+function countStillDue(
+  all: SlimIncRem[],
+  subQueueId: string | undefined,
+  scopeSet: Set<RemId> | null
+): { due: number; urgent: number } {
+  const scoped = !!subQueueId && !!scopeSet;
+  const now = Date.now();
+  let due = 0;
+  let urgent = 0;
+  for (const x of all) {
+    if (now < x.nextRepDate) continue;
+    if (scoped && !scopeSet!.has(x.remId)) continue;
+    if (reviewedThisSession.has(x.remId)) continue;
+    due++;
+    if (x.priority < urgentPriorityLimit) urgent++;
+  }
+  return { due, urgent };
+}
+
+/** FORK (2026-11-14): store the counter's numbers and rewrite the counter when they moved. */
+function applyStillDue(plugin: ReactRNPlugin, counts: { due: number; urgent: number }, force = false) {
+  const changed = counts.due !== state.stillDue || counts.urgent !== state.stillDueUrgent;
+  state.stillDue = counts.due;
+  state.stillDueUrgent = counts.urgent;
+  if (changed || force) void publishQueueCounter(plugin);
+}
+
+/**
+ * FORK (2026-11-14): write the counter between GetNextCard calls. GetNextCard writes it on
+ * every call, but a review lowers the number before the queue moves on, and a reschedule or
+ * a dismissal by command is saved a moment AFTER it has (review jobs) — without this the
+ * counter would run one item behind. Never while a gate hides Incremental Rems (GetNextCard
+ * clears the counter then), and never outside the queue: leaving it by navigation fires no
+ * QueueExit, so this module's state can outlive the queue it was built for.
+ */
+async function publishQueueCounter(plugin: ReactRNPlugin) {
+  if (!state.ready || readGates().blocked) return;
+  const forGeneration = generation;
+  try {
+    const url = await plugin.window.getURL();
+    if (forGeneration !== generation || !state.ready || !url.includes('/flashcards')) return;
+    writeQueueCounterCss(plugin, state.stillDue, state.stillDueUrgent);
+  } catch (e) {
+    console.error('[prefetch] counter write failed:', e);
+  }
+}
+
+/** FORK (2026-11-14): recount from the cache as it is now. */
+async function recountStillDue(plugin: ReactRNPlugin) {
+  if (!state.ready) return;
+  const forGeneration = generation;
+  const slim = latestSlim ?? (await plugin.storage.getSession<SlimIncRem[]>(allIncrementalRemSlimKey));
+  if (!slim || forGeneration !== generation || !state.ready) return;
+  applyStillDue(plugin, countStillDue(slim, state.info?.subQueueId, state.scopeSet));
+}
+
+/**
+ * FORK (2026-11-15, review): do the counter's numbers hold for `info`? They say what is
+ * still due in the session's scope, whatever the queue's mode — so a buffer built for
+ * another mode of the SAME queue (QueueEnter primes 'normal'; a document's Practice All and
+ * Practice in Order then ask for theirs) leaves them right, and GetNextCard must not blank
+ * the counter while it rebuilds.
+ */
+export function stillDueCountsHoldFor(info: PrefetchQueueInfo): boolean {
+  return state.ready && !!state.info && (state.info.subQueueId ?? '') === (info.subQueueId ?? '');
 }
 
 export function isPrefetchReadyFor(info: PrefetchQueueInfo): boolean {
@@ -263,7 +407,9 @@ export function isPrefetchReadyFor(info: PrefetchQueueInfo): boolean {
 export function hasPrefetchedCandidate(info: PrefetchQueueInfo): boolean {
   if (!isPrefetchReadyFor(info)) return false;
   const unseen = (list: SlimIncRem[]) => list.some((c) => !state.seen.has(c.remId));
-  return unseen(state.buffer) || unseen(state.deferredBuffer);
+  // FORK (2026-11-15): a held candidate counts — when nothing else is left it is served
+  // without waiting (takeHeldEarly), and this is asked by the empty-queue rescue.
+  return unseen(state.buffer) || unseen(state.deferredBuffer) || state.held.some((h) => !state.seen.has(h.rem.remId));
 }
 
 /**
@@ -288,6 +434,72 @@ export async function waitForPrimedPrefetch(
   }
 }
 
+/** FORK (2026-11-14): true while `remId` waits in `held` — it must not be served. */
+const isHeld = (remId: RemId) => state.held.some((h) => h.rem.remId === remId);
+
+/**
+ * FORK (2026-11-14): the next candidate of `list` that may be served. A seen rem is dropped
+ * from the list on the way, as before; a held one is passed over and stays where it is (a
+ * rebuild can put it back into a buffer while it waits).
+ */
+function takeUnseenFrom(list: SlimIncRem[]): SlimIncRem | undefined {
+  for (let i = 0; i < list.length; ) {
+    const c = list[i];
+    if (state.seen.has(c.remId)) {
+      list.splice(i, 1);
+      continue;
+    }
+    if (isHeld(c.remId)) {
+      i++;
+      continue;
+    }
+    list.splice(i, 1);
+    return c;
+  }
+  return undefined;
+}
+
+/**
+ * FORK (2026-11-14): held candidates whose grace period ran out without a display report
+ * were not shown after all — back to the head of the buffer, in the order they were held.
+ */
+function releaseHeld() {
+  if (state.held.length === 0) return;
+  const now = Date.now();
+  const expired = state.held.filter((h) => now - h.at >= HELD_GRACE_MS);
+  if (expired.length === 0) return;
+  state.held = state.held.filter((h) => now - h.at < HELD_GRACE_MS);
+  for (const h of expired.reverse()) {
+    if (state.seen.has(h.rem.remId)) continue;
+    state.buffer = state.buffer.filter((c) => c.remId !== h.rem.remId);
+    state.deferredBuffer = state.deferredBuffer.filter((c) => c.remId !== h.rem.remId);
+    state.buffer.unshift(h.rem);
+    recordQueueEvent('held:released', h.rem.remId);
+  }
+}
+
+/**
+ * FORK (2026-11-15, review): the oldest held candidate, before its grace period is over —
+ * for the two moments at which waiting would cost more than it protects:
+ *  - RemNote has no flashcards left and nothing else can be served: answering "nothing"
+ *    would end the session with a due Incremental Rem never shown. Should the verdict that
+ *    held it have been wrong (it IS on screen), it comes back once after its review and the
+ *    queue widget's repeat check moves on by itself;
+ *  - a 🔄 swap: the rem on screen has just been consumed by the swap, so a held rem is by
+ *    definition not the one on screen.
+ */
+function takeHeldEarly(): SlimIncRem | undefined {
+  while (state.held.length > 0) {
+    const h = state.held.shift()!;
+    state.buffer = state.buffer.filter((c) => c.remId !== h.rem.remId);
+    state.deferredBuffer = state.deferredBuffer.filter((c) => c.remId !== h.rem.remId);
+    if (state.seen.has(h.rem.remId)) continue;
+    recordQueueEvent('held:served-early', h.rem.remId);
+    return h.rem;
+  }
+  return undefined;
+}
+
 /**
  * Pops the next verified candidate, or null when the buffer is empty or was
  * built for a different queue (mode or sub-queue changed).
@@ -300,15 +512,14 @@ export function takePrefetchedCandidate(
   options?: { allowDeferred?: boolean }
 ): SlimIncRem | null {
   if (!isPrefetchReadyFor(info)) return null;
+  releaseHeld(); // FORK (2026-11-14)
   // A rem can be burned while it sits in a buffer (see noteIncRemDisplayed), and
   // the buffers are only rebuilt later. Skipping it here is the last guard
   // against showing the same IncRem twice in one session.
-  const takeUnseen = (list: SlimIncRem[]) => {
-    let c = list.shift();
-    while (c && state.seen.has(c.remId)) c = list.shift();
-    return c;
-  };
+  const takeUnseen = takeUnseenFrom;
   let next = takeUnseen(state.buffer);
+  // FORK (2026-11-15): no flashcards left and nothing else unspoiled — the held one, now.
+  if (!next && options?.allowDeferred) next = takeHeldEarly();
   if (!next && (state.cleanExhausted || options?.allowDeferred)) {
     // Nothing unspoiled is left to show instead, so the protection has done all
     // it usefully can: serving the held-back IncRem now beats withholding it for
@@ -326,7 +537,6 @@ export function takePrefetchedCandidate(
   state.pending = next;
   // Keep the queue counter honest between rebuilds; the next build recomputes it.
   if (state.dueCount > 0) state.dueCount--;
-  if (next.priority < urgentPriorityLimit && state.urgentDueCount > 0) state.urgentDueCount--; // FORK (Deviation 9)
   return next;
 }
 
@@ -363,20 +573,19 @@ export function pendingWasDisplayed(): boolean {
  */
 export function takeCandidateForSwap(plugin: ReactRNPlugin): SlimIncRem | null {
   if (!state.ready) return null;
-  const takeUnseen = (list: SlimIncRem[]) => {
-    let c = list.shift();
-    while (c && state.seen.has(c.remId)) c = list.shift();
-    return c ?? null;
-  };
+  releaseHeld(); // FORK (2026-11-14)
+  const takeUnseen = (list: SlimIncRem[]) => takeUnseenFrom(list) ?? null;
   // Spoiler protection's rule, as in takePrefetchedCandidate: a held-back IncRem is
   // only served once no unspoiled candidate is left.
   const next =
-    takeUnseen(state.buffer) ?? (state.cleanExhausted ? takeUnseen(state.deferredBuffer) : null);
+    takeUnseen(state.buffer) ??
+    takeHeldEarly() ?? // FORK (2026-11-15): a held rem is not the one on screen — see takeHeldEarly
+    (state.cleanExhausted ? takeUnseen(state.deferredBuffer) : null);
   if (!next) return null;
   burn(plugin, next.remId);
   if (state.dueCount > 0) state.dueCount--;
-  if (next.priority < urgentPriorityLimit && state.urgentDueCount > 0) state.urgentDueCount--;
-  if (state.info) scheduleQueuePrefetchRefill(plugin, state.info);
+  // FORK (2026-11-15, R-039): a run of 🔄 presses can empty the buffer too.
+  if (state.info && !refillNowIfDry(plugin, state.info)) scheduleQueuePrefetchRefill(plugin, state.info);
   return next;
 }
 
@@ -401,6 +610,15 @@ function burn(plugin: ReactRNPlugin, remId: RemId) {
  * returned item cannot be taken back.
  */
 function noteIncRemDisplayed(plugin: ReactRNPlugin, remId: RemId) {
+  // FORK (2026-11-14): display reports go into the queue's event record — once per item: the
+  // widget writes the key again whenever it re-renders, and repeats would crowd the record.
+  if (remId !== lastDisplayedRecorded) {
+    lastDisplayedRecorded = remId;
+    recordQueueEvent('displayed', remId, {
+      seen: state.seen.has(remId),
+      pending: state.pending?.remId === remId,
+    });
+  }
   if (state.seen.has(remId)) return;
   if (state.pending?.remId === remId) {
     // FORK (2026-10-10): the pending candidate is on screen — it is consumed, whatever
@@ -412,13 +630,31 @@ function noteIncRemDisplayed(plugin: ReactRNPlugin, remId: RemId) {
     burn(plugin, remId);
     return;
   }
-  const removed =
-    state.buffer.find((c) => c.remId === remId) ?? state.deferredBuffer.find((c) => c.remId === remId);
-  if (!removed) return;
+  // FORK (2026-11-14): a rolled-back candidate that is on screen after all. The verdict
+  // that rolled it back was wrong; it was shown, so it is consumed. Its count comes off
+  // again (the rollback had put it back).
+  if (isHeld(remId)) {
+    state.held = state.held.filter((h) => h.rem.remId !== remId);
+    state.buffer = state.buffer.filter((c) => c.remId !== remId);
+    state.deferredBuffer = state.deferredBuffer.filter((c) => c.remId !== remId);
+    if (state.dueCount > 0) state.dueCount--;
+    burn(plugin, remId);
+    recordQueueEvent('held:on-screen', remId);
+    return;
+  }
+  const inBuffer = (list: SlimIncRem[]) => list.some((c) => c.remId === remId);
+  const wasBuffered = inBuffer(state.buffer) || inBuffer(state.deferredBuffer);
+  if (!wasBuffered) {
+    // FORK (2026-11-15, reproduced live): on screen, and unknown to the prefetch — a reset
+    // (queue entry, a restart) forgot that RemNote held it. Upstream let it be, and the next
+    // build could serve it again: the same item twice in one session. Displayed ⇒ seen.
+    burn(plugin, remId);
+    recordQueueEvent('displayed:unknown', remId);
+    return;
+  }
   state.buffer = state.buffer.filter((c) => c.remId !== remId);
   state.deferredBuffer = state.deferredBuffer.filter((c) => c.remId !== remId);
   if (state.dueCount > 0) state.dueCount--;
-  if (removed.priority < urgentPriorityLimit && state.urgentDueCount > 0) state.urgentDueCount--; // FORK (Deviation 9)
   burn(plugin, remId);
   console.log(
     `🩹 IncRem ${remId} was on screen after all — removed from the prefetch buffer so it is not served again.`
@@ -437,13 +673,13 @@ function noteIncRemDisplayed(plugin: ReactRNPlugin, remId: RemId) {
 export function markShownThisSession(plugin: ReactRNPlugin, remIds: RemId[]) {
   for (const remId of remIds) {
     if (state.seen.has(remId)) continue;
-    const removed =
-      state.buffer.find((c) => c.remId === remId) ?? state.deferredBuffer.find((c) => c.remId === remId);
-    if (removed) {
+    state.held = state.held.filter((h) => h.rem.remId !== remId); // FORK (2026-11-14)
+    const wasBuffered =
+      state.buffer.some((c) => c.remId === remId) || state.deferredBuffer.some((c) => c.remId === remId);
+    if (wasBuffered) {
       state.buffer = state.buffer.filter((c) => c.remId !== remId);
       state.deferredBuffer = state.deferredBuffer.filter((c) => c.remId !== remId);
       if (state.dueCount > 0) state.dueCount--;
-      if (removed.priority < urgentPriorityLimit && state.urgentDueCount > 0) state.urgentDueCount--;
     }
     burn(plugin, remId);
   }
@@ -462,6 +698,20 @@ export function markShownThisSession(plugin: ReactRNPlugin, remIds: RemId[]) {
  * never displayed — harmless, since the session is over and the list has no
  * remaining gatekeeping role.
  */
+/**
+ * FORK (2026-11-15, reproduced live): the rems this queue visit has handed to RemNote — seen
+ * (confirmed, or reported on screen) and the one RemNote holds for its next slot. QueueEnter's
+ * handler resets the prefetch and primes it again, and RemNote can ask for items before it gets
+ * there; the handler takes these before each reset and marks them seen after it
+ * (register/events.ts, runQueueEnter). A visit ends when the URL leaves the queue or QueueExit
+ * fires, both of which reset this state, so nothing of an earlier visit is in it.
+ */
+export function shownInThisVisit(): RemId[] {
+  const ids = new Set(state.seen);
+  if (state.pending) ids.add(state.pending.remId);
+  return Array.from(ids);
+}
+
 export async function flushPendingServed(plugin: ReactRNPlugin): Promise<void> {
   if (!state.pending) return;
   state.seen.add(state.pending.remId);
@@ -492,9 +742,12 @@ export function rollbackServed(): SlimIncRem | null {
   // (noteIncRemDisplayed) and must never go back on the buffer — it was shown,
   // so the counter bookkeeping that already dropped it stands.
   if (state.seen.has(served.remId)) return null;
-  state.buffer.unshift(served);
+  recordQueueEvent('rollback', served.remId); // FORK (2026-11-14)
+  // FORK (2026-11-14): not straight back to the head of the buffer — see `held`. The call
+  // that rolled it back serves the candidate after it; this one returns when its grace
+  // period ends, unless the queue widget reports it on screen first.
+  state.held.push({ rem: served, at: Date.now() });
   state.dueCount++;
-  if (served.priority < urgentPriorityLimit) state.urgentDueCount++; // FORK (Deviation 9)
   return served;
 }
 
@@ -853,10 +1106,18 @@ export async function buildQueuePrefetch(
     // Deferred rems ARE still due — they are postponed within the session, not
     // excluded from it — so they stay in the counter.
     state.dueCount = filtered.length;
-    state.urgentDueCount = filtered.filter((c) => c.priority < urgentPriorityLimit).length; // FORK (Deviation 9)
+    // FORK (2026-11-15): the first build of a session, and a build for another queue than
+    // the last one, always write the counter (GetNextCard may have cleared it meanwhile).
+    const mustPublish = !state.ready || state.buildKey !== makeBuildKey(info);
     state.buildKey = makeBuildKey(info);
     state.info = info; // FORK (Deviation 16)
     state.ready = true;
+    // FORK (2026-11-14): the counter's numbers — every due rem in scope, served or not.
+    // Counted from the cache as it is NOW (2026-11-15, review): this build read the cache
+    // when it started, and a Skip with an offset, a reschedule or a dismissal saved while it
+    // ran was recounted by tracker (a) and then overwritten here with the older number.
+    state.scopeSet = scopeSet;
+    applyStillDue(plugin, countStillDue(latestSlim ?? allIncRems, info.subQueueId, scopeSet), mustPublish);
 
     if (VERBOSE_QUEUE_INJECTION) {
       console.log(
@@ -892,6 +1153,34 @@ export function scheduleQueuePrefetchRefill(plugin: ReactRNPlugin, info: Prefetc
     refillTimer = null;
     void buildQueuePrefetch(plugin, info);
   }, REFILL_DELAY_MS);
+}
+
+/**
+ * FORK (2026-11-15, R-039, reproduced live): refill at once when the buffer has run dry while
+ * more Incremental Rems are due, instead of REFILL_DELAY_MS after the LAST GetNextCard call.
+ *
+ * The scheduled refill waits for a pause, and every call restarts the wait. Skipping (or 🔄)
+ * faster than that — one item per half second in a document with eight due Incremental Rems
+ * and no flashcards — emptied the three-candidate buffer after three items: the next answer
+ * was "nothing", RemNote showed its finished screen with five still due, and the refill that
+ * came a moment later reached nobody. A refill when the buffer is dry costs no more than the
+ * scheduled one it replaces; at a reading pace the scheduled refill has topped the buffer up
+ * long before it can run dry, so this does not fire.
+ *
+ * Returns true when it started a build (or queued one behind a build in flight).
+ */
+export function refillNowIfDry(plugin: ReactRNPlugin, info: PrefetchQueueInfo): boolean {
+  if (!isPrefetchReadyFor(info)) return false;
+  // `dueCount` is upstream's count: due, in scope, not yet served — what a build could still find.
+  if (state.dueCount <= 0) return false;
+  if (state.buffer.some((c) => !state.seen.has(c.remId) && !isHeld(c.remId))) return false;
+  if (refillTimer) {
+    clearTimeout(refillTimer);
+    refillTimer = null;
+  }
+  recordQueueEvent('refill:now', null, { dueCount: state.dueCount });
+  void buildQueuePrefetch(plugin, info);
+  return true;
 }
 
 /**
@@ -933,7 +1222,63 @@ export function registerPrefetchTrackers(plugin: ReactRNPlugin) {
   // shown twice in a row is not reported — which is fine: by then it is burned.
   plugin.track(async (rp) => {
     const remId = await rp.storage.getSession<RemId>(currentIncRemKey);
-    if (remId) noteIncRemDisplayed(plugin, remId);
+    if (remId) {
+      bumpQueueTurn(); // FORK (2026-11-15, review 3 #1): see lib/queue_turn.ts
+      noteIncRemDisplayed(plugin, remId);
+    }
+  });
+
+  // FORK (2026-11-14): the counter shows what is still due (see `stillDue`). Three things
+  // move it between builds.
+  // (a) The cache changed: a review, a reschedule, a dismissal, a new or re-dated Incremental
+  //     Rem, a priority crossing the urgent limit. The read is the subscription; outside a
+  //     queue session nothing is computed.
+  plugin.track(async (rp) => {
+    const slim = await rp.storage.getSession<SlimIncRem[]>(allIncrementalRemSlimKey);
+    latestSlim = slim || null; // FORK (2026-11-15): what the other recounts count from
+    if (!slim || !state.ready) return;
+    applyStillDue(plugin, countStillDue(slim, state.info?.subQueueId, state.scopeSet));
+  });
+  // (b) A review was recorded (updateReviewRemData and the offset picker write this mark).
+  //     The rem joins the session's reviewed list, which this widget alone writes.
+  plugin.track(async (rp) => {
+    const left = await rp.storage.getSession<QueueLeftAfterReview | null>(queueLeftAfterReviewKey);
+    if (!left || Date.now() - left.at > REVIEW_MARK_MAX_AGE_MS || reviewedThisSession.has(left.remId)) return;
+    // FORK (2026-11-15, review): add to the list as STORED, not only as remembered. Right
+    // after a plugin restart memory is empty while the session key still holds the list, and
+    // a mark young enough to count then wrote a list of one over it — before (c) had read it
+    // back. (`plugin`, not `rp`: this tracker must not subscribe to the list.)
+    const stored = await plugin.storage.getSession<RemId[] | null>(queueReviewedInSessionKey);
+    for (const remId of stored || []) reviewedThisSession.add(remId);
+    reviewedThisSession.add(left.remId);
+    void plugin.storage
+      .setSession(queueReviewedInSessionKey, Array.from(reviewedThisSession))
+      .catch((e) => console.error('[prefetch] reviewed-list write failed:', e));
+    await recountStillDue(plugin);
+  });
+  // (c) The reviewed list itself: emptied when a queue session starts or ends, and read back
+  //     here after a plugin restart.
+  plugin.track(async (rp) => {
+    const list = await rp.storage.getSession<RemId[] | null>(queueReviewedInSessionKey);
+    reviewedThisSession = new Set(list || []);
+    await recountStillDue(plugin);
+  });
+
+  // FORK (2026-11-14): the queue widget skipped a repeat (widgets/queue.tsx). That should
+  // not happen any more — say so in the console, once, with what the queue did before it.
+  let lastRepeatAt = 0;
+  plugin.track(async (rp) => {
+    const hit = await rp.storage.getSession<{ remId: RemId; at: number } | null>(queueRepeatSkippedKey);
+    // The key is never cleared, so the first run after a plugin restart sees an old hit:
+    // only one that is fresh is news (review, 2026-11-15).
+    if (!hit || hit.at === lastRepeatAt || Date.now() - hit.at > REPEAT_REPORT_MAX_AGE_MS) return;
+    lastRepeatAt = hit.at;
+    recordQueueEvent('repeat:reported', hit.remId);
+    console.warn(
+      `[IncRem queue] ${hit.remId} was shown again right after its review, and the repeat was skipped. ` +
+        `Recent queue events ("Incremental: Copy Queue Diagnostics" copies them):\n` +
+        (await formatQueueDiagnostics(plugin))
+    );
   });
 
   // FORK (Deviation 16, 2026-10-10): the 🔄 "another item" request. The widgets cannot

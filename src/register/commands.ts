@@ -220,6 +220,8 @@ import { handleNextRepetitionClick } from '../lib/incremental_rem';
 import { addPageToHistory, getIncrementalReadingPosition, resolveSessionBookmarkCarry } from '../lib/pdfUtils';
 import { getIESetting } from '../lib/settings';
 import { copyTextToClipboard } from '../lib/clipboard';
+import { formatQueueDiagnostics } from '../lib/queue_diagnostics'; // FORK (2026-11-14)
+import { incRemPreviewWidgetId, incRemPreviewOpenKey, IncRemPreviewOpen, INC_REM_PREVIEW_FRESH_MS } from '../lib/consts'; // FORK (2026-11-14)
 
 // Opens a priority popup against one or many rems. Single-rem calls behave
 // exactly as before; multi-rem calls hand the full id list to the widget through
@@ -3854,6 +3856,42 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     }),
   });
 
+  // FORK (2026-11-14, owner request): the item in a popup, as RemNote's document page, where
+  // it can be edited — RemNote's own previewer (P) works on flashcards only and a plugin can
+  // neither open it nor see that key. In the queue: the Incremental Rem on screen (on a
+  // flashcard incRemIdForQueueShortcut says so and nothing opens — P is the key there).
+  // Elsewhere: the focused Rem. Opens nothing else and writes nothing, so it also works on an
+  // already-reviewed item. Typing in the popup cannot reach the queue's keys: RemNote's queue
+  // ignores keys while a popup is open (widgets/inc_rem_preview.tsx, lib/queue_docview.ts).
+  plugin.app.registerCommand({
+    id: 'preview-inc-item',
+    name: 'Preview Item',
+    description:
+      'Open the Incremental Rem on the queue screen (or the focused Rem) in a popup where it can be edited. The same key, or Esc, closes it.',
+    // Owner's choice (2026-11-14). Free on a Mac; on Windows and Linux Ctrl+P is RemNote's
+    // "Search All Notes", so rebind one of the two there (Settings → Keyboard Shortcuts).
+    keyboardShortcut: 'ctrl+p',
+    action: async () => {
+      // A second press closes it: the popup says "I am open" twice a second (see consts).
+      const open = await plugin.storage.getSession<IncRemPreviewOpen | null>(incRemPreviewOpenKey);
+      if (open && Date.now() - open.at < INC_REM_PREVIEW_FRESH_MS) {
+        await plugin.storage.setSession(incRemPreviewOpenKey, null);
+        await plugin.widget.closePopup();
+        return;
+      }
+      const url = await plugin.window.getURL();
+      const inQueue = !!url && url.includes('/flashcards');
+      const remId = inQueue
+        ? await incRemIdForQueueShortcut()
+        : (await plugin.focus.getFocusedRem())?._id;
+      if (!remId) {
+        if (!inQueue) await plugin.app.toast('Put the cursor in a Rem to preview it.');
+        return;
+      }
+      await plugin.widget.openPopup(incRemPreviewWidgetId, { remId });
+    },
+  });
+
   // Open Incremental Editor command (Ctrl+G)
   // Same as Open Editor answer button: open external URLs, optionally open the Rem document, advance queue.
   plugin.app.registerCommand({
@@ -3957,6 +3995,18 @@ export async function registerCommands(plugin: ReactRNPlugin) {
   });
 
   // ─── Copy Rem ID ─────────────────────────────────────────────────────────
+  // FORK (2026-11-14): what the queue's serving logic did lately, for explaining a rare
+  // misfire after the fact (lib/queue_diagnostics.ts). Read-only.
+  plugin.app.registerCommand({
+    id: 'copy-queue-diagnostics',
+    name: 'Copy Queue Diagnostics',
+    description:
+      'Copies the queue\'s recent decisions (which item was handed to RemNote, what was reported on screen) — for reporting an item that came back or was skipped.',
+    action: async () => {
+      await copyTextToClipboard(plugin, await formatQueueDiagnostics(plugin), 'Queue diagnostics');
+    },
+  });
+
   // For pointing an AI agent (MCP) or a debug tool at a Rem. Selected Rems win
   // (one ID per line), then the Rem with the caret, then the card in the queue.
   plugin.app.registerCommand({
@@ -3979,6 +4029,13 @@ export async function registerCommands(plugin: ReactRNPlugin) {
         } else if ((await plugin.window.getURL()).includes('/flashcards')) {
           const card = await plugin.queue.getCurrentCard();
           if (card?.remId) remIds = [card.remId];
+          // FORK (2026-11-15, review 3 lead c): an Incremental Rem in the queue is no card, so
+          // the command said "No Rem focused or selected." on every one — take the Rem on
+          // screen, by the plugin-screen rule (UPSTREAM_ISSUES.md #15; after 🔄, the one shown).
+          else if ((await plugin.queue.getCurrentQueueScreenType()) === QueueItemType.Plugin) {
+            const onScreen = await plugin.storage.getSession<string>(currentIncRemKey);
+            if (onScreen) remIds = [onScreen];
+          }
         }
       }
 

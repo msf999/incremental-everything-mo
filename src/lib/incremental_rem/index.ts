@@ -1,6 +1,7 @@
 import {
   BuiltInPowerupCodes,
   PluginRem,
+  QueueItemType, // FORK (2026-11-14)
   RichTextElementRemInterface,
   RNPlugin,
   ReactRNPlugin,
@@ -19,8 +20,10 @@ import {
   incremReviewStartTimeKey,
   pendingQueueDashboardRefocusKey,
   dismissedPowerupCode,
+  queueLeftAfterReviewKey, // FORK (2026-11-14)
 } from '../consts';
-import parseDuration from 'parse-duration';
+import { recordQueueWidgetEvent } from '../queue_diagnostics'; // FORK (2026-11-14)
+import { parseRotation, nextRotationDate } from '../rotation'; // FORK (2026-11-14): Rotation in plain language
 import { readRawPdfState, writeRawPdfState } from '../pdf_state';
 import { getNextSpacingDateForRem, updateSRSDataForRem } from '../scheduler';
 import { getInitialIntervalForRem } from '../scheduler_choice';
@@ -140,7 +143,8 @@ export async function setIncRemPriority(
   priority: number,
   options?: SetIncRemPriorityOptions
 ): Promise<void> {
-  // FORK (2026-10-10): priority-change history is an option, off by default.
+  // FORK (2026-10-10): priority-change history is an option (FORK_FEATURES.priorityChangeHistory)
+  // — on since 2026-11-14, with the warm-start cache that needs it.
   const recordHistory = FORK_FEATURES.priorityChangeHistory && options?.recordHistory !== false;
 
   // FORK (bb758b8 sync, upstream bug): the schema bounds priority to 0-100, and one
@@ -162,9 +166,10 @@ export async function setIncRemPriority(
 
   await rem.setPowerupProperty(powerupCode, prioritySlotCode, [newPriority.toString()]);
   // FORK (10297b3 sync): upstream's warm-start cache learns of a priority write from the
-  // 'priorityChange' history entry below, which moves this Rem's `updatedAt`. The fork does
-  // not write that entry (priorityChangeHistory is off) and the Priority slot is a child Rem,
-  // so the write would leave no trace — mark the Rem dirty directly. A no-op while
+  // 'priorityChange' history entry below, which moves this Rem's `updatedAt` — on another
+  // device too. That entry is skipped when the caller passes `recordHistory: false` or the
+  // change is no change, and the Priority slot is a child Rem, so on this device the write
+  // could leave no trace: mark the Rem dirty directly as well. A no-op while
   // FORK_FEATURES.warmStartCache is off.
   markIncRemDirty(plugin, rem._id);
 
@@ -301,6 +306,40 @@ async function readHistorySlot(rem: PluginRem): Promise<IncrementalRep[] | 'unre
 }
 
 /**
+ * FORK (2026-11-14): says which rem a review was just recorded for — for the queue widget's
+ * repeat check and for the queue counter (consts: queueLeftAfterReviewKey). Never throws —
+ * it must not stop the advance.
+ */
+async function markLeftAfterReview(plugin: RNPlugin, remId: string) {
+  try {
+    await plugin.storage.setSession(queueLeftAfterReviewKey, { remId, at: Date.now() });
+  } catch (e) {
+    console.error('[IncRem] could not mark the reviewed item', e);
+  }
+}
+
+/**
+ * FORK (2026-11-14): diagnostics only. An advance normally tears the calling widget down, so
+ * nothing after it runs there; when this still runs and the queue is still on the same item
+ * a while later, the advance did nothing (or RemNote showed the item again) — worth a line
+ * in the queue's event record. Changes nothing.
+ */
+async function noteIfStillOnItem(plugin: RNPlugin, remId: string) {
+  try {
+    await sleep(2500);
+    const [current, screen, lookback] = await Promise.all([
+      plugin.storage.getSession<string>(currentIncRemKey),
+      plugin.queue.getCurrentQueueScreenType(),
+      plugin.queue.inLookbackMode(),
+    ]);
+    // Not in lookback mode: back on the item through Previous is not a failed advance.
+    if (current === remId && screen === QueueItemType.Plugin && !lookback) {
+      await recordQueueWidgetEvent(plugin, 'advance:still-on-item', remId);
+    }
+  } catch {}
+}
+
+/**
  * Persists the results of reviewing an incremental rem.
  *
  * Steps performed:
@@ -386,11 +425,16 @@ export async function updateReviewRemData(
   if (overrideOptions?.overrideNextRepDate !== undefined) {
     nextRepDateToUse = overrideOptions.overrideNextRepDate;
   } else {
-    const rotIntervalMs = getRotationIntervalMs(incRem.rotation);
-    if (rotIntervalMs !== null) {
-      nextRepDateToUse = Date.now() + rotIntervalMs;
+    // FORK: Rotation overrides the scheduler. 2026-11-14: read by lib/rotation.ts — an
+    // interval counted from now ("5", "2 weeks"), or a calendar rule ("sunday", "1st",
+    // "every 2 weeks on monday"), whose skipped weeks or months are counted from the date
+    // the item was due on, so a late review keeps the rhythm. No rotation, or one that
+    // cannot be read: the scheduler decides.
+    const rotated = nextRotationDate(parseRotation(incRem.rotation), Date.now(), incRem.nextRepDate);
+    if (rotated) {
+      nextRepDateToUse = rotated.date;
       if (lastEntry) {
-        lastEntry.interval = getRotationIntervalDays(incRem.rotation)!;
+        lastEntry.interval = rotated.days;
       }
     } else {
       nextRepDateToUse = nextSpacing.newNextRepDate;
@@ -409,6 +453,11 @@ export async function updateReviewRemData(
     await plugin.app.toast('Could not save that review — the item stays due. Please try again.');
     return null;
   }
+
+  // FORK (2026-11-14): the review is saved — say so for the queue counter, which leaves a
+  // reviewed rem out even when it stays due (Rotation 0). Not awaited: the mark is posted
+  // before anything that can tear this frame down, and nothing here waits for it.
+  void markLeftAfterReview(plugin, incRem.remId);
 
   // FORK (#41): return what was PERSISTED, not the pre-stamp array. The last
   // entry gains `nextRepMs` inside updateSRSDataForRem, and callers put this
@@ -496,7 +545,9 @@ export async function handleNextRepetitionClick(
     // FORK (2026-10-10): lift the suppression before the advance — it can tear this
     // sandbox down, and then the finally below never runs (operation_suppression).
     await endOperationSuppression(plugin);
+    await markLeftAfterReview(plugin, incRem.remId); // FORK (2026-11-14)
     await plugin.queue.removeCurrentCardFromQueue();
+    void noteIfStillOnItem(plugin, incRem.remId); // FORK (2026-11-14)
   } finally {
     await plugin.storage.setSession('plugin_operation_active', false);
   }
@@ -590,6 +641,10 @@ export async function handleNextRepetitionManualOffset(
     };
 
     await updateIncrementalRemCache(plugin as any, updatedIncRem);
+    // FORK (2026-11-15, review): the review mark as soon as the review is saved, as in
+    // updateReviewRemData — the picker's "Open in …" returns below and advances itself, and
+    // its review was the only one left without a mark.
+    void markLeftAfterReview(plugin, incRem.remId);
 
     if (options?.advanceQueue === false) {
       await endOperationSuppression(plugin); // FORK (2026-10-11): the caller advances
@@ -597,7 +652,9 @@ export async function handleNextRepetitionManualOffset(
     }
     await requestQueueDashboardRefocus(plugin, 'handleNextRepetitionManualOffset');
     await endOperationSuppression(plugin); // FORK (2026-10-10): before the advance, see handleNextRepetitionClick
+    await markLeftAfterReview(plugin, incRem.remId); // FORK (2026-11-14)
     await plugin.queue.removeCurrentCardFromQueue();
+    void noteIfStillOnItem(plugin, incRem.remId); // FORK (2026-11-14)
     return true;
   } finally {
     await plugin.storage.setSession('plugin_operation_active', false);
@@ -873,69 +930,16 @@ export const getIncrementalRemFromRem = async (
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /**
- * Largest timestamp a JS Date can represent. A rotation whose landing date would
- * exceed it produces an Invalid Date rather than a schedule, so it is rejected —
- * a correctness floor, not a policy cap on how long a rotation may be.
+ * FORK (2026-11-14): how a Rotation text is read lives in lib/rotation.ts — `parseRotation`,
+ * `nextRotationDate`, `describeRotation` — and the review writer above, the Next / Open labels
+ * (components/NextRepTime.tsx), the answer row's warning and the document chip all go through
+ * it. `getRotationIntervalMs` / `getRotationIntervalDays`, which stood here, are gone.
+ *
+ * ⚠️ What `Rotation: 0` means (2026-08-14): each review sets the next date to today, which is
+ * already due — so the rem is due again at once and STAYS due, in every future session, until
+ * the rotation is changed. It is an "always in the queue" marker, not a one-off. Within one
+ * queue session it does not come back: the session's seen list keeps it out.
  */
-const MAX_TIMESTAMP = 8.64e15;
-
-/**
- * A Rotation string as milliseconds, or null when it is absent, 'Default', or
- * unusable — in which case callers fall back to the normal scheduler and the
- * queue buttons show the amber `invalid rotation` warning.
- *
- * Two things this deliberately rejects, both of which used to be accepted and
- * silently mis-scheduled the rem (fixed 2026-08-13):
- *
- * 1. **Sub-day durations** — anything strictly between 0 and 1 day (`2 hours`,
- *    `30m`, `0.5`). A rotation is persisted through `updateSRSDataForRem` as a
- *    Daily Doc *date reference*, so anything finer than a day collapses to that
- *    day's midnight: the value is a lie about when the rem will actually return.
- *    Rotation is a whole-day override by design.
- *
- *    **`0` IS allowed** (user request, 2026-08-14) and is not sub-day — it is the
- *    whole-day value meaning "today". It resolves to today's midnight, which is
- *    in the past, so the rem stays due. See the note below on what that implies.
- * 2. **Unitless numbers meaning milliseconds.** `parseDuration('5')` returns 5 —
- *    five MILLISECONDS — so `Rotation: 5`, the obvious way to write "5 days",
- *    passed the old `ms > 0` check with no warning and pinned the rem to today.
- *    Parsing with the 'd' format makes a bare number mean DAYS, which is what
- *    the README documents and what anyone typing it intends.
- *
- * Note `parseDuration(x, 'd')` returns the duration already expressed in days
- * ('6 months' → 182.625), so the ms conversion happens here, once.
- */
-export function getRotationIntervalMs(rotation: string | undefined): number | null {
-  if (!rotation || rotation.toLowerCase() === 'default') return null;
-  const days = parseDuration(rotation, 'd');
-  if (days == null || !Number.isFinite(days)) return null;
-  // Negative is meaningless. Strictly between 0 and 1 is sub-day — and this is
-  // also what still catches the unitless-milliseconds trap, since `5` parsed as
-  // 5 ms is 0.0000058 days. Exactly 0 is permitted: "due today".
-  if (days < 0 || (days > 0 && days < 1)) return null;
-  const ms = days * MS_PER_DAY;
-  if (Date.now() + ms > MAX_TIMESTAMP) return null;
-  return ms;
-}
-
-/**
- * ⚠️ What `Rotation: 0` actually means (2026-08-14).
- *
- * It does NOT mean "show it again today, then resume normal scheduling". Each
- * review sets the next date to `now + 0`, stored as today's Daily Doc reference,
- * which reads back as today's midnight — already in the past. So the rem is due
- * again immediately and **stays due for ever**, in every future session, until
- * the rotation is changed. It is an "always in the queue" marker, not a one-off.
- *
- * Within a single queue session it will not reappear: `GetNextCard` filters rems
- * in `seenRemInSessionKey`, so it returns on the NEXT session, not immediately
- * after you review it.
- */
-export function getRotationIntervalDays(rotation: string | undefined): number | null {
-  const ms = getRotationIntervalMs(rotation);
-  return ms != null ? Math.round((ms / MS_PER_DAY) * 10) / 10 : null;
-}
-
 async function getInitialRotation(
   plugin: RNPlugin,
   rem: PluginRem

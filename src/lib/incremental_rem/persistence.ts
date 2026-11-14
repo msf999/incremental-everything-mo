@@ -193,8 +193,20 @@ export async function loadPersistedIncRems(plugin: RNPlugin): Promise<LoadedIncR
   }
 
   const byRem = new Map<RemId, IncrementalRem>();
+  // FORK (2026-11-15, review 3 #5): each row is checked against the CURRENT schema. A stored copy
+  // outlives the plugin version that wrote it (up to INCREM_MAX_WARM_STORE_AGE_MS), and a row
+  // the schema would now reject, or one missing a field it now has, went into the session cache
+  // unchecked — for every Rem whose `updatedAt` had not moved. A row that does not fit is left
+  // out, which makes the warm load read that Rem afresh (cache.ts: "not in the copy").
+  let unfit = 0;
   for (const row of rows) {
-    if (row && typeof row.remId === 'string') byRem.set(row.remId, row);
+    if (!row || typeof row.remId !== 'string') continue;
+    const parsed = IncrementalRem.safeParse(row);
+    if (parsed.success) byRem.set(row.remId, parsed.data);
+    else unfit++;
+  }
+  if (unfit > 0) {
+    console.warn(`[IncRem store] ${unfit} stored entr${unfit === 1 ? 'y does' : 'ies do'} not fit the current shape — read afresh.`);
   }
   return { meta, byRem };
 }

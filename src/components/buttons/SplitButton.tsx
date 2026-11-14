@@ -27,11 +27,18 @@ interface SplitButtonProps {
    *  COMPACT_CHEVRON_WIDTH and the main part's side padding shrinks so the longest
    *  sublabel ("invalid rotation", 70 px at 10 px) still fits on one line. */
   width?: number;
+  /** FORK (2026-11-14): a share of a flex row instead of a fixed width — the phone answer
+   *  row, where every button takes a share of one line. The main part grows by this
+   *  factor, as a plain button with the same `flex-grow` would, and the chevron
+   *  (ROW_SHARE_CHEVRON_WIDTH) is added to it. Ignored when `width` is set. */
+  rowShare?: number;
 }
 
-// Chevron segment widths: the default, and the compact one used with a fixed `width`.
+// Chevron segment widths: the default, the compact one used with a fixed `width`, and the
+// one used with `rowShare` (a touch target, so wider than the compact one).
 const CHEVRON_WIDTH = 28;
 const COMPACT_CHEVRON_WIDTH = 18;
+const ROW_SHARE_CHEVRON_WIDTH = 22;
 
 export function SplitButton({
   children,
@@ -44,6 +51,7 @@ export function SplitButton({
   title,
   disabled = false,
   width,
+  rowShare,
 }: SplitButtonProps) {
   const [menuOpen, setMenuOpen] = React.useState(false);
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -89,13 +97,24 @@ export function SplitButton({
       ? 'rgba(255,255,255,0.3)'
       : 'var(--rn-clr-border-primary)';
 
-  const chevronWidth = width ? COMPACT_CHEVRON_WIDTH : CHEVRON_WIDTH;
+  const shared = !width && rowShare !== undefined; // FORK (2026-11-14): see `rowShare`
+  const chevronWidth = width ? COMPACT_CHEVRON_WIDTH : shared ? ROW_SHARE_CHEVRON_WIDTH : CHEVRON_WIDTH;
   const fixedMain: React.CSSProperties = width
     ? { minWidth: 0, width: width - COMPACT_CHEVRON_WIDTH, paddingLeft: 3, paddingRight: 3, whiteSpace: 'nowrap' }
-    : {};
+    : shared
+      ? { minWidth: 0, width: 'auto', flex: '1 1 0', paddingLeft: 0, paddingRight: 0, whiteSpace: 'nowrap' }
+      : {};
+  // A share starts from the chevron plus 2 px: a plain button with `flex: n 1 0` and no
+  // padding cannot be narrower than its two 1 px borders, so its share starts from 2 px
+  // too, and the main part here ends up exactly as wide as that button.
+  const containerSize: React.CSSProperties = width
+    ? { width }
+    : shared
+      ? { flex: `${rowShare} 1 ${ROW_SHARE_CHEVRON_WIDTH + 2}px`, minWidth: 0 }
+      : {};
 
   return (
-    <div ref={containerRef} style={{ position: 'relative', display: 'inline-flex', ...(width ? { width } : {}) }}>
+    <div ref={containerRef} style={{ position: 'relative', display: 'inline-flex', ...containerSize }}>
       {/* Main button */}
       <button
         onClick={async () => { if (!disabled) await onClick(); }}
@@ -146,6 +165,7 @@ export function SplitButton({
           borderTopLeftRadius: 0,
           borderBottomLeftRadius: 0,
           borderLeft: `1px solid ${chevronBorderColor}`,
+          ...(shared ? { flexShrink: 0 } : {}), // FORK (2026-11-14): keeps its width in a shared row
         }}
         onMouseEnter={(e) => {
           e.currentTarget.style.transform = 'translateY(-2px)';

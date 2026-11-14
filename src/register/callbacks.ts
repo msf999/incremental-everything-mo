@@ -33,13 +33,18 @@ import {
   resetQueuePrefetch,
   rollbackServed,
   scheduleQueuePrefetchRefill,
+  refillNowIfDry, // FORK (2026-11-15, R-039)
+  stillDueCountsHoldFor, // FORK (2026-11-15): the counter survives a rebuild for another mode
   takePrefetchedCandidate,
 } from '../lib/queue_prefetch';
 import { GetNextCardProbe, rescueEmptyQueueStart, resetEmptyQueueRescue } from '../lib/queue_empty_start';
+import { rearmEmptyQueueRescue } from '../lib/queue_empty_start'; // FORK (2026-11-15, R-039)
 
 
 // Registered once globally — safe because all selectors are highly specific to the
 // incremental-everything plugin iframe and do not affect regular flashcard layout.
+import { recordQueueEvent } from '../lib/queue_diagnostics'; // FORK (2026-11-14)
+
 const QUEUE_LAYOUT_FIX_CSS = `
   .rn-queue:has(${pluginIframeSelector}[src*="widgetName=queue&"]) {
     height: 100% !important;
@@ -267,6 +272,7 @@ function verifyPreviousDecision(plugin: ReactRNPlugin, queueInfo: QueueInfo) {
   // after the user finished it — "✓ Already reviewed" where the next item should
   // be. Confirm it and let this call decide the next slot normally (no rewind).
   if (prev.remId !== null && pendingWasDisplayed()) {
+    recordQueueEvent('verdict:on-screen', prev.remId, ctx); // FORK (2026-11-14)
     confirmServed(plugin);
     if (VERBOSE_QUEUE_INJECTION) {
       console.log(
@@ -288,6 +294,7 @@ function verifyPreviousDecision(plugin: ReactRNPlugin, queueInfo: QueueInfo) {
     // answer did not stick. If that answer was an IncRem it must go back on the
     // buffer — leaving it pending would let the next serve overwrite it, losing
     // the candidate without ever marking it seen or showing it.
+    recordQueueEvent('verdict:same-slot', prev.remId, ctx); // FORK (2026-11-14)
     if (prev.remId !== null) {
       rollbackServed();
       rewindSessionItemCounter();
@@ -296,7 +303,7 @@ function verifyPreviousDecision(plugin: ReactRNPlugin, queueInfo: QueueInfo) {
       console.log(
         `🔁 GetNextCard #${prev.seq}: same slot asked again ` +
           `(cardsPracticed still ${queueInfo.cardsPracticed}) after our ${prev.totalMs}ms response.` +
-          (prev.remId !== null ? ` Candidate ${prev.remId} returned to the buffer.` : ''),
+          (prev.remId !== null ? ` Candidate ${prev.remId} set aside for a few seconds (held), then back on the buffer.` : ''),
         ctx
       );
     }
@@ -308,6 +315,7 @@ function verifyPreviousDecision(plugin: ReactRNPlugin, queueInfo: QueueInfo) {
   if (remainingDelta !== 0 && (remainingDelta < 0 || prev.totalMs < DROP_POSSIBLE_MS)) {
     // The queue changed size under us (sync refresh, AGAIN re-insert), but an
     // answer this fast cannot have been dropped — see the block comment above.
+    recordQueueEvent('verdict:shown-size-moved', prev.remId, ctx); // FORK (2026-11-14)
     confirmServed(plugin);
     console.log(
       `ℹ️ GetNextCard #${prev.seq}: queue size moved by ${-remainingDelta} while IncRem ` +
@@ -315,6 +323,7 @@ function verifyPreviousDecision(plugin: ReactRNPlugin, queueInfo: QueueInfo) {
       ctx
     );
   } else if (remainingDelta === 0) {
+    recordQueueEvent('verdict:shown', prev.remId, ctx); // FORK (2026-11-14)
     confirmServed(plugin);
     if (VERBOSE_QUEUE_INJECTION) {
       console.log(
@@ -324,6 +333,7 @@ function verifyPreviousDecision(plugin: ReactRNPlugin, queueInfo: QueueInfo) {
       );
     }
   } else {
+    recordQueueEvent('verdict:dropped', prev.remId, ctx); // FORK (2026-11-14)
     const recovered = rollbackServed();
     rewindSessionItemCounter();
     // Unconditional: a dropped injection is the failure this whole subsystem
@@ -333,7 +343,7 @@ function verifyPreviousDecision(plugin: ReactRNPlugin, queueInfo: QueueInfo) {
       `⛔ GetNextCard #${prev.seq}: DROPPED INJECTION — we returned IncRem ${prev.remId} after ` +
         `${prev.totalMs}ms, but RemNote consumed ${remainingDelta} flashcard(s) instead. ` +
         (recovered
-          ? `Candidate returned to the buffer and the interval counter rewound; it will be retried next turn.`
+          ? `Candidate set aside for a few seconds (held), then back on the buffer; the interval counter is rewound.`
           : `Nothing pending to recover.`),
       ctx
     );
@@ -374,6 +384,14 @@ export function registerCallbacks(plugin: ReactRNPlugin) {
           cardsPracticed: queueInfo.cardsPracticed,
           numCardsRemaining: queueInfo.numCardsRemaining,
         };
+        // FORK (2026-11-14): every answer goes into the queue's event record.
+        recordQueueEvent('answer', result?.remId ?? null, {
+          seq,
+          reason,
+          ms: totalMs,
+          practiced: queueInfo.cardsPracticed,
+          remaining: queueInfo.numCardsRemaining,
+        });
         const label = result ? `IncRem ${result.remId}` : 'flashcard (null)';
         if (totalMs >= SLOW_CALL_WARN_MS) {
           // Unconditional. This path is synchronous by construction, so it can
@@ -525,7 +543,14 @@ export function registerCallbacks(plugin: ReactRNPlugin) {
         // changed), or the plugin activated mid-session and has never built one.
         // Rebuild for the real parameters immediately — this turn yields a
         // flashcard rather than blocking on it.
-        plugin.app.registerCSS(queueCounterId, '');
+        //
+        // FORK (2026-11-15, review): upstream clears the counter here, its number being
+        // "not yet served" for the buffer it no longer has. The fork's number is "still due
+        // in this queue's scope" (Deviation 9), which a change of MODE does not touch — and
+        // QueueEnter primes for 'normal', so a document's Practice All / Practice in Order
+        // always pass through here once: the counter was blank for the whole first item.
+        // It is cleared only when no numbers exist for this scope.
+        if (!stillDueCountsHoldFor(prefetchInfo)) plugin.app.registerCSS(queueCounterId, '');
         sessionItemCounter++;
         clearStaleIncRemSignals();
         void buildQueuePrefetch(plugin, prefetchInfo);
@@ -539,11 +564,26 @@ export function registerCallbacks(plugin: ReactRNPlugin) {
         allowDeferred: queueInfo.numCardsRemaining === 0,
       });
       if (!candidate) {
-        // Nothing due and in scope, or every candidate failed verification.
-        plugin.app.registerCSS(queueCounterId, '');
+        // Nothing left to SERVE: nothing due and in scope, every candidate already shown
+        // this session, or every candidate failed verification.
+        //
+        // FORK (2026-11-15, review): upstream clears the counter here — its number was "not
+        // yet served", so nothing to serve meant 0. The fork's number is "still due"
+        // (Deviation 9): after a few Skips or 🔄 in a small queue nothing is left to serve
+        // while several are still due, and the clear made the suffix vanish on every such
+        // turn and come back on the next flashcard turn. The write above already shows the
+        // right number — also when it is 0.
         sessionItemCounter++;
         clearStaleIncRemSignals();
-        scheduleQueuePrefetchRefill(plugin, prefetchInfo);
+        // FORK (2026-11-15, R-039, reproduced live): the buffer ran dry while more are due — a
+        // fast run of Skips or 🔄. Refill now, not after the next pause; and with no flashcards
+        // left let the empty-queue rescue run again: RemNote shows its finished screen next and
+        // the item it parks for that screen is shown only by the rescue's pop.
+        if (refillNowIfDry(plugin, prefetchInfo)) {
+          if (queueInfo.numCardsRemaining === 0) rearmEmptyQueueRescue(prefetchInfo);
+        } else {
+          scheduleQueuePrefetchRefill(plugin, prefetchInfo);
+        }
         return finish(null, 'no-due-increms');
       }
 
@@ -562,7 +602,8 @@ export function registerCallbacks(plugin: ReactRNPlugin) {
       // Refill in the background while the user reads this item. The candidate
       // is NOT written to the seen list here — see confirm-then-burn in
       // verifyPreviousDecision.
-      scheduleQueuePrefetchRefill(plugin, prefetchInfo);
+      // FORK (2026-11-15, R-039): at once when this take emptied the buffer while more are due.
+      if (!refillNowIfDry(plugin, prefetchInfo)) scheduleQueuePrefetchRefill(plugin, prefetchInfo);
 
       sessionItemCounter++;
       return finish(

@@ -1,6 +1,6 @@
 # Mo's Incremental Everything
 
-> **This is a personal fork of [Incremental RemNote](https://github.com/bjsi/incremental-everything)** (formerly *Incremental Everything*) by Jamesb, Hugomarins and Jonathangimeno. All credit for the plugin itself — incremental reading, prioritization, scheduling, analytics, and everything else it does — belongs upstream; read their README and [documentation site](https://hugomarins.github.io/incremental-remnote/) first. This fork is **unlisted** on RemNote, tracks upstream (currently synced to upstream v1.0.213, commit `10297b3` of 2026-11-10; this fork is version 1.0.214), and layers the changes described below on top.
+> **This is a personal fork of [Incremental RemNote](https://github.com/bjsi/incremental-everything)** (formerly *Incremental Everything*) by Jamesb, Hugomarins and Jonathangimeno. All credit for the plugin itself — incremental reading, prioritization, scheduling, analytics, and everything else it does — belongs upstream; read their README and [documentation site](https://hugomarins.github.io/incremental-remnote/) first. This fork is **unlisted** on RemNote, tracks upstream (currently synced to upstream v1.0.213, commit `10297b3` of 2026-11-10; this fork is version 1.0.218), and layers the changes described below on top.
 
 This document only describes **what is different from upstream**. If a feature isn't mentioned here, it works exactly as in the original plugin.
 
@@ -12,15 +12,30 @@ Both appear as visible properties under every Incremental Rem.
 
 ### Rotation
 
-A plain-text scheduling override. Give a Rem a `Rotation` like `10 days`, `3 weeks`, `6 months`, `4.5w` — or just `10`, which means days — and reviewing it with **Next** reschedules it that far out, bypassing the SRS scheduler entirely (an offset you pick with the chevron, below, wins for that one review). Set it to `Default` (or leave it empty) for normal scheduling — which is upstream's: the **Multiplier** scheduler by default (next interval = the item's current interval × 1.5) or the **Saturating Curve**, chosen in the settings window or per Rem in the Reschedule popup. A Rotation overrides either.
+A plain-text scheduling override, written the way you would say it. Reviewing the Rem with **Next** then reschedules it by the rotation, bypassing the SRS scheduler entirely (an offset you pick with the chevron, below, wins for that one review). Leave it empty or write `Default` for normal scheduling — which is upstream's: the **Multiplier** scheduler by default (next interval = the item's current interval × 1.5) or the **Saturating Curve**, chosen in the settings window or per Rem in the Reschedule popup. A Rotation overrides either.
 
-A rotation lands on a calendar day: anything *between* zero and one day (`2 hours`, `30m`, `0.5`) is rejected and shows as `invalid rotation`, because the next-review date is stored as a day reference and cannot hold less than a day. Longer fractional values such as `4.5w` are fine.
+Two kinds of rotation:
+
+- **An interval, counted from the day of the review:** `10` (days), `10 days`, `3 weeks`, `4.5w`, `1 week 2 days`, `1 week and 2 days`, `a week and a day`, `1w2d`, `6 months`, `daily`, `weekly`, `fortnightly`, `monthly`, `yearly`, `every 3 days`. Whole days, months and years are counted on the calendar: `1 month` on 31 January lands on 28 February, and `7` lands on the same weekday at the same time of day even across a daylight-saving change. A fractional or mixed length (`1.5 months`, `2 weeks 1 month`) is a plain span of days.
+- **Days of the calendar** — the item comes back on the next such day after the review:
+  - a weekday or several: `sunday`, `every sunday`, `mon, wed, fri`, `monday to friday`, `weekdays`, `weekends`;
+  - every N weeks on a day: `every 2 weeks on monday`, `every other friday`, `fortnightly on monday`, `every second tuesday`;
+  - a day of the month: `1st`, `every 1st of the month`, `1st and 15th`, `the 15`, `last day of the month`, `end of month` (a day the month does not have, like the 31st in April, means its last day);
+  - a weekday of the month: `first saturday of the month`, `last friday`, `second tuesday`, `first and third monday`, `last weekday of the month`, `second last friday` (the one before the last; also `second to last`, `penultimate`);
+  - every N months: `every 3 months on the 1st`, `quarterly on the 15th`, `every 2 months on the first monday` (a skip can be up to 520 weeks or 120 months);
+  - a date of the year: `3 march`, `march 3rd`, `first monday of january`.
+
+**A rule that skips keeps its rhythm.** `every 2 weeks on monday` counts its weeks from the date the item was due on, not from the day you got round to it: due Monday 2 November and reviewed on Wednesday the 4th, it comes back on Monday the 16th. If the item's due date is not a day the rule could have produced — you have just written the rule — the series starts at the next matching day.
+
+A rotation lands on a calendar day: anything *between* zero and one day (`2 hours`, `30m`, `0.5`) is rejected, because the next-review date is stored as a day reference and cannot hold less than a day.
 
 **`Rotation: 0` is allowed and means "always due".** Each review reschedules the item to today, which is already in the past, so it comes back in every future session until you change the rotation — it is a permanent always-in-the-queue marker, not a one-off repeat. It will not reappear within the *same* session, since the queue does not show an item twice in one sitting.
 
 - **Inheritance:** when a Rem is made incremental, it inherits the Rotation of its closest incremental ancestor. Set `Rotation: 1 week` on a project note, and every extract created under it rotates weekly.
-- The **Next** and **Open** buttons show the time until the rotation date in their sublabel (e.g. `7 days`), so you can see the override is active.
-- An unparsable value (e.g. `banana`) turns those buttons amber with an `invalid rotation` warning; reviews then fall back to the normal scheduler until you fix it.
+- The **Next** and **Open** buttons show the time until the rotation date in their sublabel (e.g. `7 days`), and Next's tooltip says how the rotation was understood (`Rotation: every 2 weeks on Mon`).
+- **A rotation that cannot be read is said so, never guessed at.** A typo (`evry sunday`, `2 weeks on mnday`) turns Next and Open amber with `invalid rotation`, the chip under the document's title shows it in red, and reviews fall back to the normal scheduler until you fix it. The same goes for a comma between digits that could mean two things: `1,000 days` is a thousand days and `1,5 weeks` one and a half weeks, but `1,15` on its own is refused — write `1st and 15th`, or `1.15`.
+
+**The 📚 Inc Rems chip** under a document's title shows, when the document is itself an Incremental Rem, its facts on one line: its priority (in its colour), the rotation in words (`🔁 every 2 weeks on Mon`), when it is next due (`next Mon 23 Nov (in 9 days)`, or `due now`), and its reviews and the time spent on them (`2 reps, 0.6 min`). Hover a fact for more — the rotation's tooltip says on which day a review today would land.
 
 ### First Added
 
@@ -28,16 +43,18 @@ A date property recording the day the Rem was first made incremental in this kno
 
 ## The queue review bar
 
-The answer-button row is rebuilt into seven buttons, identical on desktop and mobile:
+The answer-button row is rebuilt into seven buttons:
 
 **Previous · Next · Open · 🔄 · Dismiss · ⚙️ Options · Skip**
 
 Previous, Next, Open, Skip and Dismiss share one width (Dismiss's), chevrons included; 🔄 is narrower, and ⚙️ Options widens while its row is open. Under **Next** and **Open** you see when the item will next be due if you press it — just the time, e.g. `5 days` or `11.4 months`. While an action runs the whole row greys out, so a double press cannot fire twice.
 
+**On a phone** the same seven buttons are icons with no words, on one line: **←** Previous, **→** Next (with the time until the next repetition under it), **↗** Open, **🔄**, **⊗** Dismiss, **⚙️** Options and **⏭** Skip — same colours, same ▼ chevrons. The Options row shows each tool's emoji alone (🗓️ Reschedule, ⚡ Change Priority, 📝 Review Note, 📎 Web-Clipper URL, ℹ️ Help), the offset picker's Apply button shows the action's icon and the amount (e.g. **→ 3 weeks**), and the already-reviewed row reads ← · the status · ↗ · →.
+
 - **Previous** steps back to the last card. Going back to something you just reviewed shows it in the *already-reviewed* state described below. Going back to one you skipped and pressing Next records an ordinary review — upstream would delete the item's previous review in that case.
 - **Next** (blue outline) — record a review, advance. The review is saved **before** the queue moves on, so if the save fails the item stays on screen with a message. Upstream has since made its own Next move on at once and save in the background; this fork keeps the save-first order for Next, Open, Skip-with-offset and the offset picker.
 - **Open** (green outline; its keyboard command keeps the name *Open Editor*) — records the review **and opens the Rem in-app** (no browser tab), so you can process it immediately. Scheduling happens before navigation, so the review is never lost.
-- **🔄 Another item** — sets this Incremental Rem aside for the rest of the session (no review, no reschedule — it stays due) and **immediately shows a different due Incremental Rem in its place**. Press it again for another. Which one comes is the queue's own choice for its next Incremental Rem: by priority, most overdue first among equals, with your **Sorting Criteria → randomness** applied exactly as the queue applies it (at 0 you always get the strict next one; at 20%, about one press in five draws a priority-weighted pick from the whole due list instead). Skip leaves the same way, but what follows is whatever RemNote already lined up next, usually a flashcard; 🔄 gives you another Incremental Rem now.
+- **🔄 Another item** — sets this Incremental Rem aside for the rest of the session (no review, no reschedule — it stays due) and **immediately shows a different due Incremental Rem in its place**. Press it again for another. Which one comes is the queue's own choice for its next Incremental Rem: by priority, most overdue first among equals, with your **Sorting Criteria → randomness** applied exactly as the queue applies it (at 0 you always get the strict next one; at 20%, about one press in five draws a priority-weighted pick from the whole due list instead). Skip leaves the same way, but what follows is whatever RemNote already lined up next, usually a flashcard; 🔄 gives you another Incremental Rem now. Keyboard priority changes (`Ctrl+Opt+↑/↓`) and **Copy Rem ID** (`Ctrl+Opt+I`) act on the Incremental Rem 🔄 brought in, not on the one set aside.
 - **Dismiss** (red outline) — dismisses the item, recording the review that is ending.
 - **⚙️ Options** toggles a second row holding the power-user tools: Reschedule, Change Priority, Review Note, the Web-Clipper URL button (when the item has one), and Help. Review with Timer, Scroll to Highlight / Bookmark and Read point join the row only when their subsystems are switched on (see *Options, off by default* and *Slimmed down* below).
 - **Skip** (purple outline, last in the row) — advances **without recording a review or rescheduling** (the item stays due).
@@ -64,9 +81,10 @@ This needs **popups allowed for RemNote** in your browser, especially with more 
 | `Opt+T` | Next item in queue (alternate binding, same as upstream's `Cmd/Ctrl+Right`) |
 | `Opt+B` | Skip — advance without recording a review |
 | `Opt+R` | 🔄 Another item — show a different due Incremental Rem now, no review |
+| `Ctrl+P` | **Preview Item** — the Incremental Rem on the queue screen (or the focused Rem) in a popup where it can be edited; the same key, or Esc, closes it. On Windows and Linux Ctrl+P is RemNote's *Search All Notes*: rebind one of the two |
 | `Opt+X` | **Toggle Incremental** — make the Rem (or the selected Rems) incremental, or dismiss it if it already is. A selected piece of text becomes an extract. In the queue, with nothing selected, it acts on the item on screen |
 
-On a flashcard these keys leave the card alone — even when its Rem is itself an Incremental Rem — and `Opt+T`, `Opt+B` and `Opt+R` say they work on Incremental Rems only. Rate flashcards with RemNote's own keys. Upstream's **Reschedule** (`Ctrl+J`) on such a flashcard reschedules the Rem's incremental schedule and leaves the card on screen to be rated. A quick second press of `Opt+T` / `Opt+B` / `Ctrl+G` waits for the next item to load instead of acting on the one you just left.
+On a flashcard these keys leave the card alone — even when its Rem is itself an Incremental Rem — and `Opt+T`, `Opt+B` and `Opt+R` say they work on Incremental Rems only. Rate flashcards with RemNote's own keys. Upstream's **Reschedule** (`Ctrl+J`) on such a flashcard reschedules the Rem's incremental schedule and leaves the card on screen to be rated. A quick second press of `Opt+T` / `Opt+B` / `Ctrl+G` waits for the next item to load instead of acting on the one you just left. Upstream's **Copy Rem ID** (`Ctrl+Opt+I`) copies the Incremental Rem on screen when nothing is focused or selected; upstream's version only knew flashcards there and said "No Rem focused or selected".
 
 **Opt+X replaces upstream's two keys** (`Opt+X` to make incremental, `Ctrl+D` to dismiss). It acts on what you have selected, else on the Rem your cursor is in — in the queue, else on the item on screen. A selection of several Rems is dismissed only when all of them are incremental; otherwise the rest are made incremental. **In the queue a dismissal needs a second Opt+X within a few seconds** — the first press only shows a toast saying so — and Opt+X does nothing on RemNote's own screens (e.g. the finished screen) or on the "Already reviewed" row. It cannot extract text from a PDF: RemNote does not tell plugins about a selection inside its PDF viewer. Both original commands are still in the omnibar ("Incremental: Extract / Tag Rem", "Incremental: Dismiss Rem"), without a key.
 
@@ -78,16 +96,31 @@ Two upstream defaults collided with Chrome DevTools, which matters when RemNote 
 
 ### Items are shown as the Rem, not the source document
 
-- A queue item renders **the Rem itself in the queue body**, using RemNote's real document renderer — actual formatting, powerup properties, and inline editing — not a read-only approximation. Two exceptions: a RemNote video Rem (*Upload File › YouTube URL*) plays in RemNote's own video player, and — from upstream unchanged — an Incremental Rem with exactly one source that is an ordinary Rem shows that source Rem (tag it `#extractviewer` to show the Rem itself). Other video items (a Rem that is a YouTube link, a Video Extract) are shown as the Rem; upstream's own video players are off here — see *Video* under *Slimmed down*.
+- A queue item renders **the Rem itself in the queue body**, using RemNote's real document renderer — actual formatting and powerup properties — not a plugin-drawn approximation. It opens **at its top**, also when RemNote remembers that you last left that document scrolled half-way down. It is **read-only for the keyboard** — see *Writing into an item* below. Two exceptions: a RemNote video Rem (*Upload File › YouTube URL*) plays in RemNote's own video player, and — from upstream unchanged — an Incremental Rem with exactly one source that is an ordinary Rem shows that source Rem (tag it `#extractviewer` to show the Rem itself). Other video items (a Rem that is a YouTube link, a Video Extract) are shown as the Rem; upstream's own video players are off here — see *Video* under *Slimmed down*.
 - An IncRem with a PDF/HTML source attached shows this outline too — the source reader is disabled entirely in this fork (see below), so there is no 📄 Read document button. Highlight-type items keep upstream's isolated view.
 - The breadcrumb above the item (in the document view and the isolated card) shows each ancestor with the **icon RemNote gives it**: a folder's or document's own emoji or coloured folder picture — e.g. **📒 Zotero › 📄 Items** — RemNote's folder picture for a folder without one, and RemNote's page icon for a document without one. It stays on one line: when the names do not fit, crumbs fold to their icon (the middle ones first, then the top one) and the item's parent is shortened with an ellipsis. Hover a crumb for its full name; click it to open it.
 - The notes sidebar **never opens on its own**. The footer under the item (type + child/descendant/flashcard counts) ends with a small **✎ Open in sidebar** button: it opens the Rem in the notes sidebar for full editing (backlink search, date pickers, etc.) and pauses the in-queue copy while it's there; the button becomes a filled-blue **✎ Show in queue** to bring it back. Close the sidebar pane itself with RemNote's own control.
 - Clicking the breadcrumb row, the footer, the info bar, the priority chip, the isolated card or the margin around the item leaves keyboard focus with RemNote, so the queue's shortcuts keep working after the click. The isolated card's text can still be selected and copied. A review note you left unfinished reopens with its item without taking the keyboard; click into it to type.
 - An Incremental Rem's review time counts from the moment it appears on screen, not from when the queue lined it up (which is while you are still on the card before it).
-- If the plugin restarts while you are in the queue (an update), the session carries on: items you have already seen are not served again, and a 🔄 swap stays.
+- If the plugin restarts while you are in the queue (an update), or you reload the page there, the session carries on: items you have already seen are not served again, a 🔄 swap stays, and a document's queue stays that document's — its counter, and only its Incremental Rems.
+- Leaving the queue by navigating away (**Open**, a link, a document) ends its session as closing it does. When you come back, nothing the queue had lined up before is mixed into the new session, and no Incremental Rem is shown twice in it.
+- **Skipping quickly** (Skip, `Opt+B`, 🔄) does not run the queue dry: it keeps a few Incremental Rems ready and refills them as soon as they run out, so they keep coming however fast you go, and a queue with no flashcards left does not end while some are still due.
 - A queue in which **only Incremental Rems are due** used to stop on RemNote's "finished" screen. Upstream's fix for that is in: after a brief flash of that screen the first Incremental Rem appears.
 - A document's **Practice All** and **Practice in Order** show only the Incremental Rems that are due, as the normal queue does; upstream shows every Incremental Rem in the document there. Its flashcards are RemNote's business — Practice All still shows them all.
 - **Scrolling a long item from the keyboard:** the arrow keys do not scroll an item (or a flashcard) taller than the screen — RemNote never gives its scroll area keyboard focus, and plugins have no way to. Click into the text and use **Page Up / Page Down** (`fn+↑` / `fn+↓` on a Mac).
+
+### Writing into an item
+
+In RemNote's queue, the queue's own keys stay live while the caret is inside a document that a plugin shows there: with the caret in a bullet, `H` skips the item, so does `→`, and whatever letters you have bound to answers rate it. RemNote only holds its queue keys back when its own focus tracking says a text editor is focused, and it does not enter such a document in that tracking; a plugin, which runs sandboxed, can neither see those keys nor set that focus.
+
+So in this fork **the queue view does not take the caret at all**: nothing can be half-typed, half-shortcut. Text can still be selected (for an extract with `Opt+X`), links and checkboxes still work. To write into the item, use one of the two places where RemNote does track the focus — both checked with the same keys:
+
+- **`Ctrl+P` — Preview Item:** the item in a popup, as the same document page, editable. Esc (or `Ctrl+P` again) closes it and you are back on the item.
+- **✎ Open in sidebar** in the footer under the item: the item in the notes sidebar, for longer edits.
+
+One exception, where the queue view stays editable and RemNote's queue keys therefore stay live while you type in it: **RemNote's phone and tablet apps**, which have neither the sidebar button nor `Ctrl+P`, so the queue view is the one place to write.
+
+**A RemNote video Rem** follows the same rule: its page in the queue (RemNote's own video page — the player, its outline and its flashcard buttons) is read-only for the keyboard as well. In RemNote 1.30 that page has nothing to type into in any case, and `Ctrl+P` shows the same page.
 
 ### Items you've already reviewed
 
@@ -98,6 +131,8 @@ An Incremental Rem whose next review is in the future still appears in the queue
 You'll see this in two situations: you pressed **Previous** to go back to something you just reviewed, or you met an item that was reviewed on another device after this queue session started (the item list is built once, at the start).
 
 **None of these buttons changes the item's schedule.** *Next* simply moves on, *Previous* steps back, and *Open* takes you to the Rem without recording a review — which is why Previous and Next look identical here. The keyboard behaves the same way: `Opt+T` / `Cmd/Ctrl+→` only move on, `Ctrl+G` opens the Rem like the row's *Open*, and `Opt+X` and `Opt+R` do nothing here (Opt+R says why). The row offers no way to re-review, reschedule or dismiss the item; the point is that "already done" is visible and safe to click through. If you do mean to dismiss it, the omnibar's **"Incremental: Dismiss Rem"** still works — without recording a second review.
+
+You should only meet this row when you went back, or when another device reviewed the item. An item you have just reviewed is not handed to RemNote a second time, and if RemNote shows it again right after its review all the same, the queue moves on by itself. Should that ever happen, **"Incremental: Copy Queue Diagnostics"** copies what the queue did in the last minutes.
 
 A third way to meet this row: you change an item's **Next Rep Date** by hand while it is on screen. The queue picks up the new date straight away, so the item is not served again until it is due.
 
@@ -113,7 +148,7 @@ Control it under **General → Queue → Queue Info Bar**: all items / Increment
 
 ### The queue counter
 
-Upstream appends the number of due Incremental Rems to RemNote's card counter (`30 + 1620`). This fork adds, in parentheses, how many of those have a **priority below 10** — the red 0-band of the distribution bar — so the counter reads **`30 + 1620 (1064)`** in Compact and **`30 Left + 1620 (1064)`** in Beautiful. Both figures count down as items are served.
+Upstream appends the number of due Incremental Rems to RemNote's card counter (`30 + 1620`). This fork adds, in parentheses, how many of those have a **priority below 10** — the red 0-band of the distribution bar — so the counter reads **`30 + 1620 (1064)`** in Compact and **`30 Left + 1620 (1064)`** in Beautiful. Both figures say how many Incremental Rems of this queue are **still due**: they fall when you review, reschedule or dismiss one, and not when an item merely passes by — **Skip** and **🔄 Another item** leave them as they are, because such an item is still waiting. In the queue of the whole knowledge base, the distribution bar's first band and the figure in parentheses count the same items; in a document's queue the counter covers that document, while the bar still shows the whole knowledge base.
 
 ### Priority chip in the queue's top bar
 
@@ -131,17 +166,16 @@ Set it under **General → Queue → Priority Chip in Queue Top Bar**: always sh
 
 Everything here works in RemNote's **Compact** and **Beautiful** queue variants. In Beautiful: the priority chip sits in the top bar's action row (next to the +, ✎ and ⋯ icons) rather than in the card's corner where upstream draws its badge; the info bar under flashcards is docked just above the answer buttons, below RemNote's AI Explanation, exactly as upstream docks its own bar; and the counter reads **`N Left + M (U)`** (upstream's suffix only appears in Compact). An Incremental Rem fills the card down to the button row, and the Options row and offset picker grow the button area while the item shrinks to make room.
 
-### On the phone: blank queue documents (experimental)
+### On the phone
 
-In RemNote's phone app some Incremental Rems showed a white page in the queue body instead of their document. The cause could not be pinned down without a phone to test on, so this version carries a set of experimental changes that apply **only in RemNote's phone app** (and its tablet app, if that identifies itself as RemNote's app) — desktop, the web app and iPad browsers are unchanged:
+In RemNote's phone app the queue body stayed white for many Incremental Rems. The cause is RemNote's: the document page it draws for a plugin fails for a **Document** on a phone (while drawing its Share button) and is left empty. What follows applies **only in RemNote's phone app** (and its tablet app, if that identifies itself as RemNote's app) — desktop, the web app and iPad browsers are unchanged. It was checked in Chrome made to show RemNote's phone layout; a real phone has yet to confirm it, so each part can still be switched off on its own in `src/lib/mobile_experiments.ts` (the code is marked `MOBILE-EXPERIMENT`).
 
-- The queue body's layout is set inline instead of through RemNote's stylesheet, which does not reach the plugin in the phone app. This is meant to start RemNote's document below the plugin's breadcrumb row rather than over it; RemNote's own page header can still cover that row (see below).
-- The document is requested a moment later, once the layout has settled, and the footer's statistics are not calculated (they were hidden behind the answer buttons anyway).
-- Two buttons at the start of the breadcrumb row: **↻ Redraw** asks RemNote to draw the document again, and **≡ Text** shows a plain-text outline of the Rem that the plugin draws itself, so there is something to read even when RemNote draws nothing (the button then reads **≡ Document** to go back). A dashed box at the top of the text view lists what the plugin can see about the Rem. On a phone, RemNote's own page header covers this row whenever the document is drawn, so the buttons are reachable on a blank page — which is when they are needed.
-- RemNote's document view is forced visible even if RemNote never reveals it (RemNote keeps a new view hidden until it has measured it once).
-- A small label at the top right of the document, starting "IE check:", says what RemNote drew there: **document drawn** (green, fading to faint after a few seconds), **no document page drawn (yet)**, **overlay EMPTY, RemNote stopped drawing**, **page hidden, RemNote editor not loaded (yet)**, **RemNote shows a source page (PDF, link, media or drawing), not the outline**, **RemNote cannot find this document**, **RemNote is still loading**, or **RemNote never showed this overlay**. Problem labels appear only after a second and a half, since every normal load passes through some of these states for a moment. **No label at all** means RemNote did not create its document view for that item. On a blank page, take a screenshot of the label first, then open ≡ Text and take one of its box — opening ≡ Text replaces RemNote's view, label included.
-
-Each part can be switched off on its own in `src/lib/mobile_experiments.ts`, and every piece of code belonging to them is marked `MOBILE-EXPERIMENT`, so whatever does not help can be removed cleanly after the phone test.
+- **A Document is drawn as RemNote's own outline, under its name.** In place of the document page the queue body shows the Document's name and, below it, RemNote's outline of its Rems — real formatting, editable. What it leaves out is the table of properties RemNote lists under a title (Priority, Next Rep Date, a tag's properties…). A long name keeps to three lines until you tap it. Anything that is not a Document keeps RemNote's page, and so does a Document that is a PDF, a web link, a video or an audio recording: RemNote's page works for those.
+- **The answer buttons are icons on one line** (see *The queue review bar*), which leaves the item most of the screen.
+- **The footer is one line** — "Document • Incremental Rem" — with no statistics and no **✎ Open in sidebar**: on a phone the notes sidebar is a full-screen sheet that draws the same page, white for a Document.
+- **≡**, at the start of the breadcrumb row, swaps RemNote's view for a plain-text outline that the plugin draws itself (≡ again goes back). A dashed box at its top lists what the plugin can see about the Rem. Over RemNote's document page this button is hidden by RemNote's own page header; over the outline it is not.
+- The queue body and the answer buttons carry their own layout and fallback colours, because RemNote's stylesheet does not reach the plugin in the phone app (without the colours, grey text and icons are black in dark mode).
+- If RemNote leaves its view empty, or never shows it, a small label starting "IE check:" says so at the view's top right after a second and a half. A white body with no label means RemNote created no view at all.
 
 ### Deterministic ordering among equal priorities
 
@@ -206,5 +240,7 @@ Every command this plugin registers is prefixed **`Incremental: `** in the omnib
 - Quick Increase / Decrease Priority Number → Make Less / More Important
 - Remove Parent / Remove Grandparent → Remove Parent / Grandparent from Card
 - Open Sorting Criteria → Open Queue Sorting Criteria
+
+Fork-only commands: **Toggle Incremental (Make / Dismiss)**, **Another Item in Queue**, **Skip Item in Queue**, **Next Item in Queue (alternate)**, **Open Editor**, **Preview Item**, and **Copy Queue Diagnostics** (the queue's recent decisions, for a bug report).
 
 Quick codes are unchanged.

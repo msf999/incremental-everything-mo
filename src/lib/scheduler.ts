@@ -5,7 +5,7 @@ import { repCountsForScheduling } from './incremental_rem/types';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { getIncrementalRemFromRem } from './incremental_rem';
-import { getDailyDocReferenceForDate } from './utils';
+import { getDailyDocReferenceForDate, tryParseJson } from './utils';
 import { getRemSchedulerInfo } from './scheduler_choice';
 import {
   automaticRepeatIndexes,
@@ -279,6 +279,52 @@ export async function getNextSpacingDateForRem(
  * @returns the persisted history when both slot writes were issued; null when
  *          nothing was written.
  */
+/**
+ * FORK (2026-11-15, review 3 #2): `history` with the 'priorityChange' entries that are in the
+ * slot now but not in `history` and are newer than every entry it took from the slot (all but
+ * its last). Each goes before the caller's last entry when it is older than that entry, after
+ * it otherwise — and then the new last entry carries the next-rep stamp, the invariant
+ * `getIncrementalRemFromRem` falls back on. Never throws: a slot it cannot read changes nothing.
+ */
+async function keepPriorityChangesWrittenMeanwhile(
+  rem: PluginRem,
+  history: IncrementalRep[],
+  newNextRepDate: number
+): Promise<IncrementalRep[]> {
+  try {
+    const raw = await rem.getPowerupProperty(powerupCode, repHistorySlotCode);
+    const parsed = raw ? tryParseJson(raw) : null;
+    if (!Array.isArray(parsed)) return history;
+    const known = new Set(history.map((e) => `${e?.eventType ?? ''}|${e?.date}`));
+    const readNewest = history
+      .slice(0, -1)
+      .reduce((max, e) => (typeof e?.date === 'number' && e.date > max ? e.date : max), -Infinity);
+    const meanwhile = (parsed as IncrementalRep[]).filter(
+      (e) =>
+        e?.eventType === 'priorityChange' &&
+        typeof e.date === 'number' &&
+        e.date > readNewest &&
+        !known.has(`priorityChange|${e.date}`)
+    );
+    if (meanwhile.length === 0) return history;
+    const last = history[history.length - 1];
+    const before = meanwhile.filter((e) => e.date <= last.date);
+    const after = meanwhile.filter((e) => e.date > last.date);
+    const merged = [...history.slice(0, -1), ...before, last, ...after];
+    if (after.length > 0) {
+      merged[merged.length - 1] = { ...merged[merged.length - 1], nextRepMs: newNextRepDate };
+    }
+    console.log(
+      `[updateSRSDataForRem] kept ${meanwhile.length} priority change(s) recorded while the review was computed`,
+      rem._id
+    );
+    return merged;
+  } catch (e) {
+    console.warn('[updateSRSDataForRem] could not re-read the History slot before writing', rem._id, e);
+    return history;
+  }
+}
+
 export async function updateSRSDataForRem(
   plugin: RNPlugin,
   remId: string,
@@ -308,11 +354,24 @@ export async function updateSRSDataForRem(
   // Daily Doc reference above stays the source of truth on read (so manual date edits
   // win), but some daily-doc rems expose an empty 'Date' property and don't round-trip;
   // this gives the read a reliable fallback without adding a user-visible slot.
-  const stampedHistory = newHistory.length > 0
+  let stampedHistory = newHistory.length > 0
     ? newHistory.map((entry, i) =>
         i === newHistory.length - 1 ? { ...entry, nextRepMs: newNextRepDate } : entry
       )
     : newHistory;
+
+  // FORK (2026-11-15, review 3 #2): keep a priority change recorded while this review was
+  // being computed. Since 2026-11-14 every priority write appends a 'priorityChange' entry to
+  // this same slot (priorityChangeHistory, for the warm-start cache), from another frame or a
+  // tracker drain, and a review writes back the history it read before — so a priority change
+  // made a moment before Next was wiped from the history. The slot is read again just before
+  // the write, and markers the caller's history lacks and that are newer than everything it
+  // read are put back. What remains is a write landing inside this one round trip. (Every
+  // caller adds to the history it read; the Repetition History popup's deletions are written
+  // by its own `persist`, not here, so nothing deleted on purpose comes back.)
+  if (stampedHistory.length > 0) {
+    stampedHistory = await keepPriorityChangesWrittenMeanwhile(rem, stampedHistory, newNextRepDate);
+  }
 
   // Set flag to indicate plugin is making the update (prevents manual date reset detection)
   await plugin.storage.setSession('plugin_updating_srs_data', true);

@@ -15,6 +15,14 @@ import { NextRepTime, durationToHumanReadable } from '../components/NextRepTime'
 import dayjsDuration from 'dayjs/plugin/duration';
 import { SplitButton } from '../components/buttons/SplitButton';
 import { requestAnotherIncRem } from '../lib/queue_swap'; // FORK (Deviation 16)
+import { isPhone, keepBorderVariableUndefinedOffPhone } from '../lib/phone'; // FORK (2026-11-14): the phone's icon rows
+// FORK (2026-11-14): fallback values for RemNote's --rn-clr-* variables, which never reach a
+// plugin frame on iOS (as in queue_info_bar). Without them the buttons have no background
+// and the grey ones are black — unreadable in dark mode. Zero specificity: RemNote's own
+// stylesheets win wherever they load, so desktop is unchanged — but for the one variable
+// RemNote does not define, which `keepBorderVariableUndefinedOffPhone()` below takes care of.
+import '../rn_theme_vars.css';
+import { PreviousIcon, NextIcon, OpenIcon, DismissIcon, SkipIcon } from '../components/buttons/PhoneIcons'; // FORK (2026-11-14)
 
 // Granular offset picker opened by the chevrons on Next / Open Editor / Skip:
 // a number stepper + a Days/Weeks/Months unit toggle in one shared row below
@@ -26,6 +34,31 @@ type OffsetUnit = 'days' | 'weeks' | 'months';
 // width — the base button minimum. Split buttons count their chevron inside it.
 const MAIN_BUTTON_WIDTH = 95;
 dayjs.extend(dayjsDuration);
+
+// FORK (2026-11-14, owner request): on a phone every button of the answer rows is an icon,
+// with no words, so that the buttons take the least room — the main row fits on one line
+// (it took three). `phoneShare(n)` is a main-row button's share of that line (a split
+// button passes the same number as `rowShare` and adds its chevron); `PHONE_ICON_BUTTON`
+// is a button of fixed size, used where the line has room to spare.
+const PHONE_BUTTON_HEIGHT = 44;
+const PHONE_ICON_SIZE = 20;
+const phoneShare = (grow = 1): React.CSSProperties => ({
+  flex: `${grow} 1 0`,
+  minWidth: 0,
+  width: 'auto',
+  height: PHONE_BUTTON_HEIGHT,
+  padding: 0, // SplitButton's `rowShare` counts on this (its main part matches these buttons)
+  gap: 1,
+});
+const PHONE_ICON_BUTTON: React.CSSProperties = {
+  minWidth: 0,
+  width: 48,
+  height: PHONE_BUTTON_HEIGHT,
+  padding: 0,
+  flexShrink: 0,
+};
+/** An emoji as a phone button's face. */
+const phoneEmoji = (emoji: string) => <div style={{ fontSize: PHONE_ICON_SIZE, lineHeight: 1 }}>{emoji}</div>;
 
 const OFFSET_UNITS: { unit: OffsetUnit; label: string }[] = [
   { unit: 'days', label: 'Days' },
@@ -59,7 +92,8 @@ import {
   queueSlotSwapKey, // FORK (Deviation 16)
   QueueSlotSwap,
 } from '../lib/consts';
-import { getIncrementalRemFromRem, handleNextRepetitionClick, handleNextRepetitionManualOffset, rescheduleWithoutReview, updateReviewRemData, getRotationIntervalMs, requestQueueDashboardRefocus } from '../lib/incremental_rem';
+import { getIncrementalRemFromRem, handleNextRepetitionClick, handleNextRepetitionManualOffset, rescheduleWithoutReview, updateReviewRemData, requestQueueDashboardRefocus } from '../lib/incremental_rem';
+import { parseRotation, describeRotation, ROTATION_HELP } from '../lib/rotation'; // FORK (2026-11-14): Rotation in plain language
 import { removeIncrementalRemCache, updateIncrementalRemCache } from '../lib/incremental_rem/cache';
 import { IncrementalRem } from '../lib/incremental_rem';
 import { percentileToHslColor, calculateRelativePercentile, calculateVolumeBasedPercentile, calculateWeightedShield } from '../lib/utils';
@@ -88,6 +122,9 @@ import { handleReviewInEditorRem } from '../lib/review_actions';
 import { handleCardPriorityInheritance } from '../lib/card_priority/card_priority_inheritance';
 import { useIESetting } from '../lib/settings';
 import { handFocusBackToRemNote } from '../lib/keep_focus_with_remnote'; // FORK (2026-10-11)
+
+// FORK (2026-11-15, review): see lib/phone.ts — off the phone this frame keeps the borders it had.
+keepBorderVariableUndefinedOffPhone();
 
 export function AnswerButtons() {
   const plugin = usePlugin();
@@ -530,11 +567,17 @@ export function AnswerButtons() {
   // "already done" is visible rather than inferred from an item vanishing.
   const isProcessed = Date.now() < incRemInfo.nextRepDate;
 
-  const hasInvalidRotation = !!(
-    incRemInfo.rotation &&
-    incRemInfo.rotation.toLowerCase() !== 'default' &&
-    getRotationIntervalMs(incRemInfo.rotation) === null
-  );
+  // FORK (2026-11-14): the Rotation text as lib/rotation.ts reads it — the same reading the
+  // review writer uses. `invalid` = something is written and it was not understood; Next and
+  // Open then say so in amber and fall back to the scheduler.
+  const rotationRule = parseRotation(incRemInfo.rotation);
+  const hasInvalidRotation = rotationRule.kind === 'invalid';
+  const rotationWords = describeRotation(rotationRule);
+  const rotationTip = hasInvalidRotation
+    ? ` — ${ROTATION_HELP} (written: "${incRemInfo.rotation}")`
+    : rotationWords
+    ? ` — Rotation: ${rotationWords}`
+    : '';
 
   const warningStyle: React.CSSProperties = hasInvalidRotation
     ? {
@@ -743,13 +786,24 @@ export function AnswerButtons() {
     borderRadius: '12px',
   };
 
-  const buttonRowStyle: React.CSSProperties = {
-    display: 'flex',
-    gap: '8px',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexWrap: 'wrap',
-  };
+  const buttonRowStyle: React.CSSProperties = isPhone
+    ? // FORK (2026-11-14): one line of icon buttons that share its width.
+      { display: 'flex', gap: '4px', alignItems: 'stretch', flexWrap: 'nowrap' }
+    : {
+        display: 'flex',
+        gap: '8px',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexWrap: 'wrap',
+      };
+
+  /** FORK (2026-11-14): a button's face — its words on desktop, its icon on a phone. */
+  const face = (words: string, icon: React.ReactNode) =>
+    isPhone ? icon : <div style={buttonStyles.label}>{words}</div>;
+  /** FORK (2026-11-14): an Options button's face — its emoji and words on desktop, the
+   *  emoji alone on a phone (`emojiOnPhone` where two buttons share one on desktop). */
+  const optionFace = (emoji: string, words: string, emojiOnPhone: string = emoji) =>
+    isPhone ? phoneEmoji(emojiOnPhone) : <div style={buttonStyles.label}>{emoji} {words}</div>;
 
   const dividerStyle: React.CSSProperties = {
     width: '1px',
@@ -799,8 +853,9 @@ export function AnswerButtons() {
               await plugin.queue.goBackToPreviousCard();
             })}
             title="Previous: Go back to the previous card in the queue"
+            style={isPhone ? PHONE_ICON_BUTTON : undefined} // FORK (2026-11-14)
           >
-            <div style={buttonStyles.label}>Previous</div>
+            {face('Previous', <PreviousIcon size={PHONE_ICON_SIZE} />)}
           </Button>
 
           <div
@@ -812,6 +867,8 @@ export function AnswerButtons() {
               padding: '0 14px',
               lineHeight: 1.25,
               whiteSpace: 'nowrap',
+              // FORK (2026-11-14): on a phone the status takes what the three icons leave.
+              ...(isPhone ? { flex: '1 1 0', minWidth: 0, padding: '0 4px', overflow: 'hidden' } : {}),
             }}
             title={`Already reviewed. Next repetition ${dayjs(incRemInfo.nextRepDate).format('dddd, D MMMM YYYY')}.`}
           >
@@ -832,11 +889,12 @@ export function AnswerButtons() {
             style={{
               color: 'var(--rn-clr-green, #16a34a)',
               border: '1px solid var(--rn-clr-green, #16a34a)',
+              ...(isPhone ? PHONE_ICON_BUTTON : {}), // FORK (2026-11-14)
             }}
             onClick={() => runExclusive(openEditorWithoutReview)}
             title="Open: open this Rem in the editor without re-reviewing it — its schedule stays as it is"
           >
-            <div style={buttonStyles.label}>Open</div>
+            {face('Open', <OpenIcon size={PHONE_ICON_SIZE} />)}
           </Button>
 
           {/* Plain secondary styling, exactly like Previous: NOTHING in this row
@@ -851,8 +909,9 @@ export function AnswerButtons() {
               await plugin.queue.removeCurrentCardFromQueue();
             })}
             title="Next: move on to the next item — this item's schedule is left as it is"
+            style={isPhone ? PHONE_ICON_BUTTON : undefined} // FORK (2026-11-14)
           >
-            <div style={buttonStyles.label}>Next</div>
+            {face('Next', <NextIcon size={PHONE_ICON_SIZE} />)}
           </Button>
         </div>
       )}
@@ -870,30 +929,34 @@ export function AnswerButtons() {
             await plugin.queue.goBackToPreviousCard();
           })}
           title="Previous: Go back to the previous card in the queue"
-          style={{ width: MAIN_BUTTON_WIDTH }}
+          style={isPhone ? phoneShare() : { width: MAIN_BUTTON_WIDTH }}
         >
-          <div style={buttonStyles.label}>Previous</div>
+          {face('Previous', <PreviousIcon size={PHONE_ICON_SIZE} />)}
         </Button>
 
         <SplitButton
           variant="secondary"
           disabled={isBusy}
           onClick={() => runExclusive(handleNextClick)}
-          title="Next (Cmd+Right / Ctrl+Right, or Opt+T): Mark as reviewed, calculate next interval, and advance to next item"
+          title={`Next (Cmd+Right / Ctrl+Right, or Opt+T): Mark as reviewed, calculate next interval, and advance to next item${rotationTip}`}
           onChevronClick={() => setOffsetRowFor((v) => (v === 'next' ? null : 'next'))}
           chevronActive={offsetRowFor === 'next'}
-          width={MAIN_BUTTON_WIDTH}
+          // FORK (2026-11-14): on a phone Next is the widest button of the line — it alone
+          // keeps its second line, the time until the next repetition.
+          width={isPhone ? undefined : MAIN_BUTTON_WIDTH}
+          rowShare={isPhone ? 1.5 : undefined}
           style={{
             // Outline colouring (Dismiss-style): border + font only, neutral background.
             color: 'var(--rn-clr-blue, #3b82f6)',
             border: '1px solid var(--rn-clr-blue, #3b82f6)',
             ...warningStyle,
+            ...(isPhone ? { height: PHONE_BUTTON_HEIGHT, gap: 1 } : {}),
           }}
         >
-          <div style={buttonStyles.label}>Next</div>
+          {face('Next', <NextIcon size={PHONE_ICON_SIZE} />)}
           {hasInvalidRotation ? (
             <div style={{ ...buttonStyles.sublabel, color: 'var(--rn-clr-yellow, #f59e0b)' }}>
-              invalid rotation
+              {isPhone ? 'invalid' : 'invalid rotation'}
             </div>
           ) : (
             <div style={buttonStyles.sublabel}><NextRepTime rem={incRemInfo} bare /></div>
@@ -908,12 +971,14 @@ export function AnswerButtons() {
           // (openExternalLinkTabsWhenOpenLinkTagged) still runs in the click's own
           // tick — the user-gesture token for window.open survives the wrapper.
           onClick={() => runExclusive(performOpenEditorFlow)}
-          width={MAIN_BUTTON_WIDTH}
+          width={isPhone ? undefined : MAIN_BUTTON_WIDTH}
+          rowShare={isPhone ? 1 : undefined} // FORK (2026-11-14)
           style={{
             // Outline colouring (Dismiss-style): border + font only, neutral background.
             color: 'var(--rn-clr-green, #16a34a)',
             border: '1px solid var(--rn-clr-green, #16a34a)',
             ...warningStyle,
+            ...(isPhone ? { height: PHONE_BUTTON_HEIGHT } : {}),
           }}
           title={
             shouldSkipRemDocumentForOpenEditor
@@ -923,8 +988,9 @@ export function AnswerButtons() {
           onChevronClick={() => setOffsetRowFor((v) => (v === 'editor' ? null : 'editor'))}
           chevronActive={offsetRowFor === 'editor'}
         >
-          <div style={buttonStyles.label}>Open</div>
-          {hasInvalidRotation ? (
+          {face('Open', <OpenIcon size={PHONE_ICON_SIZE} />)}
+          {/* FORK (2026-11-14): no second line on a phone — it repeats the one under Next. */}
+          {isPhone ? null : hasInvalidRotation ? (
             <div style={{ ...buttonStyles.sublabel, color: 'var(--rn-clr-yellow, #f59e0b)' }}>
               invalid rotation
             </div>
@@ -955,7 +1021,7 @@ export function AnswerButtons() {
           })}
           // Icon-only: half the base button's 95px minimum, so the main row still fits
           // on one line in the narrower Beautiful card.
-          style={{ minWidth: 48, padding: '10px 12px' }}
+          style={isPhone ? phoneShare() : { minWidth: 48, padding: '10px 12px' }}
         >
           <div style={{ fontSize: 20, lineHeight: 1 }}>🔄</div>
         </Button>
@@ -1011,17 +1077,18 @@ export function AnswerButtons() {
             console.log('[Dismiss] Both operations settled');
           })}
           title="Dismiss (or Opt+X twice — the same key makes a Rem incremental): permanently finish this item by removing its Incremental power-up"
-          style={{ width: MAIN_BUTTON_WIDTH }}
+          style={isPhone ? phoneShare() : { width: MAIN_BUTTON_WIDTH }}
         >
-          <div style={buttonStyles.label}>Dismiss</div>
+          {face('Dismiss', <DismissIcon size={PHONE_ICON_SIZE} />)}
         </Button>
 
         <Button
           onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
           variant={showAdvancedOptions ? "primary" : "secondary"}
           title="Toggle advanced options"
+          style={isPhone ? phoneShare() : undefined} // FORK (2026-11-14)
         >
-          <div style={buttonStyles.label}>⚙️ Options</div>
+          {face('⚙️ Options', phoneEmoji('⚙️'))}
         </Button>
 
         {/* FORK (2026-10-11, owner request): Skip goes last — Previous first, Skip last. */}
@@ -1034,14 +1101,16 @@ export function AnswerButtons() {
           title="Skip (Opt+B): Move to the next item without recording a review or rescheduling"
           onChevronClick={() => setOffsetRowFor((v) => (v === 'skip' ? null : 'skip'))}
           chevronActive={offsetRowFor === 'skip'}
-          width={MAIN_BUTTON_WIDTH}
+          width={isPhone ? undefined : MAIN_BUTTON_WIDTH}
+          rowShare={isPhone ? 1 : undefined} // FORK (2026-11-14)
           style={{
             // Outline colouring (Dismiss-style): border + font only, neutral background.
             color: 'var(--rn-clr-purple, #8b5cf6)',
             border: '1px solid var(--rn-clr-purple, #8b5cf6)',
+            ...(isPhone ? { height: PHONE_BUTTON_HEIGHT } : {}),
           }}
         >
-          <div style={buttonStyles.label}>Skip</div>
+          {face('Skip', <SkipIcon size={PHONE_ICON_SIZE} />)}
         </SplitButton>
       </div>
       )}
@@ -1212,7 +1281,7 @@ export function AnswerButtons() {
 
             <Button
               variant="secondary"
-              style={applyStyle}
+              style={{ ...applyStyle, ...(isPhone ? { minWidth: 0, height: 32, padding: '0 12px' } : {}) }}
               onClick={runApply}
               title={
                 offsetRowFor === 'next'
@@ -1222,7 +1291,23 @@ export function AnswerButtons() {
                     : `Reschedule ${offsetDays} day(s) from now without recording a review`
               }
             >
-              <div style={buttonStyles.label}>{applyLabel}</div>
+              {isPhone ? (
+                // FORK (2026-11-14): the action's icon and the amount, in place of the sentence.
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+                  {offsetRowFor === 'next' ? (
+                    <NextIcon size={16} />
+                  ) : offsetRowFor === 'editor' ? (
+                    <OpenIcon size={16} />
+                  ) : (
+                    <SkipIcon size={16} />
+                  )}
+                  <span style={buttonStyles.label}>
+                    {offsetValue} {unitWord}
+                  </span>
+                </div>
+              ) : (
+                <div style={buttonStyles.label}>{applyLabel}</div>
+              )}
             </Button>
           </div>
         );
@@ -1242,12 +1327,22 @@ export function AnswerButtons() {
           borderRadius: '8px',
           border: '1px solid var(--rn-clr-border-primary)'
         }}>
-          <Button onClick={async () => { await plugin.widget.openPopup('reschedule', { remId: rem._id }); }}>
-            <div style={buttonStyles.label}>🗓️ Reschedule</div>
+          {/* FORK (2026-11-14): on a phone every button of this panel shows its emoji alone
+              (optionFace), at PHONE_ICON_BUTTON's size; its words go to the title. */}
+          <Button
+            onClick={async () => { await plugin.widget.openPopup('reschedule', { remId: rem._id }); }}
+            style={isPhone ? PHONE_ICON_BUTTON : undefined}
+            title={isPhone ? 'Reschedule' : undefined}
+          >
+            {optionFace('🗓️', 'Reschedule')}
           </Button>
 
-          <Button onClick={async () => { await plugin.widget.openPopup('priority', { remId: rem._id }); }}>
-            <div style={buttonStyles.label}>⚡ Change Priority</div>
+          <Button
+            onClick={async () => { await plugin.widget.openPopup('priority', { remId: rem._id }); }}
+            style={isPhone ? PHONE_ICON_BUTTON : undefined}
+            title={isPhone ? 'Change Priority' : undefined}
+          >
+            {optionFace('⚡', 'Change Priority')}
           </Button>
 
           {/* FORK (2026-08-15, review §2.2): inside the row lock. This writes through
@@ -1266,8 +1361,10 @@ export function AnswerButtons() {
                   await handleReviewInEditorRem(plugin, rem, remType);
                 })
               }
+              style={isPhone ? PHONE_ICON_BUTTON : undefined}
+              title={isPhone ? 'Review with Timer' : undefined}
             >
-              <div style={buttonStyles.label}>📝 Review with Timer</div>
+              {optionFace('📝', 'Review with Timer', '⏱️')}
             </Button>
           )}
 
@@ -1276,18 +1373,26 @@ export function AnswerButtons() {
               setNoteFocusOnOpen(true); // FORK (2026-10-11): opened by the user — focus it
               setNoteOpen((o) => !o);
             }}
-            style={{ color: noteOpen || noteText ? 'var(--rn-clr-green, #16a34a)' : undefined }}
+            style={{
+              color: noteOpen || noteText ? 'var(--rn-clr-green, #16a34a)' : undefined,
+              ...(isPhone ? PHONE_ICON_BUTTON : {}),
+              // A phone shows no words to turn green, so the open or filled note marks its border.
+              ...(isPhone && (noteOpen || noteText) ? { border: '1px solid var(--rn-clr-green, #16a34a)' } : {}),
+            }}
             title="Review note: attach an observation to this repetition's history entry (saved when you press Next / Reschedule / Dismiss)"
           >
-            <div style={buttonStyles.label}>📝 Review Note</div>
+            {optionFace('📝', 'Review Note')}
           </Button>
 
           {FORK_FEATURES.pdfReader && activeHighlightId && (
             <Button onClick={async () => {
               const highlightRem = await plugin.rem.findOne(activeHighlightId);
               await highlightRem?.scrollToReaderHighlight();
-            }} style={{ color: 'var(--rn-clr-yellow, #d97706)' }}>
-              <div style={buttonStyles.label}>✨ Scroll to Highlight</div>
+            }}
+              style={{ color: 'var(--rn-clr-yellow, #d97706)', ...(isPhone ? PHONE_ICON_BUTTON : {}) }}
+              title={isPhone ? 'Scroll to Highlight' : undefined}
+            >
+              {optionFace('✨', 'Scroll to Highlight')}
             </Button>
           )}
 
@@ -1302,10 +1407,11 @@ export function AnswerButtons() {
                 color: 'var(--rn-clr-blue, #3b82f6)',
                 border: '2px solid var(--rn-clr-blue, #3b82f6)',
                 fontWeight: 600,
+                ...(isPhone ? PHONE_ICON_BUTTON : {}),
               }}
               title="Scroll to Bookmark: Jump to your last saved reading position in the document"
             >
-              <div style={buttonStyles.label}>🔖 Scroll to Bookmark{readerBookmarkIsLatest ? ' • latest' : ''}</div>
+              {optionFace('🔖', `Scroll to Bookmark${readerBookmarkIsLatest ? ' • latest' : ''}`)}
             </Button>
           )}
 
@@ -1322,10 +1428,10 @@ export function AnswerButtons() {
                   navigateToRemId: remReadPointInfo.targetRemId,
                 });
               }}
-              style={{ color: 'var(--rn-clr-green, #16a34a)' }}
+              style={{ color: 'var(--rn-clr-green, #16a34a)', ...(isPhone ? PHONE_ICON_BUTTON : {}) }}
               title={`Read point set on a descendant rem: "${remReadPointInfo.text}". Click to open it in the Editor — this reviews the current IncRem (starts its timer) and jumps to the read point.`}
             >
-              <div style={buttonStyles.label}>🔖 Read point{remReadPointInfo.isLatest ? ' • latest' : ''}</div>
+              {optionFace('🔖', `Read point${remReadPointInfo.isLatest ? ' • latest' : ''}`, '📍')}
             </Button>
           )}
 
@@ -1347,13 +1453,20 @@ export function AnswerButtons() {
                 console.error('Error opening URL:', error);
                 await plugin.app.toast('Error opening URL');
               }
-            }} style={{ color: 'var(--rn-clr-blue, #2563eb)' }}>
-              <div style={buttonStyles.label}>📎 Open Web Clipper URL</div>
+            }}
+              style={{ color: 'var(--rn-clr-blue, #2563eb)', ...(isPhone ? PHONE_ICON_BUTTON : {}) }}
+              title={isPhone ? 'Open Web Clipper URL' : undefined}
+            >
+              {optionFace('📎', 'Open Web Clipper URL')}
             </Button>
           )}
 
-          <Button onClick={() => window.open('https://github.com/bjsi/incremental-everything/wiki/Reviewing-Items-in-the-Queue', '_blank')}>
-            <div style={buttonStyles.label}>ℹ️ Help</div>
+          <Button
+            onClick={() => window.open('https://github.com/bjsi/incremental-everything/wiki/Reviewing-Items-in-the-Queue', '_blank')}
+            style={isPhone ? PHONE_ICON_BUTTON : undefined}
+            title={isPhone ? 'Help' : undefined}
+          >
+            {optionFace('ℹ️', 'Help')}
           </Button>
         </div>
       )}

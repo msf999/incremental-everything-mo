@@ -1,13 +1,14 @@
 import { renderWidget, usePlugin, useRunAsync, useTrackerPlugin, WidgetLocation } from '@remnote/plugin-sdk';
 import { withHoverTips } from '../components/HoverTipLayer';
 import React, { useState } from 'react';
-import { allIncrementalRemSlimKey, currentDocumentIdKey, popupDocumentIdKey } from '../lib/consts';
+import { allIncrementalRemSlimKey, currentDocumentIdKey, currentIncRemKey, popupDocumentIdKey } from '../lib/consts';
 import type { SlimIncRem } from '../lib/incremental_rem/cache';
 import { buildDocumentScope } from '../lib/scope_helpers';
 import { generateAndStoreGraphData } from '../lib/priority_graph_data';
 import { PriorityDistributionGraphComponent } from './priority_distribution_graph';
 import { LocalVideoEditorPlayer } from '../components/LocalVideoEditorPlayer';
 import { FORK_FEATURES } from '../lib/fork_gates'; // FORK (10297b3 sync, Deviation 13)
+import { IncRemFacts } from '../components/IncRemFacts'; // FORK (2026-11-14)
 import '../style.css';
 import '../App.css';
 
@@ -20,6 +21,9 @@ function IncRemCounter() {
     async (rp) => {
       try {
         await rp.storage.getSession(currentDocumentIdKey);
+        // FORK (2026-11-14): in the queue, 🔄 Another item shows a different rem in the same
+        // view and RemNote reuses this frame; re-read the document when the rem on screen changes.
+        await rp.storage.getSession(currentIncRemKey);
 
         const ctx = await rp.widget.getWidgetContext<WidgetLocation.DocumentBelowTitle>();
         const documentId = ctx?.documentId;
@@ -119,6 +123,7 @@ function IncRemCounter() {
             <div
               onClick={handleClick}
               className="flex items-center gap-2 cursor-pointer flex-1"
+              style={{ flexWrap: 'wrap', minWidth: 0, rowGap: 2 }} // FORK (2026-11-14): the facts may wrap
               onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.8'; }}
               onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
             >
@@ -131,6 +136,9 @@ function IncRemCounter() {
                 {' / '}
                 <span style={{ color: '#3b82f6' }}>{counterData.total}</span>
               </span>
+              {/* FORK (2026-11-14, owner request): when this document is itself an Incremental
+                  Rem — its priority, Rotation (or what is wrong with it), next date and reviews. */}
+              <IncRemFacts />
             </div>
 
             <div className="flex items-center gap-1">

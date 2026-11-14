@@ -509,7 +509,6 @@ export function registerIncrementalRemTracker(plugin: ReactRNPlugin) {
       const { getIncrementalRemFromRem, setIncRemPriority } = await import('../lib/incremental_rem');
       const { updateSRSDataForRem } = await import('../lib/scheduler');
       const { updateIncrementalRemCache } = await import('../lib/incremental_rem/cache');
-      const { allIncrementalRemKey } = await import('../lib/consts');
 
       const patchedIncRems: import('../lib/incremental_rem/types').IncrementalRem[] = [];
 
@@ -576,31 +575,33 @@ export function registerIncrementalRemTracker(plugin: ReactRNPlugin) {
               },
             ];
 
-        await updateSRSDataForRem(plugin as any, remId, newNextRepDate, newHistory);
+        const saved = await updateSRSDataForRem(plugin as any, remId, newNextRepDate, newHistory);
+        // FORK (2026-11-15, review 3 #4): a failed save gets no cache patch (the #9 class).
+        if (!saved) {
+          console.error('[Tracker] intervalBatchSave: the schedule was NOT saved', remId);
+          continue;
+        }
 
         patchedIncRems.push({
           ...incRem,
           priority: job.priority,
-          nextRepDate: newNextRepDate,
-          history: newHistory,
+          // FORK (2026-11-15, review 3 #4): the DAY of the next review, which is what a fresh
+          // read of the Rem's Daily Document reference gives — as Next and Open cache it (the
+          // first review's F3). `now + interval` kept an item saved at 22:00 out of the queue
+          // until 22:00 on its due day for as long as the plugin stayed running. And the
+          // history as saved, with its nextRepMs stamp (#41).
+          nextRepDate: new Date(newNextRepDate).setHours(0, 0, 0, 0),
+          history: saved,
         });
       }
 
       // 3. Batch-write updated IncRem cache entries (one read + one write for all N rems)
+      // FORK (2026-11-15, review 3 #4): through applyIncRemCacheChanges — upstream's batch
+      // writer, which runs inside the cache lock (#44) and validates each upsert — instead of a
+      // read-modify-write of the whole cache outside it. It also goes through writeIncRemCaches,
+      // so the slim selection projection is updated with the full cache.
       if (patchedIncRems.length > 0) {
-        const allRems: import('../lib/incremental_rem/types').IncrementalRem[] =
-          (await plugin.storage.getSession(allIncrementalRemKey)) || [];
-        const patchMap = new Map(patchedIncRems.map(r => [r.remId, r]));
-        const merged = allRems.map(r => patchMap.get(r.remId) ?? r);
-        for (const p of patchedIncRems) {
-          if (!merged.find(r => r.remId === p.remId)) merged.push(p);
-        }
-        // Must go through writeIncRemCaches, not a bare setSession: this patches
-        // `priority` and `nextRepDate` and can add rems, all of which the slim
-        // selection projection mirrors. A direct write here would leave queue
-        // selection ordering by stale priorities and blind to rems created by
-        // the batch-save path until the next full cache load.
-        await writeIncRemCaches(plugin, merged);
+        await applyIncRemCacheChanges(plugin, new Map(patchedIncRems.map((r) => [r.remId, r])));
       }
 
       // 4. Trigger inheritance cascade for ALL saved rems (each cascade walks its

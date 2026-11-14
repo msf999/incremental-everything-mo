@@ -517,6 +517,40 @@ export type QueueSlotSwap = { slotRemId: string; showRemId: string | null; nonce
 // holds for its next slot. Written by callbacks.ts; read only by the activation bootstrap in
 // events.ts, which marks it seen after a plugin restart (queue_prefetch.markShownThisSession).
 export const queueHeldCandidateKey = 'queue-held-candidate';
+
+// FORK (2026-11-14): the rem a review was just recorded for, and when. Written when the review
+// is saved (updateReviewRemData, the offset picker) and again by Next right before it advances
+// the queue. Two readers:
+//  - the queue widget (widgets/queue.tsx): RemNote can hold an item it was handed twice; if it
+//    then shows that same rem again, the widget moves on by itself instead of leaving the
+//    "Already reviewed" row for an item nobody went back to;
+//  - the index widget (lib/queue_prefetch.ts), which adds the rem to the session's reviewed
+//    list below.
+export const queueLeftAfterReviewKey = 'queue-left-after-review';
+export type QueueLeftAfterReview = { remId: string; at: number };
+// FORK (2026-11-14): the preview popup (widgets/inc_rem_preview.tsx) — a Rem as RemNote's
+// document page, editable; opened by "Incremental: Preview Item". The size is used both by
+// the registration and by the widget's own layout.
+export const incRemPreviewWidgetId = 'inc_rem_preview';
+export const INC_REM_PREVIEW_SIZE = { width: 900, height: 700 } as const;
+// While the preview popup is on screen it writes this session key four times a second, so that
+// the command can tell "open" from "closed" and act as a toggle. A popup can go away without its
+// widget being told — RemNote closes it on Esc or a click outside by destroying the frame, and
+// neither React's cleanup nor a `pagehide` handler gets a write out of a frame that is going
+// (tried live, 2026-11-15) — so the key is trusted only while it is fresh. That is also the
+// window in which a press right after such a close is taken for "close" and does nothing; kept
+// short for that reason (it was 1.5 s; two missed beats still fit).
+export const incRemPreviewOpenKey = 'inc-rem-preview-open';
+export type IncRemPreviewOpen = { remId: string; at: number };
+export const INC_REM_PREVIEW_BEAT_MS = 250;
+export const INC_REM_PREVIEW_FRESH_MS = 700;
+// FORK (2026-11-14): the rems reviewed in this queue session (RemId[]). The queue counter
+// leaves them out even while they are still due (Rotation 0). Written only by the index
+// widget; emptied by the QueueEnter listener and by resetQueueSession.
+export const queueReviewedInSessionKey = 'queue-reviewed-in-session';
+// FORK (2026-11-14): set by the queue widget when it skipped such a repeat; the index widget
+// prints the queue's recent events once per occurrence (lib/queue_diagnostics.ts).
+export const queueRepeatSkippedKey = 'queue-repeat-skipped';
 // Same arrangement for queue_beautiful_bar: it reports its content width, and the
 // Beautiful queue's top-right strip is sized to it (lib/queue_beautiful_bar_fit).
 export const queueBeautifulBarFitCssId = 'incremental-everything-queue-beautiful-bar-fit';

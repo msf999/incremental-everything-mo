@@ -20,6 +20,7 @@
 
 import type { ReactRNPlugin } from '@remnote/plugin-sdk';
 import { WidgetLocation } from '@remnote/plugin-sdk';
+import { incRemPreviewWidgetId, INC_REM_PREVIEW_SIZE } from './consts'; // FORK (2026-11-14): the preview popup
 
 /**
  * One boolean per upstream subsystem. true = behave like upstream.
@@ -169,9 +170,13 @@ export const FORK_FEATURES = {
    * the 'priorityChange' entry it appends to the hidden History slot (the Priority slot is a
    * child Rem), so without that entry a priority changed on another device would be served
    * stale until the sampled self-check or the weekly full read. KEEP THE TWO TOGETHER.
-   * Fork additions that close the same-device side: setIncRemPriority marks the Rem dirty,
-   * and the self-check compares Rotation. Off, every start-up is a cold load (the 24-at-a-time
-   * reader); "Refresh Rem Cache" forces one either way.
+   * Fork additions on the same-device side: setIncRemPriority marks the Rem dirty, the
+   * self-check compares Rotation, a hand edit of a property row made while a plugin job
+   * suppresses GlobalRemChanged is checked once the job is over (register/events.ts), and a
+   * stored row that does not fit the current schema is read afresh (persistence.ts) — bump
+   * INCREM_STORE_VERSION there when `IncrementalRem` changes shape. Not covered: a write
+   * landing while the listener is not running at all. Off, every start-up is a cold load (the
+   * 24-at-a-time reader); "Refresh Rem Cache" forces one either way.
    */
   warmStartCache: true,
 } as const;
@@ -765,6 +770,12 @@ export async function registerForkWidgets(plugin: ReactRNPlugin) {
   // and so can never render for a flashcard).
   await plugin.app.registerWidget('queue_info_bar', WidgetLocation.FlashcardUnder, {
     dimensions: { width: '100%', height: 'auto' },
+  });
+
+  // FORK (2026-11-14): the preview popup — one Rem as RemNote's document page, editable,
+  // where typing cannot reach the queue's keys (widgets/inc_rem_preview.tsx).
+  await plugin.app.registerWidget(incRemPreviewWidgetId, WidgetLocation.Popup, {
+    dimensions: { width: INC_REM_PREVIEW_SIZE.width, height: INC_REM_PREVIEW_SIZE.height },
   });
 
   if (FORK_FEATURES.combinedHistoryTab) {

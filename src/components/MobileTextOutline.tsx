@@ -1,12 +1,12 @@
 // components/MobileTextOutline.tsx
-// MOBILE-EXPERIMENT M4 + M5 (2026-10-10, untested on a device; see lib/mobile_experiments.ts).
+// MOBILE-EXPERIMENT M4 + M5 (see lib/mobile_experiments.ts).
 //
 // A plain-text outline of a rem, drawn by the plugin inside its own frame. It needs
-// nothing from RemNote's document overlay, so it shows the text even where RemNote's
-// document view stays white. Read-only and plain: no formatting, images (🖼️) or LaTeX,
-// and property rows (Priority, Next Rep Date, a tag's own properties…) are left out.
-// Opened with the ≡ Text button in the queue body. With the diagnostics experiment on,
-// it starts with a few facts about the rem for the bug report.
+// nothing from RemNote's overlay, so it shows the text even where RemNote's view stays
+// white. Read-only and plain: no formatting, images (🖼️) or LaTeX, and property rows
+// (Priority, Next Rep Date, a tag's own properties…) are left out. Opened with the ≡
+// button in the queue body. With the diagnostics experiment on, it starts with a few
+// facts about the rem for a bug report.
 //
 // Built to stay cheap on a phone (2026-10-11 review): children come from one
 // getChildrenRem() per Rem, a property row is recognised locally (its text is a single
@@ -17,23 +17,11 @@
 
 import { PluginRem, RNPlugin } from '@remnote/plugin-sdk';
 import { useEffect, useState } from 'react';
-import { powerupCode } from '../lib/consts';
 import { resolveRemTextSegments } from '../lib/richTextRemRefs';
 
 const MAX_LINES = 400;
 const MAX_DEPTH = 8;
 const FLUSH_EVERY = 25;
-
-// RemNote shows a rem with any of these powerups as a "learning source" page (a PDF,
-// video, web page, audio recording or shared content) instead of its outline.
-const LEARNING_SOURCE_POWERUPS: Array<[string, string]> = [
-  ['f', 'PDF/file'],
-  ['vi', 'video'],
-  ['b', 'link'],
-  ['au', 'audio recording'],
-  ['ssa', 'shared article'],
-  ['sslo', 'shared outline'],
-];
 
 interface OutlineLine {
   id: string;
@@ -43,9 +31,7 @@ interface OutlineLine {
 }
 
 interface Facts {
-  isIncRem: boolean;
   isDocument: boolean;
-  learningSource: string[];
   children: number;
   propertyRows: number;
   styles: string;
@@ -56,14 +42,12 @@ interface MobileTextOutlineProps {
   rem: PluginRem;
   plugin: RNPlugin;
   showFacts: boolean;
-  /** How long after the queue body appeared RemNote was asked for the document (M3). */
-  documentRequestedAfterMs: number | null;
-  /** How many document views RemNote has been asked for, for this rem (↻ adds one). */
-  overlaysCreated: number;
+  /** Which of RemNote's views the queue body uses for this rem (M7); null while unknown. */
+  view: 'page' | 'tree' | null;
 }
 
 /** Plain text of a rich-text value; '' when empty (never 'Untitled'). */
-const plainText = async (plugin: RNPlugin, richText: unknown): Promise<string> => {
+export const plainText = async (plugin: RNPlugin, richText: unknown): Promise<string> => {
   if (!Array.isArray(richText) || richText.length === 0) return '';
   try {
     const segments = await resolveRemTextSegments(plugin, richText);
@@ -141,13 +125,7 @@ const deviceLabel = (): string => {
   return app ? `${device}, ${app}` : device;
 };
 
-export function MobileTextOutline({
-  rem,
-  plugin,
-  showFacts,
-  documentRequestedAfterMs,
-  overlaysCreated,
-}: MobileTextOutlineProps) {
+export function MobileTextOutline({ rem, plugin, showFacts, view }: MobileTextOutlineProps) {
   const [title, setTitle] = useState<OutlineLine | null>(null);
   const [lines, setLines] = useState<OutlineLine[]>([]);
   const [state, setState] = useState<'loading' | 'done' | 'capped' | 'error'>('loading');
@@ -222,20 +200,13 @@ export function MobileTextOutline({
     setFacts(null);
     (async () => {
       const isPropertyRow = makePropertyRowTest(plugin);
-      const [isIncRem, isDocument, children, ...sources] = await Promise.all([
-        rem.hasPowerup(powerupCode),
-        rem.isDocument(),
-        rem.getChildrenRem(),
-        ...LEARNING_SOURCE_POWERUPS.map(([code]) => rem.hasPowerup(code)),
-      ]);
+      const [isDocument, children] = await Promise.all([rem.isDocument(), rem.getChildrenRem()]);
       let propertyRows = 0;
-      for (const child of children as PluginRem[]) if (await isPropertyRow(child)) propertyRows++;
+      for (const child of children) if (await isPropertyRow(child)) propertyRows++;
       if (cancelled) return;
       setFacts({
-        isIncRem: isIncRem as boolean,
-        isDocument: isDocument as boolean,
-        learningSource: LEARNING_SOURCE_POWERUPS.filter((_, i) => sources[i]).map(([, label]) => label),
-        children: (children as PluginRem[]).length - propertyRows,
+        isDocument,
+        children: children.length - propertyRows,
         propertyRows,
         styles: describeStyles(),
         device: deviceLabel(),
@@ -265,16 +236,13 @@ export function MobileTextOutline({
             marginBottom: 10,
           }}
         >
-          <div style={{ fontWeight: 700 }}>What the plugin sees (for the mobile test)</div>
+          <div style={{ fontWeight: 700 }}>What the plugin sees (for the phone test)</div>
           {facts ? (
             <div>
-              Incremental Rem: {yesNo(facts.isIncRem)}
-              {!facts.isIncRem && ' (probably the queue item’s source)'} · Document: {yesNo(facts.isDocument)} ·
-              PDF/link/audio parts: {facts.learningSource.length ? facts.learningSource.join(', ') : 'none'} ·
-              child Rems: {facts.children} (+{facts.propertyRows} property rows) · RemNote styles in this frame:{' '}
-              {facts.styles} · document requested after{' '}
-              {documentRequestedAfterMs === null ? '—' : `${(documentRequestedAfterMs / 1000).toFixed(1)} s`} · document
-              views requested: {overlaysCreated} · {facts.device}
+              Document: {yesNo(facts.isDocument)} · RemNote’s view here:{' '}
+              {view === 'tree' ? 'hierarchy tree' : view === 'page' ? 'document page' : '—'} · child Rems:{' '}
+              {facts.children} (+{facts.propertyRows} property rows) · RemNote styles in this frame: {facts.styles} ·{' '}
+              {facts.device}
             </div>
           ) : (
             <div>checking…</div>

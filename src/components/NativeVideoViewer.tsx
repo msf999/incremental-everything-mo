@@ -12,6 +12,8 @@ import { useNativeExtractProgress, useNativeVideoMirror } from './useNativeVideo
 import { NativeExtractButtons } from './NativeExtractButtons';
 import { allowsSubExtracts } from '../lib/video_extract_tree';
 import { VideoTranscriptButton } from './VideoTranscriptButton';
+import { queueDocviewClassName } from '../lib/queue_docview'; // FORK (2026-11-15)
+import { isMobileApp } from '../lib/mobile_experiments'; // FORK (2026-11-15)
 
 interface NativeVideoViewerProps {
   actionItem: {
@@ -58,6 +60,19 @@ export const NativeVideoViewer: React.FC<NativeVideoViewerProps> = ({
 }) => {
   const plugin = usePlugin();
   const remId = actionItem.rem._id;
+  // FORK (2026-11-15, owner decision — "the same should apply: make it read only"): the
+  // video's page in the queue gets the classes of every other queue document
+  // (lib/queue_docview.ts), so nothing in it takes the caret — everywhere but in RemNote's
+  // phone and tablet apps, as in ExtractViewer. RemNote copies the className onto the
+  // overlay it draws. `docTurn` counts the rems this view has shown (a 🔄 swap reuses the
+  // element). Seen on RemNote 1.30 web: a video Rem's page is RemNote's Learn Video page
+  // (player, outline, flashcard buttons) with nothing editable, opening at its top by itself,
+  // so today the rule has nothing to block there; it holds if RemNote adds editable text.
+  const docTurnRef = React.useRef({ remId, turn: 0 });
+  if (docTurnRef.current.remId !== remId) {
+    docTurnRef.current = { remId, turn: docTurnRef.current.turn + 1 };
+  }
+  const docTurn = docTurnRef.current.turn;
   // Without a URL there is nothing to keep in step: show the page at once.
   const [prepared, setPrepared] = React.useState(!url);
   // While RemNote's player plays, its position is copied back; not while an
@@ -154,7 +169,16 @@ export const NativeVideoViewer: React.FC<NativeVideoViewerProps> = ({
         </div>
       )}
       <div className="flex video-container w-[100%]" style={{ flex: 1, minHeight: 0 }}>
-        {prepared && <DocumentViewer width={'100%'} height={'100%'} documentId={remId} />}
+        {prepared && (
+          <DocumentViewer
+            width={'100%'}
+            height={'100%'}
+            documentId={remId}
+            // FORK (2026-11-15): a spread, as in ExtractViewer — the SDK's typed props have no
+            // className, but the fake embed passes it on and RemNote copies it onto its overlay.
+            {...{ className: queueDocviewClassName(docTurn, !isMobileApp) }}
+          />
+        )}
       </div>
     </div>
   );
