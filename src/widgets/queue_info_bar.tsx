@@ -49,6 +49,10 @@ import { calculateRelativePercentile } from '../lib/utils';
 // 10297b3 sync: upstream's plugin-wide colour map and its hover-hint layer.
 import { priorityColor as colorForPriority, usePriorityColorScale } from '../components/priorityColor';
 import { withHoverTips } from '../components/HoverTipLayer';
+// 10297b3 sync: fallback values for RemNote's --rn-clr-* variables, which never reach a plugin
+// frame on iOS (upstream v1.0.155 added this to card_info_bar, the widget this bar replaces).
+// Zero specificity: RemNote's own stylesheets win wherever they load, so desktop is unchanged.
+import '../rn_theme_vars.css';
 import { keepFocusWithRemNote } from '../lib/keep_focus_with_remnote'; // FORK (2026-10-11)
 import { useIncRemOnScreen } from '../lib/queue_screen'; // FORK (2026-10-11)
 
