@@ -265,9 +265,12 @@ function RemHistoryItem({
         async function loadPriorities() {
             const rem = await plugin.rem.findOne(remId);
             if (!rem || cancelled) return;
+            // FORK (Deviation 13, b01355e sync): no card-priority badge while card priorities are
+            // off (FORK_FEATURES.cardSurface) — its editor saves a card priority, which nothing in
+            // this fork may write. The Incremental Rem badge is kept.
             const [isIncRem, hasCardPriority] = await Promise.all([
                 rem.hasPowerup(powerupCode),
-                rem.hasPowerup(CARD_PRIORITY_CODE),
+                FORK_FEATURES.cardSurface ? rem.hasPowerup(CARD_PRIORITY_CODE) : false,
             ]);
             if (cancelled) return;
             const [incRem, cardInfo] = await Promise.all([

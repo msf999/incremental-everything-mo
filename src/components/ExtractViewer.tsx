@@ -4,7 +4,8 @@
 import React, { useState, useEffect } from 'react';
 import { useRef } from 'react'; // MOBILE-EXPERIMENT (M4 only)
 import { PluginRem, RNPlugin, DocumentViewer, RichText, BuiltInPowerupCodes, RichTextElementRemInterface, useTrackerPlugin } from '@remnote/plugin-sdk';
-import { powerupCode, allCardPriorityInfoKey, incremNotesSidebarRemIdKey, incremNotesSidebarWidgetId } from '../lib/consts';
+import { powerupCode, allCardPriorityInfoKey, extractEditorTargetKey, extractEditorRequestKey, extractEditorRequestAckKey, incRemPreviewOpenKey, INC_REM_PREVIEW_FRESH_MS } from '../lib/consts';
+import type { ExtractEditorRequest, IncRemPreviewOpen } from '../lib/consts';
 import { QueueBreadcrumb } from './QueueBreadcrumb'; // FORK (2026-10-11): ancestors with RemNote's icons
 import { keepFocusWithRemNote } from '../lib/keep_focus_with_remnote'; // FORK (2026-10-11)
 import {
@@ -14,6 +15,10 @@ import {
 import { CardPriorityInfo } from '../lib/card_priority';
 import { MOBILE_DOCVIEW_CLASS, isMobileApp, mobileExperiment, tagMobileDocumentOverlay } from '../lib/mobile_experiments'; // MOBILE-EXPERIMENT
 import { queueDocviewClassName } from '../lib/queue_docview'; // FORK (2026-11-14)
+// FORK (b01355e sync, Deviation 19): upstream's editor over the card, opened from the footer.
+import { closeExtractEditor, ExtractEditorTarget, openExtractEditor } from '../lib/extract_editor';
+import { resolveRemTextForBreadcrumb } from '../lib/richTextRemRefs';
+import { FORK_FEATURES } from '../lib/fork_gates';
 import { MobileTextOutline } from './MobileTextOutline'; // MOBILE-EXPERIMENT M4
 import { MobileDocumentTree } from './MobileDocumentTree'; // MOBILE-EXPERIMENT M7
 
@@ -73,6 +78,22 @@ const M1_STYLES: Record<string, React.CSSProperties> = {
 // MOBILE-EXPERIMENT M4: the ≡ button (an icon, no words); `pressed` is the ≡ text view
 // being open. Unpressed text colour comes from M4_COLOUR_CSS (class ie-m4-fg), not from an
 // inline style.
+// The footer's ✎ Edit toggle: blue outline, and filled blue with
+// white text while on — the pressed state is unmistakable.
+const footerButtonStyle = (pressed: boolean): React.CSSProperties => ({
+  flexShrink: 0,
+  padding: '1px 8px',
+  fontSize: 11,
+  fontWeight: 600,
+  lineHeight: '16px',
+  borderRadius: 6,
+  border: '1px solid var(--rn-clr-blue, #3b82f6)',
+  backgroundColor: pressed ? 'var(--rn-clr-blue, #3b82f6)' : 'transparent',
+  color: pressed ? '#ffffff' : 'var(--rn-clr-blue, #3b82f6)',
+  cursor: 'pointer',
+  whiteSpace: 'nowrap',
+});
+
 const m4ButtonStyle = (pressed: boolean): React.CSSProperties => ({
   flexShrink: 0,
   minHeight: 30,
@@ -137,18 +158,75 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
   // --- STATE 2: DEFERRED CRITICAL CONTEXT (Status) ---
   const [criticalContext, setCriticalContext] = useState<CriticalContext | null>(null);
 
-  // FORK (Deviation 11): true while THIS rem is open in the notes sidebar (the
-  // ✎ Notes button sets incremNotesSidebarRemIdKey to this rem, so the key doubles
-  // as the flag — no extra state). While set, the in-queue DocumentViewer is
-  // unmounted: both it and the sidebar's editor are host-window overlays, and two
-  // editable overlays of the same rem fight for focus and clicks. Per-rem by
-  // construction: advancing to the next card shows its document normally, and
-  // upstream's clearStaleIncRemSignals also clears the key on queue transitions.
-  const notesOpenForThisRem =
+  // FORK (2026-11-21, owner: "their new edit button is superior … remove the Sidebar button and
+  // only keep the Edit button"): the footer's ✎ toggle that opened this Rem in the notes sidebar
+  // (and paused the view below while it was there, on incremNotesSidebarRemIdKey) is gone. The
+  // notes sidebar itself is upstream's and unchanged; nothing in the fork points it at a
+  // Rem-type item any more.
+
+  // FORK (b01355e sync, Deviation 19): upstream's Extract Editor — RemNote's editor in a
+  // floating panel laid over this card (lib/extract_editor.ts). The queue view below is
+  // read-only because RemNote's queue takes the keys of anything typed in it; the panel is a
+  // floating widget, outside the queue, where typing is safe. While it is open on this Rem
+  // the in-queue view is paused, as for the notes sidebar: two views of one Rem take the
+  // caret from each other. The section's rectangle is where the panel is laid.
+  const editingHere =
     useTrackerPlugin(
-      async (rp) => (await rp.storage.getSession<string>(incremNotesSidebarRemIdKey)) === rem._id,
+      async (rp) => (await rp.storage.getSession<ExtractEditorTarget>(extractEditorTargetKey))?.remId === rem._id,
       [rem._id]
     ) ?? false;
+  const sectionRef = useRef<HTMLDivElement>(null);
+
+  // FORK (2026-11-21, owner's report: "typing doesnt work correctly … the cursor keeps moving so it
+  // gets jumbled"): while the preview popup (Ctrl+P, widgets/inc_rem_preview.tsx) shows THIS Rem,
+  // the view below is paused too. Two document pages of one Rem take the caret from each other:
+  // "abcdef" typed key by key in the popup over this view was saved as "abcdfe" (reproduced live);
+  // the same keys in the popup were saved right for a Rem shown nowhere else, and for one shown as
+  // a bullet of another page. The popup says "I am open" four times a second
+  // (incRemPreviewOpenKey); one RemNote closes stops saying it, so the view also comes back once
+  // the last beat is older than the freshness window (the timer below re-renders for that).
+  const previewBeat = useTrackerPlugin(
+    async (rp) => rp.storage.getSession<IncRemPreviewOpen | null>(incRemPreviewOpenKey),
+    []
+  );
+  const [, setPreviewTick] = useState(0);
+  const previewOpenHere =
+    !!previewBeat && previewBeat.remId === rem._id && Date.now() - previewBeat.at < INC_REM_PREVIEW_FRESH_MS;
+  useEffect(() => {
+    if (!previewOpenHere || !previewBeat) return;
+    const wait = Math.max(0, INC_REM_PREVIEW_FRESH_MS - (Date.now() - previewBeat.at)) + 50;
+    const timer = setTimeout(() => setPreviewTick((t) => t + 1), wait);
+    return () => clearTimeout(timer);
+  }, [previewBeat?.at, previewOpenHere]);
+  const toggleEditor = async () => {
+    if (editingHere) {
+      await closeExtractEditor(plugin, rem._id);
+      return;
+    }
+    const title = await resolveRemTextForBreadcrumb(plugin, rem.text || []).catch(() => '');
+    await openExtractEditor(plugin, rem._id, title, sectionRef.current).catch((err) => {
+      console.error('[ExtractViewer] could not open the editor', err);
+      plugin.app.toast('Could not open the editor here. Use Ctrl+P (Preview Item) instead.');
+    });
+  };
+
+  // FORK (2026-11-21, owner: "make it ctrl+e"): Ctrl+E (register/commands.ts, `edit-inc-item`) asks
+  // for the panel through the session; the viewer showing that Rem opens it over its own card, as
+  // the button does, and answers with the nonce (without an answer the command opens a panel in the
+  // middle of the screen). A request older than 2 s is not this view's: it was made before it drew.
+  const editRequest = useTrackerPlugin(
+    async (rp) => rp.storage.getSession<ExtractEditorRequest | null>(extractEditorRequestKey),
+    []
+  );
+  const handledEditRequestRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!FORK_FEATURES.extractEditor || !editRequest) return;
+    if (editRequest.remId !== rem._id || handledEditRequestRef.current === editRequest.nonce) return;
+    if (Date.now() - editRequest.at > 2000) return;
+    handledEditRequestRef.current = editRequest.nonce;
+    void plugin.storage.setSession(extractEditorRequestAckKey, editRequest.nonce);
+    if (!editingHere) void toggleEditor();
+  }, [editRequest?.nonce, rem._id]);
 
   // MOBILE-EXPERIMENT M4/M7: whether the ≡ text view is open, and which of RemNote's
   // views draws this rem. Each is recorded WITH the rem it belongs to and derived per
@@ -213,7 +291,7 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
     mountedAt: number;
   } | null>(null);
   const wantedDoc =
-    DOC_LIFECYCLE && !notesOpenForThisRem && !textView && viewKind
+    DOC_LIFECYCLE && !editingHere && !previewOpenHere && !textView && viewKind
       ? { key: `${rem._id}:${viewKind}`, remId: rem._id, kind: viewKind }
       : null;
   useEffect(() => {
@@ -394,9 +472,11 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
   const isContextLoading = !criticalContext;
   const hasDocumentPowerup = criticalContext?.hasDocumentPowerup ?? false;
 
-  const notesHint = (
+  // FORK (b01355e sync): what the section shows under the editor panel — normally covered by it,
+  // seen if the panel is dragged away.
+  const editHint = (
     <div
-      {...keepFocusWithRemNote} // FORK (2026-10-11)
+      {...keepFocusWithRemNote}
       style={{
         height: '100%',
         display: 'flex',
@@ -408,12 +488,30 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
         fontSize: 13,
       }}
     >
-      <span>📝 Editing in the notes sidebar</span>
-      <span style={{ fontSize: 11 }}>
-        The in-queue view is paused while this Rem is open there — press “✎ Show in queue” to bring it back.
-      </span>
+      <span>✎ Editing over the card</span>
+      <span style={{ fontSize: 11 }}>Press “✓ Done” to bring the queue view back.</span>
     </div>
   );
+  // FORK (2026-11-21): the same, while the preview popup shows this Rem.
+  const previewHint = (
+    <div
+      {...keepFocusWithRemNote}
+      style={{
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        color: 'var(--rn-clr-content-tertiary, #64748b)',
+        fontSize: 13,
+      }}
+    >
+      <span>Editing in the preview popup</span>
+      <span style={{ fontSize: 11 }}>Close it (Esc or Ctrl+P) to bring the queue view back.</span>
+    </div>
+  );
+  const showEditButton = FORK_FEATURES.extractEditor;
 
   return (
     <div
@@ -465,9 +563,10 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
         <QueueBreadcrumb rem={rem} plugin={plugin} />
       </div>
 
-      {/* DocumentViewer Section (Renders immediately using rem._id). Paused
-          while this rem is open in the notes sidebar — see notesOpenForThisRem. */}
+      {/* DocumentViewer Section (Renders immediately using rem._id). Paused while the
+          ✎ Edit panel is open on this rem — see editingHere. */}
       <div
+        ref={sectionRef} // FORK (b01355e sync): the editor panel is laid over this rectangle
         className="document-viewer-section overflow-hidden"
         style={M1_INLINE_LAYOUT || DOC_LIFECYCLE ? M1_STYLES.section : undefined} // MOBILE-EXPERIMENT M1 (and M4/M7: the ≡ view and the tree's column need a bounded section)
       >
@@ -487,13 +586,17 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
                 {...overlayClassProps(docTurn)} // RemNote copies it onto its overlay
               />
             )
-          ) : notesOpenForThisRem ? (
-            notesHint
+          ) : editingHere ? (
+            editHint
+          ) : previewOpenHere ? (
+            previewHint
           ) : textView ? (
             <MobileTextOutline rem={rem} plugin={plugin} showFacts={M5_FACTS} view={viewKind} />
           ) : null
-        ) : notesOpenForThisRem ? (
-          notesHint
+        ) : editingHere ? (
+          editHint
+        ) : previewOpenHere ? (
+          previewHint
         ) : (
           <DocumentViewer
             width={'100%'}
@@ -534,52 +637,24 @@ export function ExtractViewer({ rem, plugin, topRightClearance = 0 }: ExtractVie
                 </span>
               </>
             )}
-            {/* MOBILE-EXPERIMENT M2: no "✎ Open in sidebar" on a phone — the notes sidebar
-                is a full-screen sheet there and draws RemNote's document page, which stays
-                white for a Document. The button still shows while the sidebar holds this
-                rem (the key was set some other way), so the queue view can be brought back. */}
-            {(!M2_COMPACT_FOOTER || notesOpenForThisRem) && (
-            <button
-              onClick={async () => {
-                // Toggle. Open: point the sidebar at this Rem (which also pauses
-                // the in-queue document above) and open RemNote's docked right
-                // sidebar — a docked pane hosts the editor's popups ([[ search,
-                // date picker, tag navigation) correctly, which a plugin floating
-                // window cannot. Close: clear the key so the in-queue document
-                // returns; the sidebar pane itself is closed with RemNote's own
-                // control (the SDK cannot close it, nor trigger the native P
-                // previewer — see Deviation 11's dead-ends note).
-                if (notesOpenForThisRem) {
-                  await plugin.storage.setSession(incremNotesSidebarRemIdKey, undefined);
-                  return;
+            {/* FORK (b01355e sync, Deviation 19): ✎ Edit opens RemNote's editor in a panel over
+                this card (lib/extract_editor.ts) — on a phone too. The ✎ sidebar toggle that stood
+                beside it was removed on 2026-11-21 (owner decision). */}
+            <span style={{ marginLeft: 'auto', display: 'inline-flex', flexShrink: 0 }}>
+            {showEditButton && (
+              <button
+                onClick={() => void toggleEditor()}
+                title={
+                  editingHere
+                    ? 'Close the editor and show this Rem in the queue again (Ctrl+E)'
+                    : 'Edit this Rem here (Ctrl+E): RemNote\'s own editor, in a panel over this card — formatting, clozes, / commands, [[ search. The queue\'s keys are off while you type; ✓ Done, Esc or Ctrl+E brings the queue view back.'
                 }
-                await plugin.storage.setSession(incremNotesSidebarRemIdKey, rem._id);
-                await plugin.window.openWidgetInRightSidebar(incremNotesSidebarWidgetId).catch(() => {});
-              }}
-              title={
-                notesOpenForThisRem
-                  ? 'Show this Rem in the queue again (the sidebar pane is closed with RemNote\'s own control)'
-                  : 'Write here: open this Rem in the notes sidebar, where typing, popups and [[ search work — the queue view itself is read-only, because RemNote would read the keys as queue shortcuts. The in-queue view pauses while it is open. Ctrl+P opens the same Rem in a preview popup instead.'
-              }
-              style={{
-                marginLeft: 'auto',
-                flexShrink: 0,
-                padding: '1px 8px',
-                fontSize: 11,
-                fontWeight: 600,
-                lineHeight: '16px',
-                borderRadius: 6,
-                border: '1px solid var(--rn-clr-blue, #3b82f6)',
-                // Pressed state is unmistakable: filled blue, white text.
-                backgroundColor: notesOpenForThisRem ? 'var(--rn-clr-blue, #3b82f6)' : 'transparent',
-                color: notesOpenForThisRem ? '#ffffff' : 'var(--rn-clr-blue, #3b82f6)',
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {notesOpenForThisRem ? '✎ Show in queue' : '✎ Open in sidebar'}
-            </button>
+                style={footerButtonStyle(editingHere)}
+              >
+                {editingHere ? '✓ Done' : '✎ Edit'}
+              </button>
             )}
+            </span>
           </div>
         </div>
       </div>

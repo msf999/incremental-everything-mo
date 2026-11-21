@@ -1067,5 +1067,11 @@ export const EXTRACT_EDITOR_FLOAT = 'extract_editor_float';
 // Session: what the editor shows and how big it is (ExtractEditorTarget), and its float id.
 export const extractEditorTargetKey = 'extract-editor-target';
 export const extractEditorFloatIdKey = 'extract-editor-float-id';
+// FORK (2026-11-21, owner: "make it ctrl+e"): Ctrl+E (register/commands.ts, `edit-inc-item`) asks the
+// queue's ExtractViewer — the only place that knows where the card is — to open its ✎ Edit panel;
+// the viewer of that Rem answers with the request's nonce. Both are session keys.
+export const extractEditorRequestKey = 'extract-editor-request';
+export const extractEditorRequestAckKey = 'extract-editor-request-ack';
+export type ExtractEditorRequest = { remId: string; nonce: string; at: number };
 // Session key: a document the Menu Hub sent to another window, until it opens there (see lib/send_to_window.ts).
 export const sendToWindowPendingKey = 'send-to-window-pending';

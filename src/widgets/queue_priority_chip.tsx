@@ -39,6 +39,7 @@ import { getQueueVisibleCard } from '../lib/queue_visible_card';
 import { useIESetting } from '../lib/settings';
 import { keepFocusWithRemNote } from '../lib/keep_focus_with_remnote'; // FORK (2026-10-11)
 import { useQueueScreen } from '../lib/queue_screen'; // FORK (2026-10-11)
+import { NoIncTimerIndicator } from '../components/NoIncTimerIndicator'; // b01355e sync
 
 /** Whether the chip shows, given the setting and the platform. */
 export function shouldShowQueuePriorityChip(
@@ -264,4 +265,43 @@ function QueuePriorityChip() {
   );
 }
 
-renderWidget(withHoverTips(QueuePriorityChip));
+/**
+ * The widget: the "No Inc Rem" countdown, then the chip (b01355e sync). Upstream deleted
+ * its no_inc_timer_indicator widget, which the fork kept live, and draws the countdown in
+ * its own badge widget, queue_toolbar_priority — denied here. So the countdown is drawn
+ * here, left of the chip as upstream has it. It shows whatever the chip's setting says,
+ * and while the chip renders nothing.
+ */
+/**
+ * The page is see-through (b01355e sync; upstream's useTransparentFrame for its own badge,
+ * widgets/queue_toolbar_priority.tsx). Left alone, this frame showed as a white box on the
+ * Beautiful queue's chrome in RemNote's light theme (seen live, 2026-11-21): the frame's canvas,
+ * which a browser paints opaque when the page's colour scheme differs from its iframe
+ * element's. Both sides are pinned to `light` — this page here, the iframe element by
+ * TOOLBAR_FRAME_CSS (register/widgets.ts). The chip and the countdown set their own colours.
+ */
+function useTransparentFrame() {
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.textContent =
+      'html { color-scheme: light !important; } html, body { background: transparent !important; margin: 0; }';
+    document.head.appendChild(style);
+    return () => style.remove();
+  }, []);
+}
+
+function QueueToolbarWidget() {
+  useTransparentFrame();
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+      {/* Its ✕ (and the device notice's button) would leave keyboard focus in this frame,
+          where RemNote's queue keys do not reach (seen live, 2026-11-21): hand it back. */}
+      <span style={{ display: 'contents' }} {...keepFocusWithRemNote}>
+        <NoIncTimerIndicator />
+      </span>
+      <QueuePriorityChip />
+    </div>
+  );
+}
+
+renderWidget(withHoverTips(QueueToolbarWidget));

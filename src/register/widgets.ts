@@ -17,8 +17,10 @@ import { screenFittedHeight } from '../lib/utils';
 // The other half of the toolbar widget's see-through page (useTransparentFrame in
 // widgets/queue_toolbar_priority.tsx): its iframe element's colour scheme is pinned to
 // the page's, whatever the queue chrome around it inherits.
+// FORK (b01355e sync, Deviation 14): also the fork's chip (widgets/queue_priority_chip.tsx), which
+// replaces that widget and had the same white box in the Beautiful queue.
 const TOOLBAR_FRAME_CSS = `
-  ${pluginIframeSelector}[src*="widgetName=queue_toolbar_priority&"] {
+  ${pluginIframeSelector}:is([src*="widgetName=queue_toolbar_priority&"], [src*="widgetName=queue_priority_chip&"]) {
     color-scheme: light !important;
   }
 `;

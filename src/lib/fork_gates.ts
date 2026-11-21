@@ -476,10 +476,9 @@ const GROUPS: GateGroup[] = [
     // b01355e sync: upstream deleted queue_beautiful_bar and its two stylesheets (its badge
     // is in RemNote's own toolbar again, in both queue variants) and gave queue_toolbar_priority
     // the No Inc Rem countdown as well — the fork's chip renders that countdown itself
-    // (widgets/queue_priority_chip.tsx). + the stylesheet that pins that widget's frame to a
-    // light colour scheme.
+    // (widgets/queue_priority_chip.tsx). Its frame stylesheet, queue-toolbar-frame, is NOT
+    // denied: it pins the fork chip's frame too (register/widgets.ts).
     widgets: ['queue_toolbar_priority'],
-    css: ['queue-toolbar-frame'],
   },
   {
     enabled: FORK_FEATURES.clozeTools,
@@ -630,6 +629,7 @@ const GROUPS: GateGroup[] = [
   // ---- b01355e sync (2026-11-21)
   {
     enabled: FORK_FEATURES.extractEditor,
+    commands: ['edit-inc-item'], // FORK: Ctrl+E (register/commands.ts)
     widgets: ['extract_editor_float'],
     css: ['extract-editor-popups'],
   },

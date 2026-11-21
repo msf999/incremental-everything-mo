@@ -45,6 +45,7 @@ import {
     GhostPayload,
 } from '../lib/history_archive';
 import { helperHeaders } from '../lib/helper_client';
+import { FORK_FEATURES } from '../lib/fork_gates'; // FORK (Deviation 13, b01355e sync)
 
 // ---------------------------------------------------------------------------
 // Style helpers (mirroring the statistics plugin's chartHelpers)
@@ -2805,6 +2806,10 @@ function StudyDashboardPopup() {
                         <span className="opacity-50" style={{ fontSize: '10px' }}>
                             (recomputes stats; does not modify stored history)
                         </span>
+                        {/* FORK (Deviation 13, b01355e sync): only with the history archive
+                            (FORK_FEATURES.historyArchive, off) — without it this was a greyed box
+                            saying "helper not running" on every dashboard. */}
+                        {FORK_FEATURES.historyArchive && (
                         <label
                             className="flex items-center gap-2 cursor-pointer"
                             style={{ marginLeft: 'auto', opacity: ghostStatus === 'off' ? 0.5 : 1 }}
@@ -2826,6 +2831,7 @@ function StudyDashboardPopup() {
                                 Include deleted Rems{ghostStatus === 'off' ? ' (helper not running)' : ''}
                             </span>
                         </label>
+                        )}
                     </div>
                 </div>
 

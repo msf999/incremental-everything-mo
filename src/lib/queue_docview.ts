@@ -2,7 +2,7 @@
 // FORK-ONLY (2026-11-14).
 //
 // Two rules for the document RemNote draws in the queue body (the SDK's DocumentViewer, in an
-// overlay over the plugin's frame). The plugin cannot reach that page — it is RemNote's, in
+// overlay over the plugin's frame), and a third for the editor panel laid over it (b01355e sync). The plugin cannot reach that page — it is RemNote's, in
 // another origin — and the SDK has no call that scrolls it or moves the caret in it. What the
 // plugin can do is give the overlay a class name and register a stylesheet in RemNote's page.
 //
@@ -43,7 +43,8 @@
 //    Text can still be selected (extracts), links and checkboxes still work. The empty space under
 //    a document, which adds a bullet on click, takes no clicks. Writing happens where RemNote
 //    does track the focus: the notes sidebar (✎ Open in sidebar) and the preview popup (Ctrl+P,
-//    widgets/inc_rem_preview.tsx), both verified with the same keys. Not in RemNote's phone and
+//    widgets/inc_rem_preview.tsx), both verified with the same keys — and, since the b01355e
+//    sync, upstream's editor panel over the card (✎ Edit; rule 3), verified the same way. Not in RemNote's phone and
 //    tablet apps (lib/mobile_experiments.ts, `isMobileApp`): the queue view there has no sidebar
 //    button and no Ctrl+P, so it is the one place to write, and it was not part of this.
 //
@@ -85,7 +86,21 @@ const READ_ONLY_CSS =
   `.${QUEUE_DOCVIEW_READONLY_CLASS} [contenteditable="true"] { -webkit-user-modify: read-only !important; }\n` +
   `.${QUEUE_DOCVIEW_READONLY_CLASS} .rn-add-rem-button { pointer-events: none !important; }`;
 
+// 3. (b01355e sync) WRITING HAPPENS IN UPSTREAM'S EDITOR PANEL OVER THE CARD (✎ Edit,
+//    lib/extract_editor.ts): a floating widget, which RemNote stacks at z-index 50. Upstream's own
+//    stylesheet for it (register/widgets.ts, extract-editor-popups) lifts #controlled-popup-portal
+//    above it, but RemNote 1.30 draws the `[[` reference search in #keyboard-aware-portal
+//    (z-index 30): the results were there, under the panel, and could not be seen or clicked
+//    (reproduced live, 2026-11-21; UPSTREAM_ISSUES.md #37). That portal is a fixed, full-screen
+//    box with pointer-events: none — only what RemNote puts in it takes clicks — so lifting it
+//    while the panel is open covers nothing.
+const EDITOR_PANEL_POPUPS_CSS =
+  `body:has(iframe[src*="widgetName=extract_editor_float"]) #keyboard-aware-portal { z-index: 60 !important; }`;
+
 /** Registers the stylesheet in RemNote's page. Call once, from the index widget. */
 export async function registerQueueDocviewCss(plugin: RNPlugin): Promise<void> {
-  await plugin.app.registerCSS('ie-queue-docview', `${OPEN_AT_TOP_CSS}\n${READ_ONLY_CSS}`);
+  await plugin.app.registerCSS(
+    'ie-queue-docview',
+    `${OPEN_AT_TOP_CSS}\n${READ_ONLY_CSS}\n${EDITOR_PANEL_POPUPS_CSS}`
+  );
 }

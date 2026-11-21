@@ -228,6 +228,12 @@ import { getIESetting } from '../lib/settings';
 import { copyTextToClipboard } from '../lib/clipboard';
 import { formatQueueDiagnostics } from '../lib/queue_diagnostics'; // FORK (2026-11-14)
 import { incRemPreviewWidgetId, incRemPreviewOpenKey, IncRemPreviewOpen, INC_REM_PREVIEW_FRESH_MS } from '../lib/consts'; // FORK (2026-11-14)
+// FORK (2026-11-21): Ctrl+E — the ✎ Edit panel over the queue card (Deviation 19).
+import { extractEditorTargetKey, extractEditorRequestKey, extractEditorRequestAckKey } from '../lib/consts';
+import type { ExtractEditorRequest } from '../lib/consts';
+import { closeExtractEditor, openExtractEditor } from '../lib/extract_editor';
+import type { ExtractEditorTarget } from '../lib/extract_editor';
+import { resolveRemTextForBreadcrumb } from '../lib/richTextRemRefs';
 import { collectRemIdChoices, copyRemIdPopupWidgetId } from '../lib/copy_rem_id';
 
 // Opens a priority popup against one or many rems. Single-rem calls behave
@@ -3919,7 +3925,60 @@ export async function registerCommands(plugin: ReactRNPlugin) {
         if (!inQueue) await plugin.app.toast('Put the cursor in a Rem to preview it.');
         return;
       }
+      // FORK (2026-11-21): one editor of the item at a time — two pages of one Rem take the caret
+      // from each other (ExtractViewer.tsx, previewOpenHere). The ✎ Edit panel closes first.
+      if ((await plugin.storage.getSession<ExtractEditorTarget | null>(extractEditorTargetKey))?.remId) {
+        await closeExtractEditor(plugin);
+      }
       await plugin.widget.openPopup(incRemPreviewWidgetId, { remId });
+    },
+  });
+
+  // FORK (2026-11-21, owner: "make it ctrl+e"): ✎ Edit by keyboard (Deviation 19). A bare E — the key
+  // RemNote's queue uses for "Edit Flashcard Now" — cannot be taken by a plugin: a command on 'e'
+  // fires in every text field and eats the letter, and a stolen key never reaches the plugin in the
+  // queue (tested live, 2026-11-21). In the queue, on an Incremental Rem, Ctrl+E opens upstream's
+  // editor panel over the card, and closes it when it is open (also from inside it, where RemNote
+  // still hears the key). Anywhere else it does nothing, quietly: on a Mac Ctrl+E is end-of-line in
+  // text fields, and a toast for each such press would be noise.
+  plugin.app.registerCommand({
+    id: 'edit-inc-item',
+    name: 'Edit Item in Queue',
+    description:
+      'Open or close the ✎ Edit panel: RemNote’s own editor laid over the Incremental Rem on the queue screen, where typing is safe.',
+    keyboardShortcut: 'ctrl+e',
+    action: async () => {
+      const url = await plugin.window.getURL();
+      if (!url || !url.includes('/flashcards')) return;
+      const open = await plugin.storage.getSession<ExtractEditorTarget | null>(extractEditorTargetKey);
+      if (open?.remId) {
+        await closeExtractEditor(plugin);
+        return;
+      }
+      const remId = await incRemIdForQueueShortcut();
+      if (!remId) return;
+      // One editor of the item at a time (see Ctrl+P above): an open preview popup closes first.
+      const preview = await plugin.storage.getSession<IncRemPreviewOpen | null>(incRemPreviewOpenKey);
+      if (preview && Date.now() - preview.at < INC_REM_PREVIEW_FRESH_MS) {
+        await plugin.storage.setSession(incRemPreviewOpenKey, null);
+        await plugin.widget.closePopup();
+      }
+      // The card opens it, so that the panel is laid over the card, as with the ✎ Edit button...
+      const nonce = Math.random().toString(36).slice(2);
+      const request: ExtractEditorRequest = { remId, nonce, at: Date.now() };
+      await plugin.storage.setSession(extractEditorRequestKey, request);
+      const until = Date.now() + 800;
+      while (Date.now() < until) {
+        if ((await plugin.storage.getSession<string>(extractEditorRequestAckKey)) === nonce) return;
+        await new Promise((resolve) => setTimeout(resolve, 80));
+      }
+      // ...and when no card answers (the isolated card has no ✎ Edit), a panel in the middle.
+      const rem = await plugin.rem.findOne(remId);
+      const title = rem ? await resolveRemTextForBreadcrumb(plugin, rem.text || []).catch(() => '') : '';
+      await openExtractEditor(plugin, remId, title).catch(async (err) => {
+        console.error('[EditItem] could not open the editor', err);
+        await plugin.app.toast('Could not open the editor. Use Ctrl+P (Preview Item) instead.');
+      });
     },
   });
 
