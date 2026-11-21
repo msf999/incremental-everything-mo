@@ -1,7 +1,7 @@
 import { ReactRNPlugin } from '@remnote/plugin-sdk';
 import { loadIncrementalRemCache, writeIncRemCaches, applyIncRemCacheChanges } from '../lib/incremental_rem/cache';
 import { PriorityChangeEvent } from '../lib/priority_history';
-import { incrementalQueueActiveKey, currentIncRemKey, powerupCode, pendingPrioritySaveKey, pendingCardPriorityRemovalKey, pendingPriorityDeltaQueueKey, incRemCacheReloadKey, pendingIntervalBatchSaveKey, pendingIncRemCreateTailKey, pendingReviewJobQueueKey, pendingIncRemTransferTailKey, enableFlashcardPrioritisationId, priorityBandColorsReloadKey } from '../lib/consts';
+import { incrementalQueueActiveKey, currentIncRemKey, powerupCode, pendingPrioritySaveKey, pendingCardPriorityRemovalKey, pendingPriorityDeltaQueueKey, incRemCacheReloadKey, pendingIntervalBatchSaveKey, pendingIncRemCreateTailKey, pendingReviewJobQueueKey, pendingIncRemTransferTailKey, pendingReadAloudJobsKey, pendingUpscaleJobsKey, pendingFindSourcesJobsKey, pendingFindSourcesWritesKey, enableFlashcardPrioritisationId, priorityBandColorsReloadKey } from '../lib/consts';
 import { getIESetting } from '../lib/settings';
 import { withQueueMutex } from '../lib/mutex';
 // Static import (NOT dynamic): a dynamic import() of highlightActions emits a separate
@@ -13,7 +13,10 @@ import { runIncRemCreateTail, IncRemCreateTailJob } from '../lib/highlightAction
 import { shouldUseLightMode } from '../lib/mobileUtils';
 import { runReviewJob, ReviewJob, IncRemCacheChanges, noteReviewJobsPickedUp, noteReviewJobFinished } from '../lib/incremental_rem/review_jobs'; // FORK: the two note* marks
 import { runIncRemTransferTail, IncRemTransferTailJob } from '../lib/incremental_rem/transfer';
-import { showMessageDialog } from '../lib/message_dialog';
+import { showNotice } from '../lib/notice';
+import { ReadAloudJob, runReadAloudJob } from '../lib/read_aloud';
+import { runUpscaleJob, UpscaleJob } from '../lib/upscale_image';
+import { FindSourcesJob, FindSourcesWrite, runFindSourcesJob, runFindSourcesWrite } from '../lib/find_sources';
 
 // Module-level flag to suppress IncRem cache reloads during batch writes.
 // IMPORTANT: This is intentionally a plain JS variable, NOT session storage.
@@ -703,7 +706,9 @@ export function registerIncrementalRemTracker(plugin: ReactRNPlugin) {
           } catch (err) {
             console.error(`[Tracker] reviewJob ${job.kind} failed:`, err);
             const isDismissal = job.kind === 'dismiss';
-            await showMessageDialog(plugin, {
+            // A notice, not a popup: the job runs after the surface moved on, and a
+            // popup would replace whatever the user has open by now.
+            await showNotice(plugin, {
               title: isDismissal ? 'Dismissal not saved' : 'Repetition not saved',
               message: isDismissal
                 ? `"${job.remName || job.remId}" could not be dismissed.`
@@ -782,6 +787,68 @@ export function registerIncrementalRemTracker(plugin: ReactRNPlugin) {
       transferTailRunning = false;
       incRemBatchActive = false;
       await plugin.storage.setSession('plugin_operation_active', false);
+    }
+  });
+
+  // Read aloud jobs (lib/read_aloud.ts): the popup starts the helper's synthesis, queues
+  // the task here and closes. Each job waits on the helper for minutes, so they run side
+  // by side, not in a drain loop, and WITHOUT plugin_operation_active: the user keeps
+  // editing meanwhile, and the audio rem is an ordinary insert.
+  const startedReadAloudJobs = new Set<string>();
+  plugin.track(async (rp) => {
+    const queued = await rp.storage.getSession<ReadAloudJob[]>(pendingReadAloudJobsKey);
+    if (!queued || queued.length === 0) return;
+    await plugin.storage.setSession(pendingReadAloudJobsKey, null);
+    for (const job of queued) {
+      if (startedReadAloudJobs.has(job.id)) continue;
+      startedReadAloudJobs.add(job.id);
+      console.log('[Tracker] readAloud job picked up for remId:', job.target.remId);
+      void runReadAloudJob(plugin, job);
+    }
+  });
+
+  // Upscale jobs (lib/upscale_image.ts): the same hand-off for "Upscale image with
+  // ChatGPT". A job waits on ChatGPT for a minute or more per image, then posts a notice
+  // whose Review button opens the comparison; nothing touches the rem until approved.
+  const startedUpscaleJobs = new Set<string>();
+  plugin.track(async (rp) => {
+    const queued = await rp.storage.getSession<UpscaleJob[]>(pendingUpscaleJobsKey);
+    if (!queued || queued.length === 0) return;
+    await plugin.storage.setSession(pendingUpscaleJobsKey, null);
+    for (const job of queued) {
+      if (startedUpscaleJobs.has(job.id)) continue;
+      startedUpscaleJobs.add(job.id);
+      console.log('[Tracker] upscale job picked up for remId:', job.remId);
+      void runUpscaleJob(plugin, job);
+    }
+  });
+
+  // Find Sources (lib/find_sources): searches queued by the command run here, one job at a
+  // time (each Rem waits ~25 s on the corpus provider), and post a notice whose Review
+  // opens the popup; the popup's accepted passages come back here to be pinned.
+  const startedFindSources = new Set<string>();
+  let findSourcesChain = Promise.resolve();
+  plugin.track(async (rp) => {
+    const queued = await rp.storage.getSession<FindSourcesJob[]>(pendingFindSourcesJobsKey);
+    if (!queued || queued.length === 0) return;
+    await plugin.storage.setSession(pendingFindSourcesJobsKey, null);
+    for (const job of queued) {
+      if (startedFindSources.has(job.id)) continue;
+      startedFindSources.add(job.id);
+      console.log('[Tracker] Find Sources job picked up:', job.items.length, 'Rem(s)');
+      findSourcesChain = findSourcesChain
+        .then(() => runFindSourcesJob(plugin, job))
+        .catch((e) => console.error('[Tracker] Find Sources job failed', e));
+    }
+  });
+  plugin.track(async (rp) => {
+    const queued = await rp.storage.getSession<FindSourcesWrite[]>(pendingFindSourcesWritesKey);
+    if (!queued || queued.length === 0) return;
+    await plugin.storage.setSession(pendingFindSourcesWritesKey, null);
+    for (const write of queued) {
+      if (startedFindSources.has(write.id)) continue;
+      startedFindSources.add(write.id);
+      void runFindSourcesWrite(plugin, write).catch((e) => console.error('[Tracker] Find Sources write failed', e));
     }
   });
 

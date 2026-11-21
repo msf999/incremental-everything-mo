@@ -9,7 +9,10 @@ no API key involved) and returns KaTeX/markdown-ish markup for the plugin to
 write back as rich text.
 
 It also locates quotes in a PDF (`/locate`), so the plugin can pin a passage's
-source highlight without the user selecting it.
+source highlight without the user selecting it. When no source is open, it can ask
+an optional source finder, a program of the user's that knows their books, which
+book a quote comes from and which RemNote PDFs to try (`/find-source`; see
+source-finder.json below).
 
 For YouTube videos it grabs the exact frame at a given time (`/video-frame`,
 with yt-dlp and ffmpeg: the plugin's player can't be captured from inside
@@ -21,7 +24,24 @@ whisper.cpp, on this Mac. YouTube's automatic captions can be tidied up by
 Claude (`/transcript-tidy`): punctuation, sentences, key terms in bold. And
 Claude names a Video Extract from its transcript (`/extract-title`).
 
+It also archives review history (`/history/scan`, `/history/ghosts`,
+`/history/status`, see history_archive.py): every few hours it copies the reps of
+each knowledge base it has heard from out of remnote.db, read-only, so the
+Study Dashboard can keep counting the reps of Rems deleted since.
+
+It also runs one Claude turn for the plugin's AI features (`/run`: a system prompt
+and text in, a reply or a validated JSON object out), e.g. Check Statement's verdict.
+
+It also searches a knowledge base (`/search`, see rem_search.py): an Anki-style
+query (AND, OR, NOT, phrases, in:, tag:, is:, prop:…) run on remnote.db, read-only,
+because RemNote's own search only ever ORs the words. Keys beyond plain text use the
+helper's own index of the knowledge base (rem_index.py, ~/.incremental-remnote/search/).
+
+Every POST route needs the pairing token (below): any web page open in the browser
+can reach a localhost port, and only the plugin knows the token.
+
     python3 scripts/ai_ocr_helper.py          # listens on 127.0.0.1:3457
+    python3 scripts/ai_ocr_helper.py --pairing-token   # prints the token to paste in the plugin
 
 Requires PyMuPDF (`pip install pymupdf`) and a logged-in `claude` CLI; video
 frames also need `brew install yt-dlp ffmpeg`. Transcribing audio needs
@@ -33,10 +53,24 @@ Environment:
     IR_AI_MODEL     claude model alias (default sonnet)
     IR_AI_ORIGINS   comma-separated allowed Origin headers; unset = allow all
                     (and log each Origin so it can be pinned)
+    IR_SOURCE_FINDER  command of the source finder for /find-source, split like a
+                    shell line (overrides source-finder.json)
+    IR_CORPUS_PROVIDER  command of the corpus provider for /corpus and /find-source
+                    (overrides corpus-provider.json; docs/Corpus-Provider.md)
     IR_WHISPER_MODEL  path of the whisper.cpp model (default whisper/ggml-large-v3-turbo-q5_0.bin)
 
 Files live in ~/.incremental-remnote/ai-ocr/:
+    search-prompt.md  how Claude turns a plain-language request into a search query
+                    (Search & Browse's ✨ AI), re-read per request
+    pairing-token   the secret the plugin sends with every POST (created on first start,
+                    readable only by you; delete it and restart to make a new one)
     prompt.md       the transcription instructions — edit freely, re-read per request
+    source-finder.json  optional: {"command": ["python3", "/path/to/finder.py"]}, the
+                    program /find-source runs (JSON on stdin and stdout; the contract
+                    is in docs/Source-Pins.md, "Writing a source finder")
+    corpus-provider.json  optional: the same for a corpus provider, which answers
+                    /corpus {op, …} as well (docs/Corpus-Provider.md); used instead
+                    of source-finder.json when both exist
     video-prompt.md the same for video frames
     transcript-prompt.md  how Claude tidies YouTube's automatic captions
     extract-title-prompt.md  how Claude names a Video Extract from its transcript
@@ -51,9 +85,11 @@ Files live in ~/.incremental-remnote/ai-ocr/:
 import base64
 import difflib
 import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
 import shutil
 import ssl
 import subprocess
@@ -69,11 +105,36 @@ from pathlib import Path
 
 import pymupdf
 
+try:
+    import history_archive  # history_archive.py, downloaded next to this file
+except ImportError:  # an older install with this file only: everything but the history routes works
+    history_archive = None
+try:
+    import rem_search  # rem_search.py + rem_index.py, downloaded next to this file (needs history_archive.py)
+except ImportError:
+    rem_search = None
+try:
+    import rem_browse  # rem_browse.py, for the plugin's Search & Browse popup
+except ImportError:
+    rem_browse = None
+try:
+    import rem_search_ai  # rem_search_ai.py, plain language → a search query, with Claude
+except ImportError:
+    rem_search_ai = None
+
 PORT = int(os.environ.get('IR_AI_PORT', '3457'))
 MODEL = os.environ.get('IR_AI_MODEL', 'sonnet')
 ALLOWED_ORIGINS = {o.strip() for o in os.environ.get('IR_AI_ORIGINS', '').split(',') if o.strip()}
 
 HOME = Path.home() / '.incremental-remnote' / 'ai-ocr'
+TOKEN_FILE = HOME / 'pairing-token'
+# Routes that hand out the knowledge base's content: only a caller with the token.
+# Every POST route needs the pairing token (X-IR-Token): the helper listens on localhost and
+# allows any Origin, so without it any web page open in the browser could run OCR on the
+# user's Claude account, read files of the knowledge base (/source) or query the corpus
+# provider. GET / (status) and GET /media/ (no CORS: pages cannot read it) stay open.
+TOKEN_ALL_POST_ROUTES = True
+TOKEN_HEADER = 'X-IR-Token'
 PDF_CACHE = HOME / 'pdf-cache'
 CROPS = HOME / 'crops'
 LOG = HOME / 'requests.log'
@@ -370,9 +431,10 @@ def transcribe(images, raw_text, extend=None):
     return bullets_to_markers(markup), model
 
 
-def run_claude(content, system_prompt):
+def run_claude(content, system_prompt, model=None):
     """One `claude -p` turn on `content` (message content blocks); returns the
-    reply text and the model that answered."""
+    reply text and the model that answered. `model`: an alias (sonnet, opus,
+    haiku), MODEL by default."""
     message = json.dumps({'type': 'user', 'message': {'role': 'user', 'content': content}})
 
     claude = find_claude()
@@ -383,7 +445,7 @@ def run_claude(content, system_prompt):
     # settings files (and so hooks) and session persistence.
     cmd = [claude, '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
            '--tools', '', '--strict-mcp-config', '--setting-sources', '', '--no-session-persistence',
-           '--model', MODEL, '--system-prompt', system_prompt]
+           '--model', model or MODEL, '--system-prompt', system_prompt]
     proc = subprocess.run(cmd, input=message + '\n', capture_output=True, text=True, timeout=240, cwd=HOME)
     model = None  # the model the CLI actually resolved the alias to, reported in its init event
     for line in proc.stdout.splitlines():
@@ -587,6 +649,123 @@ def handle_locate(req, entry):
     return {'pageCount': page_count, 'results': results}
 
 
+SOURCE_FINDER_CONFIG = HOME / 'source-finder.json'
+CORPUS_PROVIDER_CONFIG = HOME / 'corpus-provider.json'
+SOURCE_FINDER_TIMEOUT_S = 120
+CORPUS_STATUS_TIMEOUT_S = 15
+
+
+def _command_from(env_name, config):
+    """A command (list) from an environment variable or a {"command": …} file, re-read
+    per request; None when neither is set."""
+    import shlex
+    env = os.environ.get(env_name, '').strip()
+    if env:
+        return [os.path.expanduser(c) for c in shlex.split(env)]
+    if config.exists():
+        cmd = json.loads(config.read_text(encoding='utf-8')).get('command')
+        if isinstance(cmd, str):
+            cmd = shlex.split(cmd)
+        if cmd:
+            return [os.path.expanduser(str(c)) for c in cmd]
+    return None
+
+
+def corpus_provider():
+    """(command, legacy) of the user's corpus provider (docs/Corpus-Provider.md).
+    corpus-provider.json / IR_CORPUS_PROVIDER first; otherwise a source finder
+    (source-finder.json / IR_SOURCE_FINDER), which is a provider with the single
+    capability find-source and gets requests without `op`. (None, False) = none."""
+    cmd = _command_from('IR_CORPUS_PROVIDER', CORPUS_PROVIDER_CONFIG)
+    if cmd:
+        return cmd, False
+    cmd = _command_from('IR_SOURCE_FINDER', SOURCE_FINDER_CONFIG)
+    return (cmd, True) if cmd else (None, False)
+
+
+def source_finder_command():
+    """Kept for callers of the old name: the command answering find-source."""
+    return corpus_provider()[0]
+
+
+def run_provider(cmd, payload, timeout=SOURCE_FINDER_TIMEOUT_S):
+    """Run the provider once: JSON in, JSON out. A non-zero exit, or an answer with
+    `error`, is raised so the plugin gets it as the reason."""
+    script = next((Path(c) for c in cmd if c.endswith('.py')), None)
+    proc = subprocess.run(cmd, input=json.dumps(payload), capture_output=True, text=True,
+                          timeout=timeout, cwd=script.parent if script else None)
+    if proc.returncode != 0:
+        raise RuntimeError(f'corpus provider failed: {(proc.stderr or proc.stdout).strip()[-400:]}')
+    out = json.loads(proc.stdout)
+    if isinstance(out, dict) and out.get('error'):
+        raise RuntimeError(f'corpus provider: {out["error"]}')
+    return out
+
+
+def _no_provider():
+    return (f'No corpus provider configured ({CORPUS_PROVIDER_CONFIG}, {SOURCE_FINDER_CONFIG}, '
+            'IR_CORPUS_PROVIDER or IR_SOURCE_FINDER).')
+
+
+def handle_corpus(req, entry):
+    """POST /corpus {op, …}: one operation of the user's corpus provider
+    (docs/Corpus-Provider.md). `status` answers {available, name, version,
+    capabilities}; any other op is passed to the provider as is and its answer
+    returned with available: true. Without a provider, available: false."""
+    op = req.get('op')
+    entry['op'] = op
+    if not op or not isinstance(op, str):
+        raise RuntimeError('no op')
+    cmd, legacy = corpus_provider()
+    if not cmd:
+        return {'available': False, 'reason': _no_provider(), 'capabilities': []}
+    if op == 'status':
+        if legacy:
+            return {'available': True, 'name': 'Source finder', 'version': None,
+                    'capabilities': ['find-source'], 'legacy': True}
+        out = run_provider(cmd, {'op': 'status'}, CORPUS_STATUS_TIMEOUT_S)
+        caps = [c for c in out.get('capabilities') or [] if isinstance(c, str)]
+        entry['capabilities'] = caps
+        return {'available': True, 'name': out.get('name'), 'version': out.get('version'),
+                'capabilities': caps}
+    if op == 'find-source':
+        return handle_find_source(req, entry)
+    if legacy:
+        return {'available': False, 'reason': f'Your source finder does not offer "{op}" '
+                                              f'(set up a corpus provider: docs/Corpus-Provider.md).'}
+    payload = {k: v for k, v in req.items() if k != 'kbId'}
+    out = run_provider(cmd, payload)
+    if not isinstance(out, dict):
+        raise RuntimeError('corpus provider: the answer is not a JSON object')
+    entry['answer'] = {k: (len(v) if isinstance(v, list) else v) for k, v in out.items()
+                       if isinstance(v, (list, str, int, float)) and k != 'error'}
+    return {'available': True, **out}
+
+
+def handle_find_source(req, entry):
+    """Which RemNote PDFs a quote can be pinned from, when no source is open. The
+    provider gets `{op: "find-source", items: [{remId, ancestors, texts}]}` (a
+    legacy source finder: the same without `op`) and answers `{items: [{remId,
+    books: [{title, cite?, how, detail?, page?, pdfRemIds, quote?}]}]}`, books in
+    the order to try. Without one, `available: false`."""
+    items = req.get('items') or []
+    entry['items'] = len(items)
+    cmd, legacy = corpus_provider()
+    if not cmd:
+        return {'available': False, 'items': [], 'reason': _no_provider()}
+    order = {'items': [{'remId': it.get('remId'), 'ancestors': it.get('ancestors') or [],
+                        'texts': it.get('texts') or []} for it in items]}
+    if not legacy:
+        order = {'op': 'find-source', **order}
+    out = run_provider(cmd, order)
+    result = []
+    for it in out.get('items') or []:
+        books = [b for b in it.get('books') or [] if isinstance(b, dict) and b.get('pdfRemIds')]
+        result.append({'remId': it.get('remId'), 'books': books})
+    entry['books'] = [[b.get('id') or b.get('title') for b in it['books']] for it in result]
+    return {'available': True, 'items': result}
+
+
 def handle_source(req, entry):
     """Text of a source file (a saved web article's HTML), resolving RemNote's
     %LOCAL_FILE% placeholder like the PDF routes do."""
@@ -618,6 +797,84 @@ def handle_match(req, entry):
                  results=[{k: r.get(k) for k in ('found', 'score', 'matched')} for r in results])
     return {'results': results}
 
+
+
+SOURCE_REM_ID = re.compile(r'^[A-Za-z0-9]{8,40}$')
+
+
+def _key_text(raw):
+    """Plain text of a Rem's `key` (rich text as stored: strings and {text} elements)."""
+    try:
+        parts = json.loads(raw) if raw else []
+    except ValueError:
+        return ''
+    return ''.join(p if isinstance(p, str) else str(p.get('text') or '') for p in parts if isinstance(p, (str, dict)))
+
+
+def _slot_value(ps, key):
+    """A powerup slot's stored value (`ps.<code>_<slot>.v.v[0]`): the highlight Data JSON."""
+    try:
+        value = ps[key]['v']['v'][0]
+    except (KeyError, IndexError, TypeError):
+        return None
+    return value if isinstance(value, str) else None
+
+
+def handle_source_highlights(req, entry):
+    """POST /source-highlights {sourceRemId, containerId?}: a PDF's or article's
+    Highlights container, the Rems in it ("Page NNN" Rems, or an article's highlights)
+    and the Rems under each page, with their highlight Data, read from remnote.db
+    (read-only).
+
+    Why: the plugin's getChildrenRem is answered from RemNote's in-memory graph,
+    which loads a parent's children from the database only when something asks
+    RemNote to (ensureLoadChildrenIdsAsync, not called on that path). A container
+    nothing has opened this session comes back with only the Rems already in memory,
+    and Pin Source Quote then made a second "Page 030" beside the real one. The
+    plugin merges this complete list with its own (which has what was created
+    seconds ago and may not be on disk yet)."""
+    if history_archive is None:
+        raise RuntimeError('history_archive.py is missing: download it next to ai_ocr_helper.py')
+    kb_id = history_archive.check_kb_id(req.get('kbId'))
+    source_id = req.get('sourceRemId')
+    container_id = req.get('containerId') or None
+    for rem_id in (source_id, container_id):
+        if rem_id is not None and not (isinstance(rem_id, str) and SOURCE_REM_ID.match(rem_id)):
+            raise ValueError(f'not a Rem id: {rem_id!r}')
+    if not source_id:
+        raise ValueError('no sourceRemId')
+    path = history_archive.remnote_db_path(kb_id)
+    if not path.exists():
+        return {'available': False, 'reason': f'no local database for this knowledge base ({path})'}
+    db = history_archive.open_remnote(path)
+    try:
+        db.execute('BEGIN')
+        if not container_id:
+            for rem_id, key in db.execute(
+                    "SELECT _id, json_extract(doc, '$.key') FROM quanta WHERE json_extract(doc, '$.parent') = ?",
+                    (source_id,)):
+                if _key_text(key).strip() == 'Highlights':
+                    container_id = rem_id
+                    break
+        items = []
+        if container_id:
+            # Two levels in one statement: each extra level is a full scan (no index on parent).
+            rows = db.execute(
+                "SELECT _id, json_extract(doc, '$.parent'), json_extract(doc, '$.key'), json_extract(doc, '$.ps') "
+                "FROM quanta WHERE json_extract(doc, '$.parent') = ?1 OR json_extract(doc, '$.parent') IN "
+                "(SELECT _id FROM quanta WHERE json_extract(doc, '$.parent') = ?1)", (container_id,))
+            for rem_id, parent, key, ps_raw in rows:
+                try:
+                    ps = json.loads(ps_raw) if ps_raw else {}
+                except ValueError:
+                    ps = {}
+                items.append({'remId': rem_id, 'parentId': parent, 'text': _key_text(key),
+                              'pdfData': _slot_value(ps, 'n_d'), 'htmlData': _slot_value(ps, 'hh_d')})
+        db.execute('COMMIT')
+    finally:
+        db.close()
+    entry.update(source=source_id, container=container_id, items=len(items))
+    return {'available': True, 'containerId': container_id, 'items': items}
 
 # ---------------------------------------------------------------------------
 # /video-frame, /video-transcribe — YouTube frames
@@ -968,6 +1225,62 @@ def handle_extract_title(req, entry):
     return {'title': title}
 
 
+
+# ---------------------------------------------------------------------------
+# /run — one Claude turn for the plugin's AI features (Check Statement, …)
+# ---------------------------------------------------------------------------
+
+RUN_MODELS = {'sonnet', 'opus', 'haiku'}
+MAX_RUN_SYSTEM_CHARS = 20_000
+MAX_RUN_TEXT_CHARS = 80_000
+
+
+def _json_object(reply):
+    """The JSON object in a reply: as is, inside a ```json fence, or from its first
+    { to its last }. None when there is none."""
+    text = reply.strip()
+    fence = re.search(r'```(?:json)?\s*(\{.*\})\s*```', text, re.DOTALL)
+    for candidate in (text, fence.group(1) if fence else None,
+                      text[text.find('{'):text.rfind('}') + 1] if '{' in text else None):
+        if not candidate:
+            continue
+        try:
+            value = json.loads(candidate)
+        except ValueError:
+            continue
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def handle_run(req, entry):
+    """POST /run {system, text, json?, model?, task?}: one `claude -p` turn on the
+    user's subscription, with tools, MCP servers and settings off (run_claude). The
+    plugin writes the prompt; `task` only names it in the log. With `json`, the reply
+    must be one JSON object: it comes back parsed as `data`, after one retry that
+    asks for valid JSON when the first reply is not."""
+    system, text = req.get('system'), req.get('text')
+    if not isinstance(system, str) or not system.strip() or len(system) > MAX_RUN_SYSTEM_CHARS:
+        raise RuntimeError(f'need a system prompt, {MAX_RUN_SYSTEM_CHARS} characters at most')
+    if not isinstance(text, str) or not text.strip() or len(text) > MAX_RUN_TEXT_CHARS:
+        raise RuntimeError(f'need the text, {MAX_RUN_TEXT_CHARS} characters at most')
+    model = req.get('model') if req.get('model') in RUN_MODELS else None
+    entry.update(task=str(req.get('task') or '')[:60], chars=len(text))
+    reply, used = run_claude([{'type': 'text', 'text': text}], system, model)
+    entry['model'] = used
+    if not req.get('json'):
+        return {'text': reply, 'model': used}
+    data = _json_object(reply)
+    if data is None:
+        retry = (text + '\n\nYour previous reply was not one valid JSON object:\n' + reply[:4000] +
+                 '\n\nReply again with ONLY the JSON object, no other text.')
+        reply, used = run_claude([{'type': 'text', 'text': retry}], system, model)
+        data = _json_object(reply)
+        entry['retried'] = True
+    if data is None:
+        raise RuntimeError('Claude did not return a JSON object: ' + reply[:300])
+    return {'data': data, 'text': reply, 'model': used}
+
 # ---------------------------------------------------------------------------
 # Local videos: libraries, the macOS file dialogs, scanning, serving
 # ---------------------------------------------------------------------------
@@ -1148,16 +1461,166 @@ def handle_video_file(req, entry):
     return {'size': path.stat().st_size}
 
 
+def history_kb(req, entry):
+    if history_archive is None:
+        raise RuntimeError('history_archive.py is missing: download it next to ai_ocr_helper.py')
+    kb_id = history_archive.check_kb_id(req.get('kbId'))
+    entry['kbId'] = kb_id
+    return kb_id
+
+
+def handle_history_scan(req, entry):
+    """Scan the KB's remnote.db into its archive now."""
+    kb_id = history_kb(req, entry)
+    summary = history_archive.scan(kb_id)
+    entry.update(newReps=summary['newReps'], trashItems=summary['trashItems'])
+    return {'scan': summary}
+
+
+def handle_history_ghosts(req, entry):
+    """Reps only deleted Rems hold, and the Rems on their way up to a live ancestor.
+    `scan: true` scans first."""
+    kb_id = history_kb(req, entry)
+    if req.get('scan'):
+        history_archive.scan(kb_id)
+    payload = history_archive.ghosts(kb_id)
+    entry.update(reps=len(payload['reps']), rems=len(payload['rems']))
+    return payload
+
+
+def handle_history_status(req, entry):
+    kb_id = history_kb(req, entry)
+    return {'status': history_archive.status(kb_id)}
+
+
+def pairing_token():
+    """The secret the plugin must send on every POST route; created once, mode 600."""
+    try:
+        token = TOKEN_FILE.read_text().strip()
+        if token:
+            return token
+    except OSError:
+        pass
+    token = secrets.token_urlsafe(24)
+    HOME.mkdir(parents=True, exist_ok=True)
+    fd = os.open(TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as f:
+        f.write(token + '\n')
+    return token
+
+
+def handle_search(req, entry):
+    """Rem ids for an Anki-style query (rem_search.py). A query that can't run comes
+    back as `queryError` {kind, message, at?}, not as a failure."""
+    if rem_search is None or history_archive is None:
+        raise RuntimeError('rem_search.py or history_archive.py is missing: download both next to ai_ocr_helper.py')
+    kb_id = history_archive.check_kb_id(req.get('kbId'))
+    try:
+        out = rem_search.search(kb_id, req.get('query'), req.get('limit'), wait=False)
+    except rem_search.SearchError as e:
+        entry['queryError'] = e.kind
+        return {'queryError': e.to_json()}
+    entry.update(results=len(out['results']), total=out['total'])
+    return out
+
+
+def handle_search_source(req, entry):
+    """Rems whose Sources list `sourceId` (`incrementalOnly`: IncRems only), from the
+    helper's index, which follows RemNote's Rem records rather than its search index.
+    While the index is being built the answer is `queryError` index-building and the
+    plugin uses its own (slower) lookup."""
+    if rem_search is None or history_archive is None:
+        raise RuntimeError('rem_search.py or history_archive.py is missing: download both next to ai_ocr_helper.py')
+    kb_id = history_archive.check_kb_id(req.get('kbId'))
+    source_id = req.get('sourceId')
+    if not isinstance(source_id, str) or not rem_search.REM_ID_RE.match(source_id):
+        raise ValueError(f'not a Rem id: {source_id!r}')
+    index = rem_search.rem_index
+    if index.is_building(kb_id) or index.needs_build(kb_id):
+        index.build_in_background(kb_id, log=lambda m: print(m, flush=True))
+        return {'queryError': {'kind': 'index-building', 'message': 'The search index is being built.'}}
+    db = index.ready(kb_id)
+    try:
+        rem_ids = index.rems_with_source(db, source_id, bool(req.get('incrementalOnly')))
+    finally:
+        db.close()
+    entry.update(results=len(rem_ids))
+    return {'remIds': rem_ids}
+
+
+def handle_search_suppression(req, entry):
+    """Each card RemNote won't show, with its cause (rem_search.card_causes), for the
+    Suppressed Cards tab. `queryError` index-building while the index is built."""
+    if rem_search is None or history_archive is None:
+        raise RuntimeError('rem_search.py or history_archive.py is missing: download both next to ai_ocr_helper.py')
+    kb_id = history_archive.check_kb_id(req.get('kbId'))
+    try:
+        out = rem_search.card_causes(kb_id, wait=False)
+    except rem_search.SearchError as e:
+        entry['queryError'] = e.kind
+        return {'queryError': e.to_json()}
+    entry.update(results=len(out['causes']))
+    return out
+
+
+def handle_search_browse(req, entry):
+    """A page of Search & Browse rows (rem_browse.browse): every column from the index."""
+    if rem_browse is None or rem_search is None:
+        raise RuntimeError('rem_browse.py, rem_search.py or rem_index.py is missing: download them next to ai_ocr_helper.py')
+    kb_id = history_archive.check_kb_id(req.get('kbId'))
+    try:
+        out = rem_browse.browse(kb_id, req.get('query'), req.get('mode') or 'rems', req.get('sort') or 'relevance',
+                                bool(req.get('desc')), req.get('offset') or 0, req.get('limit') or 100, wait=False)
+    except rem_search.SearchError as e:
+        entry['queryError'] = e.kind
+        return {'queryError': e.to_json()}
+    entry.update(results=len(out['rows']), total=out['total'])
+    return out
+
+
+def handle_search_pick(req, entry):
+    """Rems for Search & Browse's Move and Tag picker (rem_browse.pick)."""
+    if rem_browse is None or rem_search is None:
+        raise RuntimeError('rem_browse.py, rem_search.py or rem_index.py is missing: download them next to ai_ocr_helper.py')
+    kb_id = history_archive.check_kb_id(req.get('kbId'))
+    ids = req.get('ids')
+    try:
+        out = rem_browse.pick(kb_id, req.get('text') or '', req.get('scope') or None,
+                              ids if isinstance(ids, list) else None, req.get('limit') or rem_browse.PICK_LIMIT,
+                              wait=False)
+    except rem_search.SearchError as e:
+        entry['queryError'] = e.kind
+        return {'queryError': e.to_json()}
+    entry.update(results=len(out['rows']))
+    return out
+
+
+def handle_search_ai(req, entry):
+    """A plain-language request in, a Search Engine query out (rem_search_ai.py):
+    one `claude -p` turn, checked with the search's parser, retried once if invalid."""
+    if rem_search_ai is None or rem_search is None:
+        raise RuntimeError('rem_search_ai.py is missing: download it next to ai_ocr_helper.py')
+    kb_id = history_archive.check_kb_id(req.get('kbId'))
+    out = rem_search_ai.translate(kb_id, req.get('request'), run_claude, HOME)
+    entry.update(model=out.get('model'), valid=out.get('valid'))
+    return out
+
+
 MEDIA_PREFIX = '/media/'
 MEDIA_CHUNK = 1 << 20
 
-ROUTES = {'/ocr': handle_ocr, '/locate': handle_locate, '/source': handle_source, '/match': handle_match,
+ROUTES = {'/ocr': handle_ocr, '/locate': handle_locate, '/find-source': handle_find_source, '/corpus': handle_corpus, '/source': handle_source, '/source-highlights': handle_source_highlights, '/match': handle_match,
           '/video-frame': handle_video_frame, '/video-transcribe': handle_video_transcribe,
           '/video-transcript': handle_video_transcript, '/transcript-tidy': handle_transcript_tidy,
-          '/extract-title': handle_extract_title,
+          '/extract-title': handle_extract_title, '/run': handle_run,
           '/video-choose': handle_video_choose, '/video-libraries': handle_video_libraries,
           '/video-library-relink': handle_video_library_relink, '/video-scan': handle_video_scan,
-          '/video-file': handle_video_file}
+          '/video-file': handle_video_file,
+          '/history/scan': handle_history_scan, '/history/ghosts': handle_history_ghosts,
+          '/history/status': handle_history_status, '/search': handle_search,
+          '/search/source': handle_search_source, '/search/suppression': handle_search_suppression,
+          '/search/browse': handle_search_browse, '/search/pick': handle_search_pick,
+          '/search/ai': handle_search_ai}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1166,7 +1629,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.send_header('Access-Control-Allow-Headers', f'Content-Type, {TOKEN_HEADER}')
         # Chromium's Private Network Access preflight for requests into localhost.
         self.send_header('Access-Control-Allow-Private-Network', 'true')
         self.send_header('Content-Type', 'application/json')
@@ -1182,7 +1645,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {'ok': True, 'claude': find_claude(), 'model': MODEL,
                                         'ytDlp': find_tool('yt-dlp'), 'ffmpeg': find_tool('ffmpeg'),
                                         'transcripts': True, 'whisper': whisper_ready(), 'localVideo': True,
-                                        'extractTitles': True})
+                                        'extractTitles': True, 'historyArchive': history_archive is not None,
+                                        'search': rem_search is not None, 'browse': rem_browse is not None,
+                                        'searchAi': rem_search_ai is not None})
         if self.path.startswith(MEDIA_PREFIX):
             return self.send_media()
         self.send_json(404, {'ok': False, 'error': 'POST /ocr or /locate'})
@@ -1244,6 +1709,11 @@ class Handler(BaseHTTPRequestHandler):
         if ALLOWED_ORIGINS and origin not in ALLOWED_ORIGINS:
             log({'at': time.time(), 'route': self.path, 'origin': origin, 'rejected': True})
             return self.send_json(403, {'ok': False, 'error': f'origin not allowed: {origin}'})
+        if TOKEN_ALL_POST_ROUTES:
+            sent = (self.headers.get(TOKEN_HEADER) or '').encode()
+            if not hmac.compare_digest(sent, pairing_token().encode()):
+                log({'at': time.time(), 'route': self.path, 'origin': origin, 'rejected': 'token'})
+                return self.send_json(403, {'ok': False, 'error': 'pairing'})
 
         started = time.time()
         entry = {'at': started, 'route': self.path, 'origin': origin}
@@ -1252,6 +1722,9 @@ class Handler(BaseHTTPRequestHandler):
             # One thread per request: fetch() reads the knowledge base from here.
             REQUEST.kb_id = req.get('kbId')
             entry['kbId'] = REQUEST.kb_id
+            # Any request names the KB in use: from now on its history is archived too.
+            if history_archive and history_archive.register_kb(REQUEST.kb_id):
+                print(f'[history] archiving {REQUEST.kb_id}', flush=True)
             payload = route(req, entry)
             ms = int((time.time() - started) * 1000)
             entry.update(ok=True, ms=ms)
@@ -1269,6 +1742,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    if '--pairing-token' in sys.argv:
+        print(pairing_token())
+        return
     for d in (HOME, PDF_CACHE, CROPS, VIDEO_FRAMES, VIDEO_TRANSCRIPTS, VIDEO_AUDIO, WHISPER_DIR):
         d.mkdir(parents=True, exist_ok=True)
     prompt()
@@ -1280,6 +1756,15 @@ def main():
             old.unlink(missing_ok=True)
     print(f'AI OCR helper on http://127.0.0.1:{PORT}  (claude: {find_claude()}, model: {MODEL})', flush=True)
     print(f'Prompt: {PROMPT_FILE}', flush=True)
+    pairing_token()
+    print(f'Pairing token for /search: {TOKEN_FILE}' if rem_search else
+          'rem_search.py not found next to the helper: /search is off', flush=True)
+    if rem_search:
+        rem_search.rem_index.warm_known_kbs(log=lambda m: print(m, flush=True))
+    if history_archive:
+        history_archive.start_background_scans(log=lambda m: print(m, flush=True))
+    else:
+        print('history_archive.py not found next to the helper: review-history archiving is off', flush=True)
     ThreadingHTTPServer(('127.0.0.1', PORT), Handler).serve_forever()
 
 

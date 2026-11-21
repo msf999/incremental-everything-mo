@@ -20,7 +20,9 @@ import {
   currentIncrementalRemTypeKey,
   currentHostDocumentIdKey,
   incremNotesSidebarRemIdKey,
+  extractEditorTargetKey,
 } from '../lib/consts';
+import { ExtractEditorTarget } from '../lib/extract_editor';
 import { findAllRemsForPDF, findAllRemsForHTML, isHtmlSource } from '../lib/pdfUtils';
 
 // Types where showing the document notes sidebar makes sense.
@@ -77,6 +79,14 @@ function IncremNotesSidebar() {
   // ignored instead of mis-showing the previous rem over a non-rem item.
   const remExtractId = useTrackerPlugin(
     (rp) => rp.storage.getSession<string>(incremNotesSidebarRemIdKey),
+    []
+  );
+
+  // The Extract Editor (lib/extract_editor.ts) shows the same document page over the
+  // queue's card. Two pages of one Rem share a focus path and take the caret from each
+  // other, so while that editor is on this Rem, this pane steps aside.
+  const floatingEditorRemId = useTrackerPlugin(
+    async (rp) => (await rp.storage.getSession<ExtractEditorTarget>(extractEditorTargetKey))?.remId,
     []
   );
 
@@ -266,6 +276,15 @@ function IncremNotesSidebar() {
             </button>
           ))}
         </div>
+      </div>
+    );
+  }
+
+  if (viewerRemId && floatingEditorRemId === viewerRemId) {
+    return (
+      <div style={emptyStateStyle}>
+        <span style={{ fontSize: '24px' }}>✎</span>
+        <span>This Rem is open in the editor over the queue.<br />Press <b>Done</b> there to edit it here instead.</span>
       </div>
     );
   }

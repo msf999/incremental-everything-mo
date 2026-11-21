@@ -4,6 +4,9 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { resolveRemTextForBreadcrumb, buildAncestorBreadcrumb } from '../lib/richTextRemRefs';
 import { sanitizeRichTextForSetText, isHintNode } from '../lib/richTextSanitize';
 import { remHasImage } from '../lib/image_scan';
+import { aliasesWithIds, aliasIdForText, aliasTextOf } from '../lib/rem_aliases';
+import { canonFig, searchSeeds } from '../lib/reference_search_seeds';
+import { HelperSearchResult, pickViaHelper, searchViaHelper, usesQuerySyntax } from '../lib/rem_search_client';
 import { useFloatingWidgetDrag, FloatingPosition } from '../lib/floating_widget_drag';
 
 // Report each step of the alias-id resolution as a toast. Off by default: the
@@ -12,13 +15,6 @@ import { useFloatingWidgetDrag, FloatingPosition } from '../lib/floating_widget_
 // noise in daily use. Flip to true when re-testing alias insertion (e.g. after
 // RemNote answers on how a plugin should obtain an alias's id).
 const ALIAS_REPAIR_DEBUG = false;
-
-// The rem id of an alias returned by `rem.getAliases()`. Historically that is
-// `_id`; the fallbacks are here because a candidate matched by alias text has
-// been coming back without one, which is exactly what leaves the inserted
-// reference showing the rem's primary name instead of the alias.
-const aliasRemId = (a: any): string =>
-  a?._id ?? a?.id ?? a?.remId ?? a?.rem?._id ?? a?._rem?._id ?? '';
 
 // ---------------------------------------------------------------------------
 // Find & Insert Reference
@@ -91,19 +87,70 @@ function clozeIdAtOffset(rt: any, offset: number): string | undefined {
 const fold = (s: string) =>
   s.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
 
-// Treat "Figure", "Fig" and "Fig." (any capitalisation) as the same word, so
-// typing "fig 4.3" matches a rem named "Figure 4.3" and vice-versa. Collapse a
-// standalone "fig"/"fig." token to the canonical "figure" (and swallow a
-// trailing dot) everywhere matching/scoring reads folded text. `\bfig\b` won't
-// touch the "fig" inside "figure" — there's no word boundary between "g" and
-// "u" — so already-canonical text is left alone.
-const canonFig = (s: string) => s.replace(/\bfig\b\.?/g, 'figure');
+// canonFig: "Figure" = "Fig" = "Fig." in matching (lib/reference_search_seeds).
 
-// The opposite spelling. Only used to seed the backend search: RemNote reaches a
-// rem written "Fig. 6.4" through the phrase "fig 6.4" and never through
-// "figure 6.4" (see the phrase-seed comment in runSearch), so both spellings of
-// the whole query have to be asked for.
-const shortFig = (s: string) => s.replace(/\bfigure\b/g, 'fig');
+/** How many hits to ask the helper for; each one costs bridge calls to show. */
+const HELPER_LIMIT = 100;
+
+/** Children shown for a scope with an empty box; each one costs bridge calls too. */
+const CHILDREN_LIMIT = 50;
+
+/**
+ * A Rem the search is narrowed to (hierarchical search, as in RemNote's own and in
+ * Search & Browse's Move / Tag picker): Tab enters the highlighted result, Shift+Tab
+ * goes back up one level, Backspace in an empty box returns to the whole KB.
+ */
+interface Scope {
+  id: string;
+  name: string;
+}
+
+/**
+ * A hidden property row (a slot value: text is one reference to the property, the
+ * value in the back), told apart without the helper's `ie` flag, which the SDK does
+ * not expose. Only for the children list when the helper is off.
+ */
+function looksLikePropertyRow(r: any): boolean {
+  const t = r?.text;
+  return (
+    Array.isArray(t) &&
+    t.length === 1 &&
+    t[0] && typeof t[0] === 'object' && t[0].i === 'q' &&
+    Array.isArray(r.backText) && r.backText.length > 0
+  );
+}
+
+/** Which engine answered, and a line to show under the box when there is something to say. */
+interface EngineNote {
+  helper: boolean;
+  message?: string;
+  tone?: 'info' | 'error';
+}
+
+function engineNoteFor(result: HelperSearchResult, query: string): EngineNote {
+  switch (result.status) {
+    case 'ok':
+      return { helper: true };
+    case 'query-error':
+      return result.error.kind === 'index-building'
+        ? { helper: false, tone: 'info', message: `${result.error.message} Searching the words meanwhile.` }
+        : { helper: false, tone: 'error', message: `${result.error.message} Searching the words instead.` };
+    case 'unpaired':
+      return {
+        helper: false,
+        message:
+          'The AI helper is running but not paired, so this is RemNote\'s search. Paste its token in the plugin settings (AI Helper Pairing Token).',
+      };
+    default:
+      return usesQuerySyntax(query)
+        ? {
+            helper: false,
+            message:
+              'and, or, -word, "phrases", in:, tag:, is: and the other search keys need the AI helper on the desktop. Searching the words instead.',
+          }
+        : { helper: false };
+  }
+}
 
 interface Candidate {
   id: string;
@@ -130,10 +177,8 @@ interface Candidate {
   // reference so it renders the alias text and links back to this rem.
   aliasId?: string;
   aliasText?: string;
-  // Debug only: set when the alias object came back without a usable rem id.
-  aliasKeys?: string;
-  // The matched alias's own rich text. Aliases are no longer rems, so their id
-  // can only be recovered by handing this back to getOrCreateAliasWithText().
+  // The matched alias's own rich text: the fallback for recovering its id
+  // through getOrCreateAliasWithText() when the search found none.
   aliasRichText?: any;
 }
 
@@ -165,9 +210,16 @@ function ReferenceFinder() {
   const [selected, setSelected] = useState(0);
   const [conceptsOnly, setConceptsOnly] = useState(false);
   const [searching, setSearching] = useState(false);
+  // Which engine answered, and anything to say about it (lib/rem_search_client.ts).
+  const [engineNote, setEngineNote] = useState<EngineNote>({ helper: false });
   // True when the picker was opened over selected text. Gates the "pin at end"
   // hint in the footer so the key list stays short in the ordinary case.
   const [openedFromSelection, setOpenedFromSelection] = useState(false);
+  // Hierarchical search: the Rems the search is narrowed to, outermost first.
+  const [scopes, setScopes] = useState<Scope[]>([]);
+  const scope = scopes[scopes.length - 1] ?? null;
+  // With a scope and an empty box the list shows its children; how many it has.
+  const [childrenTotal, setChildrenTotal] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const reqIdRef = useRef(0);
   // The rem the picker was triggered from, captured by the command before focus
@@ -233,11 +285,11 @@ function ReferenceFinder() {
     })();
   }, [plugin]);
 
-  // Let Enter / arrow keys reach this widget instead of the editor.
+  // Let Enter / arrow keys / Tab reach this widget instead of the editor.
   useEffect(() => {
     if (!floatingWidgetId) return;
     plugin.window
-      .stealKeys(floatingWidgetId, ['Enter', 'ArrowUp', 'ArrowDown', 'Escape'])
+      .stealKeys(floatingWidgetId, ['Enter', 'ArrowUp', 'ArrowDown', 'Escape', 'Tab'])
       .catch(() => {/* best-effort; arrows/Enter still work inside the input */});
   }, [floatingWidgetId, plugin]);
 
@@ -360,68 +412,133 @@ function ReferenceFinder() {
     [plugin]
   );
 
+  // Phase 2 of a search (and the whole of a children list): what each shown row
+  // needs beyond its name, read only for the rows we show.
+  const enrich = useCallback(
+    async (r: any, withBreadcrumb: boolean) => {
+      let backText = '';
+      try {
+        if (r.backText?.length) {
+          const bt = (await resolveRemTextForBreadcrumb(plugin, r.backText)).trim();
+          backText = bt === 'Untitled' ? '' : bt; // don't show the empty-sentinel
+        }
+      } catch { /* ignore */ }
+      const breadcrumb = withBreadcrumb ? await buildBreadcrumb(r) : '';
+      // Built-in powerup membership isn't enumerable, so probe it directly.
+      const isPdfHighlight = await r.hasPowerup(BuiltInPowerupCodes.PDFHighlight).catch(() => false);
+      return { backText, breadcrumb, isPdfHighlight, hasImage: remHasImage(r) };
+    },
+    [plugin, buildBreadcrumb]
+  );
+
+  /**
+   * The children of a scope, in document order: through the helper when it answers
+   * (it leaves out hidden property rows), else RemNote's own list.
+   */
+  const childrenOf = useCallback(
+    async (scopeId: string): Promise<{ rems: any[]; total: number }> => {
+      const picked = await pickViaHelper(plugin, { scope: scopeId });
+      if (picked.status === 'ok') {
+        const ids = picked.rows.map((r) => r.remId).filter((id) => id !== sourceRemIdRef.current);
+        const shown = ids.slice(0, CHILDREN_LIMIT);
+        const rems = shown.length ? ((await plugin.rem.findMany(shown).catch(() => undefined)) ?? []) : [];
+        const byId = new Map(rems.map((r: any) => [r._id, r]));
+        return { rems: shown.map((id) => byId.get(id)).filter(Boolean), total: ids.length };
+      }
+      const parent = await plugin.rem.findOne(scopeId).catch(() => undefined);
+      const kids = ((await parent?.getChildrenRem().catch(() => [])) ?? []).filter(
+        (k: any) => k._id !== sourceRemIdRef.current && !looksLikePropertyRow(k)
+      );
+      return { rems: kids.slice(0, CHILDREN_LIMIT), total: kids.length };
+    },
+    [plugin]
+  );
+
   const runSearch = useCallback(
     async (raw: string) => {
       const reqId = ++reqIdRef.current;
       const q = normalize(raw);
       const qf = canonFig(fold(raw));
       if (q.length < 2) {
-        setResults([]);
+        if (!scope) {
+          setResults([]);
+          return;
+        }
+        // Inside a scope with nothing typed: its children, as RemNote does.
+        setSearching(true);
+        try {
+          const { rems, total } = await childrenOf(scope.id);
+          if (reqId !== reqIdRef.current) return;
+          const candidates: Candidate[] = [];
+          for (const r of rems) {
+            const nameRaw = await resolveRemTextForBreadcrumb(plugin, r.text);
+            const name = nameRaw === 'Untitled' ? '' : nameRaw;
+            const type = await r.getType().catch(() => 0);
+            if (conceptsOnly && type !== RemType.CONCEPT) continue;
+            // All share the scope as their path, shown once above the list.
+            const extra = await enrich(r, false);
+            candidates.push({ id: r._id, name, normName: normalize(name), type, times: 0, score: 3, ...extra });
+          }
+          if (reqId !== reqIdRef.current) return;
+          setResults(candidates);
+          setChildrenTotal(total);
+          setSelected(0);
+        } finally {
+          if (reqId === reqIdRef.current) setSearching(false);
+        }
         return;
       }
       setSearching(true);
       try {
-        const tokens = q.split(/\s+/).filter((t) => t.length >= 2);
         // Folded tokens drive matching so accents/special chars are ignored.
         const foldedTokens = qf.split(/\s+/).filter((t) => t.length >= 2);
-        // Seed the backend search with the alternate figure spelling too, so
-        // RemNote's index returns "Figure 4.3" when the user typed "fig" (and
-        // vice-versa) rather than relying only on the distinctive numeric token.
-        const searchTokens = Array.from(
-          new Set(
-            tokens.flatMap((t) =>
-              /^fig\.?$/.test(t) ? [t, 'figure'] : t === 'figure' ? [t, 'fig'] : [t]
-            )
-          )
-        );
-        // Seed with the WHOLE query as a phrase, in both figure spellings, before
-        // any single token. This is the seed that matters, because of how
-        // RemNote's search actually retrieves candidates (SQLite FTS5):
-        //   • it splits the query on every non-letter/digit character, so
-        //     "Fig. 6.4" becomes the tokens [fig, ., 6, ., 4];
-        //   • it then keeps only the tokens longer than two characters and ORs
-        //     them as prefix matches — here just `"fig"*`, since "6" and "4" are
-        //     dropped. That pool ("every rem containing a word starting with
-        //     fig") is truncated to the top-ranked thousand, and this picker then
-        //     keeps the best 50 by cost. In a knowledge base full of figures the
-        //     one you want does not survive that cut, however well it would have
-        //     scored once retrieved.
-        //   • the ONE branch that isolates a rem instead of truncating a huge
-        //     pool is an exact adjacent-phrase match on the whole query
-        //     (`"figure 6.4"*`, capped at 100 rows) — and it only runs when the
-        //     phrase is at least 3 characters and 2 tokens.
-        // FTS prefix-matches only the LAST word of a phrase, so the phrase
-        // "fig 6.4" does not match a rem named "Figure 6.4" and vice-versa. Both
-        // spellings therefore have to be asked for; canonFig alone was only ever
-        // applied to matching and scoring, never to what we asked the index for,
-        // which is why "Fig. 6.4" could not find "Figure 6.4: …".
-        const phrases = Array.from(new Set<string>([q, canonFig(q), shortFig(q)]));
-        // …then each token (longest first) so a buried exact-name rem is still
-        // reachable via its most distinctive token. Capped so a query stays a
-        // bounded number of backend searches per keystroke.
-        const queries = Array.from(
-          new Set<string>([...phrases, ...[...searchTokens].sort((a, b) => b.length - a.length)])
-        ).slice(0, 5);
-
         const seen = new Map<string, any>();
-        for (const qq of queries) {
-          const res = await plugin.search.search([qq], undefined, {
-            filterOnlyConcepts: conceptsOnly,
-            numResults: 50,
+        // Neither the scope nor the Rem we started from is a result.
+        const excluded = (id: string) => id === sourceRemIdRef.current || id === scope?.id;
+
+        // The AI helper first (desktop, when running and paired): it ANDs the
+        // words over RemNote's whole index and understands -word, or, "phrases"
+        // and in:"Document" (lib/rem_search_client.ts). Its hits are already
+        // matched, so they skip the every-word filter below, and their order is
+        // the helper's relevance. A scope becomes in:<id>, as in the Move / Tag
+        // picker (scripts/rem_browse.py pick); in: includes the Rem itself.
+        const helperQuery = scope ? `in:${scope.id} (${raw.trim()})` : raw;
+        const helper = await searchViaHelper(plugin, helperQuery, { limit: HELPER_LIMIT });
+        if (reqId !== reqIdRef.current) return;
+        const helperRank = new Map<string, number>();
+        const helperAlias = new Map<string, string>();
+        if (helper.status === 'ok') {
+          const ids = helper.hits.map((h) => h.remId).filter((id) => !excluded(id));
+          const rems = ids.length ? ((await plugin.rem.findMany(ids).catch(() => undefined)) ?? []) : [];
+          const byId = new Map(rems.map((r: any) => [r._id, r]));
+          ids.forEach((id, i) => {
+            const r = byId.get(id);
+            if (!r) return; // gone since the index was written
+            seen.set(id, r);
+            helperRank.set(id, i);
           });
-          for (const r of res) {
-            if (r._id === sourceRemIdRef.current) continue; // never suggest the rem itself
-            if (!seen.has(r._id)) seen.set(r._id, r);
+          for (const h of helper.hits) if (h.aliasId) helperAlias.set(h.remId, h.aliasId);
+        }
+        setEngineNote(engineNoteFor(helper, raw));
+
+        if (helper.status !== 'ok') {
+          // RemNote's own search: the whole query as a phrase, its adjacent word
+          // pairs, then single words. Why each is needed is in
+          // lib/reference_search_seeds.ts. Run together, merged in seed order.
+          // A context Rem narrows it to that subtree (an ancestor_ids filter,
+          // findings/SEARCH_AND_DATABASE.md), so scopes work without the helper.
+          const pools = await Promise.all(
+            searchSeeds(q).map((qq) =>
+              plugin.search
+                .search([qq], scope?.id, { filterOnlyConcepts: conceptsOnly, numResults: 50 })
+                .catch(() => [])
+            )
+          );
+          for (const res of pools) {
+            for (const r of res) {
+              if (excluded(r._id)) continue; // never suggest the rem itself or the scope
+              if (!seen.has(r._id)) seen.set(r._id, r);
+            }
           }
         }
         if (reqId !== reqIdRef.current) return; // a newer search superseded this
@@ -431,7 +548,8 @@ function ReferenceFinder() {
         // for the rems we'll actually show, to keep per-keystroke cost low.)
         type Scored = {
           r: any; id: string; name: string; normName: string; type: number; times: number;
-          score: number; aliasId?: string; aliasText?: string; aliasKeys?: string; aliasRichText?: any;
+          score: number; aliasId?: string; aliasText?: string; aliasRichText?: any;
+          helperRank: number; // position in the helper's answer; Infinity for RemNote's search
           matchFold: string; // folded text the match was made on (alias or name)
         };
         const scored: Scored[] = [];
@@ -450,24 +568,40 @@ function ReferenceFinder() {
           // Accent-insensitive: every typed token must appear in the folded name…
           let aliasId: string | undefined;
           let aliasText: string | undefined;
-          let aliasKeys: string | undefined; // debug: shape of the alias object when it has no id
           let aliasRichText: any; // the alias's own rich text — resolves its id at pick time
           let matchFold = foldName;
-          if (!foldedTokens.every((t) => foldName.includes(t))) {
+          const fromHelper = helperRank.has(r._id);
+          const helperAliasId = helperAlias.get(r._id);
+          if (fromHelper && helperAliasId) {
+            // The helper matched it through this alias: show and reference that one.
+            try {
+              const a = (await aliasesWithIds(r)).find((x) => x.aliasId === helperAliasId);
+              if (a) {
+                const atRaw = (await resolveRemTextForBreadcrumb(plugin, a.text)).trim();
+                aliasText = atRaw === 'Untitled' ? undefined : atRaw;
+                if (aliasText) {
+                  aliasId = a.aliasId;
+                  aliasRichText = a.text;
+                  matchFold = canonFig(fold(aliasText));
+                }
+              }
+            } catch { /* show it under its own name */ }
+          } else if (!fromHelper && !foldedTokens.every((t) => foldName.includes(t))) {
             // …or in one of the rem's aliases. RemNote indexes aliases into the
             // owning rem, so an alias-text search returns THIS rem (with a
             // non-matching primary name); consult its aliases to confirm and
             // capture which alias to reference. Only the non-matching results
             // pay this extra lookup, so per-keystroke cost stays low.
             let matched: { id: string; text: string; fold: string; rt: any } | undefined;
+            // `aliasesWithIds`, not `r.getAliases()`: the SDK's version drops each
+            // alias's id, and an alias reference cannot be written without it.
             try {
-              for (const a of await r.getAliases()) {
+              for (const a of await aliasesWithIds(r)) {
                 const atRaw = (await resolveRemTextForBreadcrumb(plugin, a.text)).trim();
                 const at = atRaw === 'Untitled' ? '' : atRaw;
                 const fa = canonFig(fold(at));
                 if (at && foldedTokens.every((t) => fa.includes(t))) {
-                  matched = { id: aliasRemId(a), text: at, fold: fa, rt: a.text };
-                  if (!matched.id) aliasKeys = Object.keys(a ?? {}).join(',').slice(0, 120);
+                  matched = { id: a.aliasId, text: at, fold: fa, rt: a.text };
                   break;
                 }
               }
@@ -488,7 +622,10 @@ function ReferenceFinder() {
           if (matchFold === qf) score = 0;
           else if (matchFold.startsWith(qf)) score = 1;
           else if (matchFold.includes(qf)) score = 2;
-          scored.push({ r, id: r._id, name, normName: normalize(name), type, times, score, aliasId, aliasText, aliasKeys, aliasRichText, matchFold });
+          scored.push({
+            r, id: r._id, name, normName: normalize(name), type, times, score, aliasId, aliasText, aliasRichText, matchFold,
+            helperRank: helperRank.get(r._id) ?? Infinity,
+          });
         }
 
         scored.sort((a, b) => {
@@ -497,6 +634,7 @@ function ReferenceFinder() {
           const bc = b.type === RemType.CONCEPT ? 0 : 1;
           if (ac !== bc) return ac - bc;
           if (a.times !== b.times) return b.times - a.times;
+          if (a.helperRank !== b.helperRank) return a.helperRank - b.helperRank;
           return a.matchFold.length - b.matchFold.length;
         });
 
@@ -505,23 +643,11 @@ function ReferenceFinder() {
         const top = scored.slice(0, 25);
         const candidates: Candidate[] = [];
         for (const s of top) {
-          let backText = '';
-          try {
-            if (s.r.backText?.length) {
-              const bt = (await resolveRemTextForBreadcrumb(plugin, s.r.backText)).trim();
-              backText = bt === 'Untitled' ? '' : bt; // don't show the empty-sentinel
-            }
-          } catch { /* ignore */ }
-          const breadcrumb = await buildBreadcrumb(s.r);
-          // Built-in powerup membership isn't enumerable, so probe it directly.
-          const isPdfHighlight = await s.r
-            .hasPowerup(BuiltInPowerupCodes.PDFHighlight)
-            .catch(() => false);
+          const extra = await enrich(s.r, true);
           candidates.push({
             id: s.id, name: s.name, normName: s.normName, type: s.type,
-            times: s.times, score: s.score, backText, breadcrumb, isPdfHighlight,
-            hasImage: remHasImage(s.r),
-            aliasId: s.aliasId, aliasText: s.aliasText, aliasKeys: s.aliasKeys,
+            times: s.times, score: s.score, ...extra,
+            aliasId: s.aliasId, aliasText: s.aliasText,
             aliasRichText: s.aliasRichText,
           });
         }
@@ -533,14 +659,30 @@ function ReferenceFinder() {
         if (reqId === reqIdRef.current) setSearching(false);
       }
     },
-    [plugin, conceptsOnly, buildBreadcrumb]
+    [plugin, conceptsOnly, scope, enrich, childrenOf]
   );
 
-  // Debounce searches as the user types.
+  // Debounce searches as the user types; a scope's children come at once.
   useEffect(() => {
-    const t = setTimeout(() => runSearch(query), 200);
+    const t = setTimeout(() => runSearch(query), normalize(query).length < 2 ? 0 : 200);
     return () => clearTimeout(t);
   }, [query, runSearch]);
+
+  /** Tab: narrow the search to the highlighted Rem. */
+  const enterScope = (cand: Candidate | undefined) => {
+    if (!cand) return;
+    setScopes((s) => [...s, { id: cand.id, name: cand.name || cand.aliasText || '' }]);
+    setResults([]);
+    setQuery('');
+  };
+
+  /** Back to the first `depth` scopes (0: the whole knowledge base). */
+  const leaveScopes = (depth: number) => {
+    setScopes((s) => s.slice(0, depth));
+    setResults([]);
+    setQuery('');
+    inputRef.current?.focus();
+  };
 
   const close = useCallback(async () => {
     if (floatingWidgetId) await plugin.window.closeFloatingWidget(floatingWidgetId);
@@ -567,23 +709,17 @@ function ReferenceFinder() {
         if (sel) {
           sawSelection = true;
           targetRemId = (sel as any).remId;
-          // An alias reference needs the alias's id, and `getAliases()` no
-          // longer supplies one — the objects it returns are rem shells whose
-          // `_id` is empty, because a built-in powerup's data is not stored as
-          // rems any more. `getOrCreateAliasWithText` is the surviving route:
-          // "if an equivalent alias already exists, that alias will be
-          // returned". Feeding it the alias's OWN rich text (not a re-typed
-          // string) is what keeps it a lookup rather than a create.
+          // Normally the search already found the alias's id. If not, look it up
+          // by the alias's OWN rich text (not a re-typed string), which keeps
+          // getOrCreateAliasWithText a lookup rather than a create.
           if (!cand.aliasId && cand.aliasText && cand.aliasRichText) {
             try {
               const owner = await plugin.rem.findOne(cand.id);
-              const alias: any = await owner?.getOrCreateAliasWithText(cand.aliasRichText);
-              if (typeof alias?._id === 'string' && alias._id) {
-                cand = { ...cand, aliasId: alias._id };
+              const aliasId = await aliasIdForText(owner, cand.aliasRichText);
+              if (aliasId) {
+                cand = { ...cand, aliasId };
               } else if (ALIAS_REPAIR_DEBUG) {
-                await plugin.app.toast(
-                  `alias id lookup: getOrCreateAliasWithText returned ${alias ? 'an object with no _id' : 'nothing'}`
-                );
+                await plugin.app.toast('alias id lookup: getOrCreateAliasWithText returned no id');
               }
             } catch (e) {
               console.warn('[reference-finder] alias id lookup failed:', e);
@@ -676,10 +812,24 @@ function ReferenceFinder() {
               delete n[RICH_TEXT_FORMATTING.HIDDEN_CLOZE];
               delete n[RICH_TEXT_FORMATTING.REVEALED_CLOZE];
             };
+            //  • picked through an alias, the text is the alias alone (an alias
+            //    has no back), as the reference itself would show it. An alias
+            //    is no longer a rem (lib/rem_aliases.ts), so it is read off its
+            //    owner rather than with findOne(aliasId).
             let srcRem: any;
-            try { srcRem = await plugin.rem.findOne(cand.aliasId || cand.id); } catch { /* ignore */ }
-            const frontRt: any[] = Array.isArray(srcRem?.text) ? srcRem.text : [];
-            const backRt: any[] = Array.isArray(srcRem?.backText) ? srcRem.backText : [];
+            let frontRt: any[] = [];
+            let backRt: any[] = [];
+            try {
+              srcRem = await plugin.rem.findOne(cand.id);
+              if (cand.aliasId) {
+                const aliasRt = await aliasTextOf(plugin, srcRem, cand.aliasId);
+                frontRt = Array.isArray(aliasRt) ? aliasRt : [];
+                srcRem = undefined; // no practice direction to read off an alias
+              } else {
+                frontRt = Array.isArray(srcRem?.text) ? srcRem.text : [];
+                backRt = Array.isArray(srcRem?.backText) ? srcRem.backText : [];
+              }
+            } catch { /* ignore */ }
             // Arrow reflects the card's practice direction, like the Opt+Z command.
             let arrowChar = '⇔';
             try {
@@ -833,12 +983,8 @@ function ReferenceFinder() {
               if (ALIAS_REPAIR_DEBUG) await plugin.app.toast(`alias repair failed: ${(e as any)?.message ?? e}`);
             }
           } else if (inserted && ALIAS_REPAIR_DEBUG && cand.aliasText) {
-            // Matched by alias text but no alias rem id came back from
-            // getAliases() — report the object's shape so we can see what the
-            // id now lives under.
-            await plugin.app.toast(
-              `alias repair: no aliasId for "${cand.aliasText}" — alias object keys: ${cand.aliasKeys || '(none)'}`
-            );
+            // Matched by alias text but no alias id could be recovered.
+            await plugin.app.toast(`alias repair: no aliasId for "${cand.aliasText}"`);
           } else if (inserted && ALIAS_REPAIR_DEBUG) {
             // Distinguishes "the picked candidate had no alias" from "this code
             // isn't running at all" — silence would look the same either way.
@@ -931,11 +1077,24 @@ function ReferenceFinder() {
       else if (e.shiftKey) open(results[selected]);
       else if (e.altKey) pick(results[selected], 'textPin');
       else pick(results[selected], e.ctrlKey || e.metaKey ? 'pin' : 'ref');
+    } else if (e.key === 'Tab' && e.shiftKey) {
+      // Back up one level (nothing to do at the top: the key just stays here).
+      e.preventDefault();
+      if (scopes.length) leaveScopes(scopes.length - 1);
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      enterScope(results[selected]);
+    } else if (e.key === 'Backspace' && !query && scopes.length) {
+      // As in the Move / Tag picker: leave every scope, back to the whole KB.
+      e.preventDefault();
+      leaveScopes(0);
     } else if (e.key === 'Escape') {
       e.preventDefault();
       close();
     }
   };
+
+  const listingChildren = !!scope && query.trim().length < 2;
 
   const typeLabel = (t: number) => RemType[t] ?? '?';
 
@@ -980,35 +1139,114 @@ function ReferenceFinder() {
           Concepts only
         </label>
       </div>
-      <input
-        ref={inputRef}
-        type="text"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        onKeyDown={onKeyDown}
-        placeholder="Type a rem name"
+      <div
+        onClick={() => inputRef.current?.focus()}
         style={{
-          width: '100%',
-          padding: '8px 10px',
-          fontSize: '13px',
+          position: 'relative',
+          display: 'flex',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '4px',
+          padding: engineNote.helper ? '4px 30px 4px 6px' : '4px 6px',
           boxSizing: 'border-box',
           borderRadius: '6px',
           border: '1px solid var(--rn-clr-border)',
           backgroundColor: 'var(--rn-clr-background-secondary)',
-          color: 'var(--rn-clr-content-primary)',
         }}
-      />
+      >
+        {/* The scopes, outermost first; a click goes back to that level. */}
+        {scopes.map((s, i) => (
+          <span
+            key={`${s.id}-${i}`}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={(e) => {
+              e.stopPropagation();
+              leaveScopes(i + 1);
+            }}
+            title={`Back to ${s.name || 'this Rem'}`}
+            style={{
+              padding: '2px 7px',
+              borderRadius: '5px',
+              backgroundColor: 'var(--rn-clr-background-tertiary)',
+              fontSize: '12px',
+              fontWeight: 600,
+              maxWidth: '200px',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              cursor: 'pointer',
+            }}
+          >
+            {s.name || '(no text)'} ›
+          </span>
+        ))}
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={onKeyDown}
+          placeholder={scope ? `Search within ${scope.name || 'this Rem'}…` : 'Type a rem name'}
+          style={{
+            flex: 1,
+            minWidth: '160px',
+            padding: '4px 4px',
+            fontSize: '13px',
+            boxSizing: 'border-box',
+            border: 'none',
+            outline: 'none',
+            background: 'transparent', // the box around it carries the fill
+
+            color: 'var(--rn-clr-content-primary)',
+          }}
+        />
+        {engineNote.helper && query.trim().length >= 2 && (
+          <span
+            title="Searched by the AI helper: every word must match; or, -word, &quot;phrases&quot;, in:, tag:, is:, is:due, prop: and the other search keys work"
+            aria-label="Searched by the AI helper"
+            style={{ position: 'absolute', right: '9px', top: '50%', transform: 'translateY(-50%)', fontSize: '13px', cursor: 'default' }}
+          >
+            ⚡
+          </span>
+        )}
+      </div>
+      {engineNote.message && query.trim().length >= 2 && (
+        <div
+          style={{
+            fontSize: '11.5px',
+            marginTop: '5px',
+            color: engineNote.tone === 'error' ? 'var(--rn-clr-red, #c0392b)' : 'var(--rn-clr-content-secondary)',
+          }}
+        >
+          {engineNote.message}
+        </div>
+      )}
       <div style={{ marginTop: '8px', maxHeight: `${listMaxHeight}px`, overflowY: 'auto' }}>
-        {query.trim().length < 2 ? (
+        {query.trim().length < 2 && !scope ? (
           <div style={{ fontSize: '12px', color: 'var(--rn-clr-content-tertiary)', padding: '6px 2px' }}>
-            Type at least 2 characters. Searches each word separately and floats exact-name matches up, so it finds rems the normal search can't — including matches by a rem's alias (shown with an ALIAS tag; the inserted reference renders the alias text). Enter inserts a reference; Ctrl/Cmd+Enter inserts a pin (no text); Opt/Alt+Enter inserts the text then a pin; Shift+Enter / Shift+click opens the rem in a new pane.
+            Type at least 2 characters. Searches each word separately and floats exact-name matches up, so it finds rems the normal search can't — including matches by a rem's alias (shown with an ALIAS tag; the inserted reference renders the alias text). Enter inserts a reference; Ctrl/Cmd+Enter inserts a pin (no text); Opt/Alt+Enter inserts the text then a pin; Shift+Enter / Shift+click opens the rem in a new pane. Tab searches within the highlighted rem (it lists its children until you type), Shift+Tab goes back up one level, and Backspace in an empty box returns to the whole knowledge base. With the AI helper running and paired (⚡), every word must match, and or, -word, "phrases", in:"Document", tag:, is:, is:due, prop: and the other search keys work too (see the Search Engine page in the manual).
           </div>
         ) : results.length === 0 ? (
           <div style={{ fontSize: '12px', color: 'var(--rn-clr-content-tertiary)', padding: '6px 2px' }}>
-            {searching ? 'Searching…' : 'No matches.'}
+            {searching ? 'Searching…' : listingChildren ? 'No children. Type to search within it.' : 'No matches.'}
           </div>
         ) : (
-          results.map((r, i) => (
+          <>
+          {listingChildren && (
+            <div
+              style={{
+                padding: '2px 2px 4px',
+                fontSize: '10px',
+                color: 'var(--rn-clr-content-tertiary)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.04em',
+              }}
+            >
+              In {scope?.name || 'this Rem'}
+              {childrenTotal > CHILDREN_LIMIT && ` · first ${CHILDREN_LIMIT} of ${childrenTotal}, type to search them all`}
+            </div>
+          )}
+          {results.map((r, i) => (
             <div
               key={r.id}
               onMouseEnter={() => setSelected(i)}
@@ -1119,8 +1357,17 @@ function ReferenceFinder() {
                   </div>
                 )}
               </div>
+              {i === selected && (
+                <span
+                  title="Tab: search within this rem"
+                  style={{ flexShrink: 0, alignSelf: 'center', fontSize: '10px', color: 'var(--rn-clr-content-tertiary)' }}
+                >
+                  Tab ›
+                </span>
+              )}
             </div>
-          ))
+          ))}
+          </>
         )}
       </div>
       <div
@@ -1143,6 +1390,8 @@ function ReferenceFinder() {
           { keys: 'Ctrl/Cmd+Enter', label: 'pin (no text)' },
           { keys: 'Opt/Alt+Enter', label: 'text + pin' },
           { keys: 'Shift+Enter', label: 'open in new pane' },
+          { keys: 'Tab', label: 'search within' },
+          { keys: 'Shift+Tab', label: 'up one level' },
           { keys: 'Esc', label: 'close' },
         ].map((s) => (
           <span key={s.keys} style={{ whiteSpace: 'nowrap' }}>

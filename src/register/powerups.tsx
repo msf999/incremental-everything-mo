@@ -1,8 +1,4 @@
-import {
-  ReactRNPlugin,
-  PropertyLocation,
-  PropertyType,
-} from '@remnote/plugin-sdk';
+import { ReactRNPlugin, PropertyLocation, PropertyType } from '@remnote/plugin-sdk';
 import {
   powerupCode,
   prioritySlotCode,
@@ -25,7 +21,7 @@ import {
   dismissedPowerupCode,
   dismissedHistorySlotCode,
   dismissedDateSlotCode,
-  preservedHistoryPowerupCode,
+  preservedHistoryPowerupCode, aiNotePowerupCode,
   videoExtractPowerupCode,
   videoExtractUrlSlotCode,
   videoExtractStartSlotCode,
@@ -40,6 +36,7 @@ import {
   pdfAreaHighlightPowerupName,
 } from '../lib/consts';
 import { initIncrementalRem } from '../lib/incremental_rem';
+import { PRONUNCIATION_POWERUP_CODE, PRONUNCIATION_POWERUP_NAME } from '../lib/pronunciation_css';
 import { BAND_COUNT, bandPowerupCode, bandPowerupName } from '../lib/priority_bands';
 // Registration must use the same constants every READER uses. Hardcoding the code
 // or slot codes here lets the definition drift away from the reads, and the failure
@@ -206,7 +203,7 @@ export async function registerPluginPowerups(
         {
           code: LAST_UPDATED_SLOT,
           name: 'Last Updated',
-          propertyType: PropertyType.NUMBER,  // Timestamp
+          propertyType: PropertyType.NUMBER, // Timestamp
           hidden: true,
         },
         {
@@ -221,7 +218,7 @@ export async function registerPluginPowerups(
           propertyType: PropertyType.TEXT,
           hidden: true,
           onlyProgrammaticModifying: true,
-        }
+        },
       ],
     },
   });
@@ -250,10 +247,8 @@ export async function registerPluginPowerups(
           onlyProgrammaticModifying: true,
         },
       ],
-    }
+    },
   });
-
-
 
   // Marks a PERSISTENT Priority Queue document (one per scope, refilled in
   // bursts and drained as it is reviewed) and carries its config. Every slot is
@@ -261,7 +256,8 @@ export async function registerPluginPowerups(
   await plugin.app.registerPowerup({
     name: 'Priority Queue',
     code: priorityQueuePowerupCode,
-    description: 'A Priority Queue document: kept topped up with your highest-priority due items and drained as you review them.',
+    description:
+      'A Priority Queue document: kept topped up with your highest-priority due items and drained as you review them.',
     options: {
       slots: [
         {
@@ -354,6 +350,16 @@ export async function registerPluginPowerups(
     options: { slots: [] },
   });
 
+  // AI Note Powerup - an AI-written remark, such as Find Sources' reason for choosing a
+  // passage, under its quote. No slots: a CSS hook (data-rem-tags~="ai-note", from the
+  // NAME) that shows it small, italic and muted (registerAiNoteCSS in lib/ui_helpers.ts).
+  await plugin.app.registerPowerup({
+    name: 'AI Note',
+    code: aiNotePowerupCode,
+    description: 'A remark written by AI (e.g. why Find Sources chose a passage), shown small and muted.',
+    options: { slots: [] },
+  });
+
   // Video Extract Powerup - stores start/end times for YouTube video segments
   await plugin.app.registerPowerup({
     name: 'VideoExtract',
@@ -389,7 +395,8 @@ export async function registerPluginPowerups(
   await plugin.app.registerPowerup({
     name: 'Local Video',
     code: localVideoPowerupCode,
-    description: 'A video file on this computer, played by Incremental RemNote through its local helper',
+    description:
+      'A video file on this computer, played by Incremental RemNote through its local helper',
     options: {
       slots: [
         {
@@ -414,7 +421,8 @@ export async function registerPluginPowerups(
   await plugin.app.registerPowerup({
     name: 'Card Video',
     code: cardVideoPowerupCode,
-    description: 'A video file on this computer that explains this flashcard, shown with its answer',
+    description:
+      'A video file on this computer that explains this flashcard, shown with its answer',
     options: {
       slots: [
         {
@@ -431,6 +439,16 @@ export async function registerPluginPowerups(
         },
       ],
     },
+  });
+
+  // Pronunciation Powerup - marks the audio Rem that "Add pronunciation" puts under a
+  // card (as Extra Card Detail), apart from Read aloud's audios. No slots; its pill and
+  // the Rem's bullet show a speaking-head icon (lib/pronunciation_css).
+  await plugin.app.registerPowerup({
+    name: PRONUNCIATION_POWERUP_NAME,
+    code: PRONUNCIATION_POWERUP_CODE,
+    description: 'A pronunciation audio added by the "Add pronunciation" command (Read Aloud).',
+    options: { slots: [] },
   });
 
   // HasImage Powerup - marks a rem holding at least one image, so RemNote's own

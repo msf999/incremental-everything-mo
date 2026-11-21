@@ -113,6 +113,20 @@ export function SplitButton({
       ? { flex: `${rowShare} 1 ${ROW_SHARE_CHEVRON_WIDTH + 2}px`, minWidth: 0 }
       : {};
 
+  // b01355e sync: upstream's buttons went flat (components/buttons/styles.ts lost hoverShadow
+  // and defaultShadow): no lift and no shadow on hover, but a tint for a bordered button and a
+  // slight brightening for a filled one — as Button.tsx does, so a split button and the plain
+  // buttons beside it answer the pointer the same way.
+  const filled = variant === 'primary' || !!style?.backgroundColor;
+  const hoverOn = (el: HTMLElement) => {
+    if (filled) el.style.filter = styles.hoverFilter;
+    else el.style.backgroundColor = styles.hoverBackground;
+  };
+  const hoverOff = (el: HTMLElement) => {
+    el.style.filter = 'none';
+    if (!filled) el.style.backgroundColor = 'var(--rn-clr-background-secondary)';
+  };
+
   return (
     <div ref={containerRef} style={{ position: 'relative', display: 'inline-flex', ...containerSize }}>
       {/* Main button */}
@@ -131,13 +145,9 @@ export function SplitButton({
           ...fixedMain,
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.transform = 'translateY(-2px)';
-          e.currentTarget.style.boxShadow = styles.hoverShadow;
+          if (!disabled) hoverOn(e.currentTarget);
         }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.transform = 'translateY(0)';
-          e.currentTarget.style.boxShadow = styles.defaultShadow;
-        }}
+        onMouseLeave={(e) => hoverOff(e.currentTarget)}
       >
         {children}
       </button>
@@ -167,14 +177,8 @@ export function SplitButton({
           borderLeft: `1px solid ${chevronBorderColor}`,
           ...(shared ? { flexShrink: 0 } : {}), // FORK (2026-11-14): keeps its width in a shared row
         }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.transform = 'translateY(-2px)';
-          e.currentTarget.style.boxShadow = styles.hoverShadow;
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.transform = 'translateY(0)';
-          e.currentTarget.style.boxShadow = styles.defaultShadow;
-        }}
+        onMouseEnter={(e) => hoverOn(e.currentTarget)}
+        onMouseLeave={(e) => hoverOff(e.currentTarget)}
       >
         <span style={{ fontSize: '10px', lineHeight: 1 }}>{chevronActive ? '▲' : '▼'}</span>
       </button>

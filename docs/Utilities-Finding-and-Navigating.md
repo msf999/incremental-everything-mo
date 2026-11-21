@@ -18,11 +18,22 @@ Run **`Find Rem (insert reference / open in pane)`** (quick code `fir`) or press
 - **Opt+Enter / Alt+Enter** or **Opt/Alt+click** → inserts the Rem's **text followed by a pin** — the readable text plus a link chip (RemNote's paste "Text with Pin"). See [Insert text with a pin](#insert-text-with-a-pin) below.
 - **Shift+Enter** or **Shift+click** → opens the selected Rem in a **new pane** beside your current one (without inserting anything).
 - **Ctrl/Cmd+Shift+Enter** or **Ctrl/Cmd+Shift+click** → appends a **pin at the end of the Rem you are editing, keeping your selected text**. See [Pin a source at the end of a Rem](#pin-a-source-at-the-end-of-a-rem) below.
+- **Tab** → searches **within** the selected Rem; **Shift+Tab** goes back up. See [Search within a Rem](#search-within-a-rem) below.
 - **↑/↓** navigate · **Esc** closes.
 - **Concepts only** checkbox narrows results to Concept-type Rems.
 - **Drag the title row** to move the box if it covers what you need to see; the search box keeps your typing. It opens at your cursor again next time.
 
 The Rem you triggered the picker from is **excluded from results** — a Rem can't reference itself.
+
+### Search within a Rem { #search-within-a-rem }
+
+Like RemNote's own hierarchical search, Find Rem can narrow the search to one branch of your knowledge base:
+
+- **Tab** on a result makes it the scope: it shows as a chip in front of the box, and the list shows its children until you type. What you type then matches only Rems under it. Press **Tab** again to go one level deeper.
+- **Shift+Tab** goes back up one level; clicking a chip goes back to that level.
+- **Backspace** in an empty box leaves every scope, back to the whole knowledge base.
+
+The scope works with or without the [AI helper](#search-with-the-ai-helper). The children list shows the first 50; type to search all of them.
 
 ### Spotting PDF highlights
 
@@ -43,6 +54,21 @@ This picker sidesteps the limitation: it searches **each word of your query sepa
 It also asks for the **whole query as a phrase**, which is the one thing that pulls back a small, precise set instead of a truncated flood. RemNote only looks for an exact run of adjacent words when the phrase it is handed is at least two words long, and it matches those words literally apart from the last one. That matters for names built from common words plus a number: a query like `fig. 6.4` seeds the word `fig`, which in a knowledge base full of figures returns thousands of Rems and is cut back long before yours is reached — whereas the phrase `figure 6.4` matches only the handful of Rems that actually contain those two words side by side. Since the literal spelling decides whether the phrase matches, both spellings are asked for (see [`Figure` = `Fig` = `Fig.`](#accent-insensitive-selection-aware)).
 
 ![Find Rem — surfacing a Rem that RemNote's own `[[` reference search can't find](assets/find-rem-finds-rems-normal-search-cannot.gif)
+
+### Search with the AI helper { #search-with-the-ai-helper }
+
+!!! warning "Desktop only, Mac only"
+    This needs RemNote's desktop app on a Mac with the [AI helper](Desktop-Helpers.md#search) running. Elsewhere (Windows, Linux, web, phone), Find Rem works as described above.
+
+On the desktop, with the [AI helper](Desktop-Helpers.md#search) running and paired, Find Rem searches through the plugin's [Search Engine](Search-Engine.md), and a ⚡ shows in the box. Every word you type must then be in the Rem, so `bow weather wave` finds the one note that has all three words even when each word alone is in thousands of Rems. You can also narrow the search, Anki style:
+
+- `bow (wave or sea) -tug`: or, exclusions, groups, `"phrases"`;
+- `in:"Wärtsilä Encyclopedia" squat`, `in:*miguens* radar`: under a document;
+- `tag:anki* squat`, `is:concept`, `is:incremental prop:incdue<=0`: by tag, kind or slot value;
+- `source:*M23*`, `refs:"Service power margin"`: by Source, or backlinks;
+- `is:due card:cloze`, `rated:7:forgot`, `suppressed:rem`: by card state, review history, or why a card is hidden.
+
+The [Search Engine](Search-Engine.md) page lists every key, with examples. To see everything a search finds in a sortable table, with bulk actions and saved searches, use [Search & Browse](Search-Engine.md#browse) (`sb`). If a query can't be read, a line under the box says why and Find Rem searches the words instead. Without the helper (on the iPhone, on the web, or with the helper off), Find Rem works as described above and treats these keys as ordinary words.
 
 ### Find by alias
 
@@ -76,7 +102,7 @@ It brings across the source's **full rich text**, not just a plain label:
 - **Front/back cards bring the back too.** If the source is a Concept↔definition (or any front/back) card, the back text is included after the front, joined by a **practice-direction arrow** (`⇒`, `⇐`, or `⇔`) instead of RemNote's card delimiter.
 - **The source's clozes are marked, not re-clozed.** Any cloze deletions in the source are inserted as **highlighted text (yellow background + reference-coloured font)** — the same visual mark the plugin's cloze command (`Opt+Z`) leaves behind — so they still *read* as clozes without becoming functional clozes in your target (no "clozes out of clozes").
 
-Alias matches use the alias Rem's text; the trailing pin still links to the owning Rem.
+Alias matches use the alias text; the trailing pin still links to the owning Rem.
 
 ### Pin a source at the end of a Rem
 
@@ -190,6 +216,21 @@ While it's waiting, click the button again to cancel. The request also expires a
 - **The other window's focused pane is replaced,** so the document it was showing, or a queue, gives way to the source.
 - **The other window doesn't come to the front by itself;** switch to it yourself.
 - **The viewer stays open** in the first window, so you can keep peeking at it.
+
+### Send to another window { #send-to-another-window }
+
+Moves a document, PDF or not, from a pane of this window to another RemNote window: it opens there, and its pane here closes. Desktop app only.
+
+- **From the [Menu Hub](Plugin-Widgets-Reference.md#menu-hub):** the document's ⋯ menu → **Incremental RemNote…** → **Send to Another Window**.
+- **From the Omnibar:** **Send Pane to Another Window** sends the focused pane's document: the page the pane shows, not the bullet the cursor is on. With the cursor on a bullet of *Section V*, it sends *Section V*.
+
+1. A notice says the document is on its way. If another window is open, it opens there within a few seconds. If none is open, press **`⌘⇧N` / `Ctrl+Shift+N`**, and the new window opens it.
+2. Once the other window confirms it is open, the pane it came from closes here, and a notice says so.
+
+Dismiss the waiting notice to cancel. If no window takes the document within a minute, a notice says so and nothing closes.
+
+- **Only the pane closes, never the tab.** When the document is the only pane of its tab, it stays open here.
+- **The other window's focused pane is replaced,** as with [Open in another window](#open-in-another-window).
 
 ### Follow the queue
 
@@ -429,7 +470,18 @@ At 900px each breadcrumb shows about 22 characters. The rule widens the whole po
 Copies a Rem's ID to the clipboard, so you can point an AI assistant (through the RemNote MCP) or a script at that exact Rem instead of describing it.
 
 - **Shortcut:** `Ctrl+Opt+I` (`Ctrl+Alt+I` on Windows), or **Copy Rem ID** / `id` in the Omnibar.
-- **Which Rem:** the selected Rems (one ID per line), otherwise the Rem with the cursor, otherwise, in the queue, the current card's Rem.
+- **Which Rem:** the selected Rems (one ID per line), otherwise the Rem with the cursor, otherwise, in the queue, the current card's Rem. With only a PDF or a web page open in the pane, it is that PDF's or page's Rem.
+
+### Picking among sources { #copy-rem-id-picker }
+
+When the command could mean more than one Rem, a picker opens instead of copying straight away. That happens when:
+
+- the Rem has **sources**: the picker lists the Rem and each of its sources;
+- a **PDF or web page fills the pane** while RemNote still reports another Rem as focused (the last one you typed in before opening the reader): the picker lists both.
+
+Each row shows the name, what it is (Focused Rem, Source, Open in the pane, Queue card), its type (PDF, Web page, File or Rem) with the page's URL or the Rem's parent, and the ID. The PDF or page on screen starts highlighted. Use `↑` / `↓` or `1`–`9` to choose, `Enter` or a click to copy, `Esc` to cancel.
+
+A Rem with no sources, and a PDF on its own, are still copied at once.
 
 RemNote does not let plugins write to the clipboard by themselves, so how the copy happens depends on the [Local Media Bridge](Local-Media-Bridge.md):
 

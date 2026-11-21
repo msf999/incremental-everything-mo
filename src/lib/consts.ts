@@ -130,6 +130,11 @@ export const initialIntervalForVideosId = 'initial-interval-type-videos';
 export const initialIntervalForHighlightsId = 'initial-interval-type-highlights';
 export const initialIntervalForRemsId = 'initial-interval-type-rems';
 export const collapseQueueTopBar = 'collapse-queue-top-bar';
+// The Statistics plugin's button in the queue: shown, hidden on phones, or hidden.
+// On a narrow touch screen that plugin puts it at QueueBelowTopBar, a whole row of
+// the card box (register/settings.ts, STATISTICS_QUEUE_BUTTON_CSS).
+export const statisticsQueueButtonId = 'statistics-queue-button';
+export type StatisticsQueueButton = 'show' | 'hide-phone' | 'hide';
 export const defaultPriorityId = 'default-priority';
 export const defaultCardPriorityId = 'defaultCardPriority';
 // FORK (Deviation 14): where the queue info bar (priority / stats / due-IncRem
@@ -172,6 +177,10 @@ export const showPinRingIndicatorsSettingId = 'showPinRingIndicators';
 // Dashed orange outline on an audio player whose file is only linked, not stored
 // in RemNote (see lib/localize_media.ts). Off by default.
 export const showLinkedAudioIndicatorSettingId = 'showLinkedAudioIndicator';
+// Sets --in-extra-card-detail: 1 on every Extra Card Detail Rem and the Rems under
+// it in the editor, for the user's Custom CSS (lib/tag_subtree_css). Off by default:
+// it styles nothing itself and costs a lookup per parent Rem on each navigation.
+export const markExtraCardDetailSubtreesSettingId = 'markExtraCardDetailSubtrees';
 export const performanceModeId = 'performanceMode';
 export const flashcardResponseTimeLimitId = 'flashcard_response_time_limit';
 /** Custom acronyms the Text Case Converter keeps uppercase in Title Case. */
@@ -192,6 +201,8 @@ export const masteryDrillMinDelayMinutesId = 'mastery_drill_min_delay_minutes';
 export const masteryDrillHardIntervalPercentId = 'mastery_drill_hard_interval_percent';
 /** …capped here, in days. The Minimum Delay stays the floor. */
 export const masteryDrillHardMaxDaysId = 'mastery_drill_hard_max_days';
+/** Cards whose priority number is above this are not sent to the drill. 100 = every card. */
+export const masteryDrillMaxPriorityId = 'mastery_drill_max_priority';
 export const disableFinalDrillNotificationId = 'disable_final_drill_notification';
 /** Where the drill runs: the popup's embedded queue, or RemNote's own queue. */
 export const masteryDrillModeId = 'mastery_drill_mode';
@@ -551,10 +562,6 @@ export const queueReviewedInSessionKey = 'queue-reviewed-in-session';
 // FORK (2026-11-14): set by the queue widget when it skipped such a repeat; the index widget
 // prints the queue's recent events once per occurrence (lib/queue_diagnostics.ts).
 export const queueRepeatSkippedKey = 'queue-repeat-skipped';
-// Same arrangement for queue_beautiful_bar: it reports its content width, and the
-// Beautiful queue's top-right strip is sized to it (lib/queue_beautiful_bar_fit).
-export const queueBeautifulBarFitCssId = 'incremental-everything-queue-beautiful-bar-fit';
-export const queueBeautifulBarWidthKey = 'queue-beautiful-bar-width';
 // Same arrangement for the pinned Editor Review Timer: its instances write their
 // heights (per document id) and index.tsx moves RemNote's sticky headers below it.
 export const editorReviewTimerHeadersCssId = 'incremental-everything-editor-review-timer-headers';
@@ -610,7 +617,6 @@ export const pendingQueueDashboardRefocusKey = 'pending-queue-dashboard-refocus-
 // the canary target for its wedged-channel watchdog.
 export const practicedQueuesVisibleKey = 'practiced_queues_visible';
 export const priorityShieldHistoryKey = 'priority-shield-history-key';
-export const priorityShieldHistoryMenuItemId = 'priority-shield-history-menu-item-id';
 export const documentPriorityShieldHistoryKey = 'document-priority-shield-history-key';
 export const currentSubQueueIdKey = 'current-sub-queue-id-key';
 export const cardPriorityShieldHistoryKey = 'card-priority-shield-history-key';
@@ -664,7 +670,6 @@ export const priorityColorScaleLocalKey = 'priority-color-scale-local';
 export const remnoteEnvironmentId = 'remnote-environment';
 
 export const noIncRemTimerKey = 'no-inc-rem-timer-end';
-export const noIncRemMenuItemId = 'no-inc-rem-15-min';
 export const noIncRemTimerWidgetId = 'no-inc-rem-timer-widget';
 export const incRemDisabledDeviceKey = 'inc-rem-disabled-device';
 // Local key: the sources open in each RemNote window (see lib/window_sources.ts).
@@ -685,6 +690,10 @@ export const followQueueBarPositionKey = 'follow-queue-bar-position';
 export const followQueueBarDefaultPosition = { bottom: 66, right: 64 };
 
 export const cardPriorityCacheRefreshKey = 'cardPriorityCacheRefreshKey';
+// Changes on every write of allCardPriorityInfoKey (writeCardPriorityCache), so a
+// frame can keep a copy of the cache and re-read it only when this moves
+// (lib/card_priority/shared_read.ts).
+export const cardPriorityCacheVersionKey = 'card-priority-cache-version';
 // Rem IDs whose cards exist but whose parent rem could not be found during the
 // last cache build (orphan-card candidates). Written by Phase 2 of
 // loadCardPriorityCache, read by the 'Update all inherited Card Priorities'
@@ -778,6 +787,10 @@ export const editorReviewTimerRemIdKey = 'editor-review-timer-rem-id';
 export const editorReviewTimerStartKey = 'editor-review-timer-start';
 export const editorReviewTimerIntervalKey = 'editor-review-timer-interval';
 export const editorReviewTimerPriorityKey = 'editor-review-timer-priority';
+// The slot's priority when the review started. When the slot no longer holds it
+// at End Review, the priority was changed elsewhere during the review and that
+// newer value wins over the timer's copy.
+export const editorReviewTimerPriorityBaseKey = 'editor-review-timer-priority-base';
 export const editorReviewTimerRemNameKey = 'editor-review-timer-rem-name';
 // The timer's clock is a PAIR: elapsed = accumulated + (now − start), with
 // `paused-at` freezing the running segment. Anything adjusting the elapsed time
@@ -887,6 +900,20 @@ export const restoreHighlightBeforeAiCommandId = 'restore-highlight-before-ai';
 // Pin the source passage of the focused Rem's text in the open PDF (lib/source_pins).
 export const pinSourceQuoteCommandId = 'pin-source-quote';
 export const pinSourceQuotesInTreeCommandId = 'pin-source-quotes-in-tree';
+// Find Sources: the passages of the user's library that say what a note says, by meaning
+// (lib/find_sources): the command queues a job, the tracker asks the corpus provider
+// (find-passages) and posts a notice whose Review button opens the popup; the popup hands
+// the accepted passages back to the tracker, which pins them.
+export const findSourcesCommandId = 'find-sources';
+export const checkStatementCommandId = 'check-statement';
+export const askYourSourcesCommandId = 'ask-your-sources';
+export const findSourcesInTreeCommandId = 'find-sources-in-tree';
+export const checkStatementsInTreeCommandId = 'check-statements-in-tree';
+export const FIND_SOURCES_POPUP = 'find_sources_popup';
+export const pendingFindSourcesJobsKey = 'pendingFindSourcesJobs';
+export const pendingFindSourcesWritesKey = 'pendingFindSourcesWrites';
+/** "AI Note" powerup: an AI-written remark (Find Sources' reason for a passage), shown small and muted (registerAiNoteCSS). */
+export const aiNotePowerupCode = 'aiNote';
 // Store externally linked images/audio in RemNote itself (lib/localize_media.ts).
 export const localizeMediaCommandId = 'localize-external-media';
 export const localizeMediaTreeCommandId = 'localize-external-media-tree';
@@ -899,10 +926,31 @@ export const openInLogosCommandId = 'open-in-logos';
 // Local Media Bridge (lib/media_bridge.ts + scripts/media_bridge/): uploads images
 // that outside tools (the RemNote MCP) write as http://127.0.0.1:3460 links.
 export const mediaBridgeEnabledId = 'media-bridge-enabled';
+/** Secret the AI helper requires on /search (its pairing-token file); see lib/rem_search_client.ts. */
+export const aiHelperPairingTokenId = 'ai-helper-pairing-token';
 // Upscale the focused rem's image with ChatGPT (Codex CLI) through the helper's
 // /upscale endpoint, review, replace in place (lib/upscale_image.ts).
 export const upscaleImageCommandId = 'upscale-image-chatgpt';
 export const UPSCALE_IMAGE_POPUP = 'upscale_image_popup';
+// Read aloud: the focused rem and its descendants as a spoken script, synthesised by
+// the helper's /tts (Gemini or Azure TTS) and added as an audio rem (lib/read_aloud.ts).
+export const readAloudCommandId = 'read-aloud';
+export const addPronunciationCommandId = 'add-pronunciation';
+export const READ_ALOUD_POPUP = 'read_aloud_popup';
+export const readAloudTagId = 'read-aloud-tag';
+// Read aloud jobs handed off by the popup once the helper has started synthesising: the
+// tracker (register/tracker.ts) waits for the audio in the persistent index widget, inserts
+// it and reports with a message dialog, so the popup can close at once. A queue, so two
+// Generates in quick succession cannot overwrite each other. See lib/read_aloud.ts.
+export const pendingReadAloudJobsKey = 'pendingReadAloudJobs';
+// Upscale jobs (lib/upscale_image.ts): the command starts them and returns; the tracker
+// waits for ChatGPT and posts a notice whose Review button opens the comparison popup.
+export const pendingUpscaleJobsKey = 'pendingUpscaleJobs';
+// Notices (lib/notice.ts): reports of background work, shown in a floating card instead
+// of a popup so they never close the popup the user is working in. Any widget appends to
+// this list; the index opens the card while it is non-empty.
+export const noticesKey = 'notices';
+export const NOTICE_FLOAT = 'notice_float';
 
 // --- Cards on a scheduler other than the Global Default (lib/scheduler_cards.ts) ---
 // Synced and per KB: `<prefix>_<kbId>` is the manifest, `<prefix>_<kbId>_<n>` the shards.
@@ -973,3 +1021,51 @@ export const recognitionFirstId = 'recognition-first';
 export const recognitionFirstMinDaysId = 'recognition-first-min-days';
 // Synced, per KB: Rem id → when Recognition First set it to back → front only.
 export const recognitionFirstHeldKeyPrefix = 'recognition-first-held';
+
+// Menu Hub — floating panel holding the Document and Queue menus' actions,
+// opened by their "Incremental RemNote…" items (RemNote can't nest plugin
+// menu items). Session keys: what it shows (MenuHubTarget) and its live
+// widget id. It opens at a marker position that host CSS swaps for a spot
+// under the menu's button (openMenuHub in lib/menu_hub_actions.ts).
+export const menuHubWidgetId = 'menu_hub';
+export const menuHubTargetKey = 'menu-hub-target';
+export const menuHubActiveIdKey = 'menu-hub-active-id';
+export const menuHubAnchorPosition = { top: 1, left: 1 };
+
+// Search & Browse (plans/implemented/SEARCH_ENGINE_PLAN.md phase 4; lib/search_browse.ts).
+export const searchBrowseWidgetId = 'search_browse_floating';
+export const searchBrowseFloatIdKey = 'search-browse-float-id'; // session: the open browser's floating widget id
+export const searchBrowseRequestKey = 'search-browse-request'; // session: {action: 'expand', at} from the `sb` command
+export const searchBrowseAckKey = 'search-browse-ack'; // session: the `at` the browser last acted on
+export const savedSearchesKey = 'search-browse-saved'; // synced: SavedSearch[]
+export const searchHistoryKey = 'search-browse-history'; // local (per device): last searches, newest first
+export const searchBrowseRecentsKeyPrefix = 'search-browse-recents-'; // local (per device) + 'move' | 'tag': picker targets, newest first
+export const searchQueuesParentName = 'Search Queues';
+
+// Audio Playlist (lib/audio_playlist.ts; widgets/audio_playlist_float.tsx): the audios
+// of a branch, or of the rems carrying a tag, played as one in a floating player.
+export const AUDIO_PLAYLIST_FLOAT = 'audio_playlist_float';
+export const audioPlaylistBranchCommandId = 'audio-playlist-branch';
+export const audioPlaylistTagCommandId = 'audio-playlist-tag';
+export const audioPlaylistOpenCommandId = 'audio-playlist-open';
+// Session: the playlist asked for (AudioPlaylistRequest), whether the player should be
+// on screen (the index opens it, and reopens it when the host closed it), its float id,
+// and whether it was playing, so a reopened player carries on.
+export const audioPlaylistRequestKey = 'audio-playlist-request';
+export const audioPlaylistWantedKey = 'audio-playlist-wanted';
+export const audioPlaylistFloatIdKey = 'audio-playlist-float-id';
+export const audioPlaylistPlayingKey = 'audio-playlist-playing';
+// Synced, per KB (`<prefix>_<kbId>`): positions, speed and recent tags (PlayerState),
+// and each file's length in seconds, so a list is measured once.
+export const audioPlaylistStateKeyPrefix = 'audio-playlist-state';
+export const audioPlaylistDurationsKeyPrefix = 'audio-playlist-durations';
+
+// Extract Editor (lib/extract_editor.ts; widgets/extract_editor_float.tsx): an editable
+// DocumentViewer over the queue's read-only Extract Viewer. It is a floating widget
+// because an editor inside the queue's own frame cannot keep the focus.
+export const EXTRACT_EDITOR_FLOAT = 'extract_editor_float';
+// Session: what the editor shows and how big it is (ExtractEditorTarget), and its float id.
+export const extractEditorTargetKey = 'extract-editor-target';
+export const extractEditorFloatIdKey = 'extract-editor-float-id';
+// Session key: a document the Menu Hub sent to another window, until it opens there (see lib/send_to_window.ts).
+export const sendToWindowPendingKey = 'send-to-window-pending';

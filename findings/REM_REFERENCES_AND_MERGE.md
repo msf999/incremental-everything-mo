@@ -15,7 +15,7 @@ A reference is a rich-text element in a Rem's `key` (front) or `value` (back):
 | `pin: true` | The pin-only form: renders just the 📍 and is left out of plain text and AI context. Stored pins look like `{"i":"q","_id":…,"pin":true,"content":false}`. |
 | `content` | **Show Content**: render the referenced Rem's content. |
 | `showFullName` | **Show Full Name**: render the ancestor path. |
-| `aliasId` | Show one of the target's aliases (an alias Rem, child of the target) instead of its text. |
+| `aliasId` | Show one of the target's aliases instead of its text. Since the storage overhaul an alias is **not a Rem**: it is stored on the target as `al: [{aliasId, alias}]`, and the id sits in `missing_ids_quanta`, so `findOne(aliasId)` returns nothing (aliases made before the overhaul can still be Rems). The bridge's `getAliases` returns `{aliasId, text}`, but the SDK wraps each as a Rem shell keeping only `.text`; so does `getOrCreateAliasWithText`. Go through `src/lib/rem_aliases.ts`, which calls the bridge via `(rem as any).call(...)` to keep the ids. Reported to RemNote: `support-reports/REMNOTE_SUPPORT_REPORT_sdk_aliases_drop_alias_id.md` (Nov 2026). |
 | `textOfDeletedRem` | Fallback text kept once the target is deleted. |
 | `cId` | A cloze placed on the reference. |
 
@@ -35,6 +35,37 @@ An inline link is not an element of its own. It is a text span carrying the targ
 
 The bridge validates every call's arguments against a zod schema, whose reference element lists only `i`, `_id`, `aliasId`, `content`, `showFullName` and `textOfDeletedRem`. But it only calls `safeParse` to accept or reject; the handler receives the **raw** arguments. So `pin`, `cId` and any other field survive `rem.setText` / `setBackText`.
 
+## References on the clipboard
+
+Read in the bundle, 1.30.4, November 17, 2026.
+
+**What RemNote copies.** Its copy commands write plain text that its paste handler recognises
+when it is the whole clipboard:
+
+| Text | Copied by | Pasted as |
+|---|---|---|
+| `https://www.remnote.com/w/<id>…` (the Rem's URL, `?aliasId=` kept) | Copy Reference (`copyReference()`, what the SDK's `copyReferenceToClipboard` calls) | a reference |
+| `[[<id>` | | a reference |
+| `[[*<id>` | Copy Reference as a Pin | a pin |
+| `[[!<id>` | Copy Reference with content | a reference with `content: true` (cursor must be collapsed) |
+| `((<id>` | Copy Portal | a portal |
+| `##<id>` | Copy Tag | a tag on the Rem |
+| `[[.<id>` (as `application/rem-id`) | Copy Bullet (`copyRem()`) | the Rem itself |
+
+Only one Rem per clipboard that way: the detectors test the whole text, so two `[[*id` lines
+paste as text.
+
+**Several references into one Rem.** The editor's paste handler reads `linear-editor/json`
+(a rich-text array) before the plain text, whenever no `application/rem-id` comes with it, and
+inserts it into the Rem being edited. RemNote's own inline copy writes that flavour, sometimes as
+plain rich text, so `[{i:'q',_id}, {i:'m',text:', '}, {i:'q',_id,pin:true}]` pastes as written.
+A plugin frame can write it from a `copy` event fired by `execCommand('copy')` inside a click or
+key press (`copyRemRefsFromGesture` in `src/lib/clipboard.ts`).
+
+**The paste key can't choose the form.** ⌘V, ⇧⌘V (Paste Without Formatting) and
+⌥⇧⌘V (Paste as Single Bullet) read the same payload, and ⌥⌘V is Toggle Callout. A plugin that
+wants "paste as pin" must decide when copying.
+
 ## Where the links are stored
 
 On each Rem document in `remnote.db` (`quanta.doc`):
@@ -43,7 +74,7 @@ On each Rem document in `remnote.db` (`quanta.doc`):
 |---|---|
 | `tp` | the Rem's own tags (type parents) |
 | `tc` | Rems tagged with this one |
-| `pd` | for a portal: the Rems it includes, with their expanded/hidden state |
+| `pd` | for a portal: the Rems it includes, with their expanded/hidden state. For a table view it accumulates every Rem it ever showed, deleted ones included, so it is not the current view (see [Portals and table views](#portals-and-table-views-what-a-plugin-can-gather)) |
 | `ps` | powerup slot values |
 | `mh` | merge history |
 | `srcRemId`, `srcRemC` | the Rem it was created from |
@@ -102,6 +133,32 @@ The merge does copy slot values **of the merged Rem itself** onto the kept Rem (
 **What would fix it in RemNote:** pass `clearSlots = false` there when the kept Rem represents the same code (`kept.rcrt === merged.rcrt`). Or map plugin powerups in the importer.
 
 **Workaround:** import into a new KB before the plugin has ever been enabled there, then enable it.
+
+## Portals and table views: what a plugin can gather
+
+Established Nov 12, 2026, on RemNote 1.30.2-beta, from the app bundle and `remnote.db`, while adding portal support to Batch Priority Change. The test document held three table views over tables stored elsewhere, each filtered by `Book contains "squat"`.
+
+**A table view is a portal Rem.** Its fields: `type` 6 (PORTAL), `portalType` 4 (`SEARCH_PORTAL`), and the `sp` powerup with these slots:
+
+| Slot | Holds | Example |
+|---|---|---|
+| `sp_q` | the query | `query: #Crème Verte - Cloze` |
+| `sp_f` | the column filter | `query: ( and ( Book slot contains "squat" ) )` |
+| `sp_s` | (boolean, unexplored) | `true` |
+
+RemNote also stores the filtered row ids in `searchResults` (26, 11 and 23 rows in the test), and per-Rem view state in `ph`. A plugin cannot read any of these: a Rem reaches a plugin only as `_id`, `parent`, `children`, `type`, `text`, `backText` and timestamps.
+
+**`getPortalDirectlyIncludedRem()` ignores table filters.** The bridge handler returns `filteredDirectlyIncludedRems()`, which applies no column filter. In the test it returned whole tables plus stray Rems, among them entire book chapters. With their descendants that came to 9,337 items for a document showing 60 rows. For a plain portal it is still the right call (see `src/lib/hierarchical_parent_selector/portals.ts`).
+
+**`allRemInDocumentOrPortal()` on the document returns what the document shows.**
+- The handler runs `allDescendantsAndRemInDescendantPortalsAsync()`. It walks the Rem's children, and at each portal child takes `descendantRemIdsInViewSortedAsync()`.
+- That function is `visibleChildrenRemAsync(…, {directlyListAllItemsInPortal: true})` plus each shown Rem's open descendants. The table renderer builds its rows from the same `visibleChildrenRem` call, so a filtered table view yields exactly its filtered rows.
+- With the default options it does not recurse into portals nested inside portal content.
+- Test document: 485 Rems shown through the three table views, 60 of them rows.
+
+**Call it once, on the document.** Calling it on every portal, and recursing into portals found inside rows and cells, sent thousands of bridge calls and froze the app. `buildComprehensiveScope` and `gatherPortalIncludedRems` (`src/lib/scope_helpers.ts`) both call it once on the root.
+
+**Table flashcards can sit on the cells.** A cell is a descriptor child (`type` 2) of its row Rem. In one test table the cards and Card Priority tags were on the cells, not the rows. "Open descendants" does not guarantee every cell, so take `getDescendants()` of each shown row. That's cheap after filtering: 60 rows gave 587 Rems.
 
 ## Web pages: Link Rems, Sources and the Clipper
 

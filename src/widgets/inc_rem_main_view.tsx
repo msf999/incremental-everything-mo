@@ -353,7 +353,10 @@ export function IncRemMainView() {
       'editor-review-timer-date-override',
       scheduleData?.sameDayRepeat ? scheduleData.newNextRepDate : undefined
     );
-    await plugin.storage.setSession('editor-review-timer-priority', seedPriorityForTimer(incRemInfo));
+    // FORK (#13): the base is what was seeded, as in editor_review_session.ts.
+    const seededPriority = seedPriorityForTimer(incRemInfo);
+    await plugin.storage.setSession('editor-review-timer-priority', seededPriority);
+    await plugin.storage.setSession('editor-review-timer-priority-base', seededPriority);
     await plugin.storage.setSession('editor-review-timer-rem-name', remName || 'Unnamed Rem');
     await plugin.storage.setSession('editor-review-timer-from-queue', false);
     await plugin.storage.setSession('editor-review-timer-origin', 'inc-rem-main-view');

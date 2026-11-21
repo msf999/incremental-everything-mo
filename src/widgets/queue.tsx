@@ -423,6 +423,11 @@ export function QueueComponent() {
     setShowSpark(false);
   }, [showBackToIsolated]);
 
+  // FORK (b01355e sync): upstream moves a plain Rem's "Back to isolated view" into its Extract
+  // Viewer's header in a pane narrower than 520 px (`narrow`, `backInHeader`, the viewer's
+  // `headerAction`). Not taken: the fork's ExtractViewer has no header slot, and the button is
+  // off here anyway (FORK_FEATURES.isolatedViewBackButton).
+
   // AFTER ALL HOOKS, NOW you can return early
   if (!remId) return null;
 

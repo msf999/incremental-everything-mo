@@ -179,7 +179,64 @@ export const FORK_FEATURES = {
    * 24-at-a-time reader); "Refresh Rem Cache" forces one either way.
    */
   warmStartCache: true,
+
+  // ---- b01355e sync (2026-11-21): upstream v1.0.214 – v1.0.249. The owner's choices that day
+  // ("Yes, as recommended"): the ✎ Edit panel over the queue card on, everything else off.
+  /** ✎ Edit over the queue card (upstream v1.0.235, lib/extract_editor.ts): RemNote's own
+      editor in a floating panel laid over the card. Typing there is safe where typing in the
+      card is not: RemNote's queue takes the focus back from anything embedded in its card
+      20 ms after a click, and a floating widget sits outside the queue. The button is in the
+      fork's ExtractViewer (Deviation 19). On — owner decision 2026-11-21. */
+  extractEditor: true,
+  /** Search & Browse and the Search Engine (upstream v1.0.231): Anki-style queries run on
+      remnote.db by upstream's AI helper — RemNote's desktop app on a Mac, with the helper
+      running and paired. Its command took Ctrl+D. Off — owner decision 2026-11-21. */
+  searchEngine: false,
+  /** Find Sources, Check Statement and Ask Your Sources (upstream v1.0.245) and the corpus
+      provider behind them (v1.0.233): the AI helper, a search index of your own library and
+      Claude. Their registration polls the helper every 5 minutes until it answers, and the
+      parent selector's 📚 suggestion and Pin Source Quote ask it too — all through
+      getCorpusStatus, which answers "unavailable" without this flag (lib/corpus/index.ts).
+      Off — owner decision 2026-11-21. */
+  corpusTools: false,
+  /** Audio Playlist (upstream v1.0.234): a document's or a tag's audios played as one, in a
+      floating player. Off — owner decision 2026-11-21. */
+  audioPlaylist: false,
+  /** Send Pane to Another Window (upstream v1.0.244, desktop app, Opt+Shift+Z), and the same
+      action in the Menu Hub. Off — owner decision 2026-11-21. */
+  sendToWindow: false,
+  /** The review history of deleted Rems (upstream v1.0.217): the Study Dashboard asks
+      upstream's AI helper on localhost:3457 (history_archive.py) for the reviews RemNote has
+      dropped, every time it is opened. Off — owner decision 2026-11-21: no helper runs here.
+      Gated inside lib/history_archive.ts (fetchGhosts answers null without asking). */
+  historyArchive: false,
 } as const;
+
+/**
+ * The Menu Hub (upstream v1.0.219, widgets/menu_hub.tsx) replaced the plugin's ⋯-menu items
+ * with one "Incremental RemNote…" entry that opens a floating list of actions. Those actions
+ * are not registrations, so the deny-lists cannot see them: this hides each one whose
+ * feature is off here (FORK, b01355e sync). An id not listed is shown.
+ */
+const HUB_ACTION_FLAGS: Record<string, boolean> = {
+  'card-priority': FORK_FEATURES.cardSurface, // Batch Card Priority
+  audit: FORK_FEATURES.cardSurface, // Audit Card Enablement
+  queue: FORK_FEATURES.priorityReviewDocs, // Priority Queue
+  'q-priority-queue': FORK_FEATURES.priorityReviewDocs,
+  pdf: FORK_FEATURES.pdfReader, // PDF Control Panel
+  shield: FORK_FEATURES.shields, // Priority Shield History
+  'q-shield': FORK_FEATURES.shields,
+  dashboard: FORK_FEATURES.studyDashboard,
+  'q-dashboard': FORK_FEATURES.studyDashboard,
+  audio: FORK_FEATURES.audioPlaylist,
+  'audio-tag': FORK_FEATURES.audioPlaylist,
+  'send-window': FORK_FEATURES.sendToWindow,
+  debug: FORK_FEATURES.debugTools,
+};
+
+export function forkHubActionShown(actionId: string): boolean {
+  return HUB_ACTION_FLAGS[actionId] ?? true;
+}
 
 /**
  * IE-Settings popup sections hidden by the fork (user decision 2026-08-11:
@@ -369,7 +426,6 @@ const GROUPS: GateGroup[] = [
       'pin_source_views_popup',
       'follow_queue_bar', // 10297b3 sync
     ],
-    menuItems: ['pdf_control_panel_menuitem'],
     css: [
       'pdf-inc-highlight-styling',
       'highlight-priority-band-badges',
@@ -399,14 +455,12 @@ const GROUPS: GateGroup[] = [
     // flashcard_repetition_history: the card history popup (Forgetting Curve, FSRS
     // table) — denied 2026-10-10; repetition_history.tsx hides the button that opened it.
     widgets: ['card_info_bar', 'batch_card_priority', 'flashcard_repetition_history', 'import_scheduler_cards'],
-    menuItems: ['batch_card_priority_menuitem'],
     css: ['incremental-everything-card-info-bar-dock'],
   },
   {
     enabled: FORK_FEATURES.shields,
     commands: ['open-priority-shield', 'open-weighted-shield'],
     widgets: ['priority_shield_graph', 'weighted_shield_popup', 'weighted_shield_popup_wide'],
-    menuItems: ['priority-shield-history-menu-item-id', 'priority_shield_document_menuitem'],
   },
   {
     enabled: FORK_FEATURES.studyDashboard,
@@ -419,10 +473,13 @@ const GROUPS: GateGroup[] = [
   },
   {
     enabled: FORK_FEATURES.upstreamQueueToolbarPriority,
-    // queue_beautiful_bar carries the same badge in RemNote's Beautiful queue variant.
-    widgets: ['queue_toolbar_priority', 'queue_beautiful_bar'],
-    // + the stylesheet that sizes the Beautiful queue's corner strip to that badge (10297b3 sync).
-    css: ['queue-beautiful-bar', 'incremental-everything-queue-beautiful-bar-fit'],
+    // b01355e sync: upstream deleted queue_beautiful_bar and its two stylesheets (its badge
+    // is in RemNote's own toolbar again, in both queue variants) and gave queue_toolbar_priority
+    // the No Inc Rem countdown as well — the fork's chip renders that countdown itself
+    // (widgets/queue_priority_chip.tsx). + the stylesheet that pins that widget's frame to a
+    // light colour scheme.
+    widgets: ['queue_toolbar_priority'],
+    css: ['queue-toolbar-frame'],
   },
   {
     enabled: FORK_FEATURES.clozeTools,
@@ -501,7 +558,6 @@ const GROUPS: GateGroup[] = [
       'toggle-priority-band-logging',
     ],
     widgets: ['debug', 'jump_to_rem_input', 'card_enablement_audit', 'empty_ecd_popup'],
-    menuItems: ['card_enablement_audit_menuitem'],
   },
   {
     enabled: FORK_FEATURES.priorityReviewDocs,
@@ -514,7 +570,6 @@ const GROUPS: GateGroup[] = [
     // is priority_queue_popup. webpack.config.js asserts every denied widget id has a
     // source file, so a stale id here would silently rebuild ALL widget bundles.
     widgets: ['priority_queue_popup', 'prd_cleanup_popup', 'priority_review_graph', 'plugin_hub', 'onboarding_tips'],
-    menuItems: ['create_priority_review_menuitem', 'create_priority_review_queue_menuitem'],
     css: ['sidebar-end-padding', 'learn-new-cooling-mask'],
   },
   {
@@ -536,8 +591,11 @@ const GROUPS: GateGroup[] = [
     enabled: FORK_FEATURES.mediaTools,
     // 10297b3 sync: + the ChatGPT image upscaler, and Cycle Image Size's confirmation popup
     // and feedback bar. The Local Media Bridge's poller is guarded on this flag in index.tsx.
-    commands: ['localize-external-media', 'localize-external-media-tree', 'cycle-image-size', 'upscale-image-chatgpt'],
-    widgets: ['upscale_image_popup', 'image_size_confirm', 'image_size_feedback'],
+    commands: ['localize-external-media', 'localize-external-media-tree', 'cycle-image-size', 'upscale-image-chatgpt',
+      // b01355e sync: Read aloud and Add pronunciation (text to speech through the bridge).
+      'read-aloud', 'add-pronunciation'],
+    widgets: ['upscale_image_popup', 'image_size_confirm', 'image_size_feedback', 'read_aloud_popup'],
+    css: ['pronunciation-mark'],
   },
   {
     enabled: FORK_FEATURES.editorReviewTimer,
@@ -562,11 +620,41 @@ const GROUPS: GateGroup[] = [
   {
     enabled: FORK_FEATURES.copyRemId,
     commands: ['copy-rem-id'],
-    widgets: ['copy_text_popup'],
+    // b01355e sync: + the picker among a Rem's sources and the PDF or page open in the pane.
+    widgets: ['copy_text_popup', 'copy_rem_id_popup'],
   },
   {
     enabled: FORK_FEATURES.previewBreadcrumbs,
     css: ['preview-breadcrumbs'],
+  },
+  // ---- b01355e sync (2026-11-21)
+  {
+    enabled: FORK_FEATURES.extractEditor,
+    widgets: ['extract_editor_float'],
+    css: ['extract-editor-popups'],
+  },
+  {
+    enabled: FORK_FEATURES.searchEngine,
+    commands: ['search-and-browse'],
+    widgets: ['search_browse_floating'],
+  },
+  {
+    enabled: FORK_FEATURES.corpusTools,
+    // Registered only once the corpus provider answers (register/corpus_commands.ts, itself
+    // guarded in index.tsx); listed so that a stray registration is dropped too.
+    commands: ['find-sources', 'check-statement', 'ask-your-sources', 'find-sources-in-tree', 'check-statements-in-tree'],
+    widgets: ['find_sources_popup'],
+    // How a Find Sources "AI Note" looks; the AI Note powerup itself stays registered (T1).
+    css: ['ai-note-styling'],
+  },
+  {
+    enabled: FORK_FEATURES.audioPlaylist,
+    commands: ['audio-playlist-branch', 'audio-playlist-tag', 'audio-playlist-open'],
+    widgets: ['audio_playlist_float'],
+  },
+  {
+    enabled: FORK_FEATURES.sendToWindow,
+    commands: ['send-pane-to-another-window'],
   },
 ];
 

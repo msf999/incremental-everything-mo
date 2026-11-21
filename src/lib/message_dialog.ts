@@ -9,7 +9,24 @@ export interface MessageDialog {
   quote?: string;
   /** Smaller explanation under everything else. */
   detail?: string;
-  tone?: 'error' | 'info';
+  /** One box per entry under the message, e.g. one per quote of a bulk run. */
+  items?: MessageItem[];
+  tone?: 'error' | 'info' | 'success';
+  /** Adds an "Open Rem" button (←→ to reach it) that opens this Rem and closes the dialog. */
+  openRemId?: string;
+  /**
+   * Adds a "Search by meaning" button (←→ to reach it) that queues Find Sources for these
+   * Rems (lib/find_sources): offered where Pin Source Quote found no literal match.
+   */
+  findSources?: { remIds: string[]; openSourceRemId?: string | null };
+}
+
+export interface MessageItem {
+  /** Shown in italics at the top of the box (a quote). */
+  title: string;
+  lines: string[];
+  /** ok = done (green edge), miss = not done (amber edge). */
+  tone?: 'ok' | 'miss';
 }
 
 /**

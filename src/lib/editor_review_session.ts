@@ -30,6 +30,8 @@ export interface EditorTimerData {
   startTime: number | undefined;
   interval: number | undefined;
   priority: number | undefined;
+  /** The slot's priority when the review started; see EditorReviewJob.basePriority. */
+  priorityBase: number | undefined;
   remName: string;
   fromQueue: boolean | undefined;
   origin: string;
@@ -46,6 +48,7 @@ export async function readEditorTimer(rp: RNPlugin): Promise<EditorTimerData | n
   const startTime = await rp.storage.getSession<number>('editor-review-timer-start');
   const interval = await rp.storage.getSession<number>('editor-review-timer-interval');
   const priority = await rp.storage.getSession<number>('editor-review-timer-priority');
+  const priorityBase = await rp.storage.getSession<number>('editor-review-timer-priority-base');
   const remName = await rp.storage.getSession<string>('editor-review-timer-rem-name');
   const fromQueue = await rp.storage.getSession<boolean>('editor-review-timer-from-queue');
   const origin = await rp.storage.getSession<string>('editor-review-timer-origin');
@@ -58,6 +61,7 @@ export async function readEditorTimer(rp: RNPlugin): Promise<EditorTimerData | n
     startTime,
     interval,
     priority,
+    priorityBase,
     remName: remName || 'Unnamed Rem',
     fromQueue,
     origin: origin || (fromQueue ? 'queue' : 'editor'),
@@ -147,6 +151,7 @@ export async function endEditorReview(
     intervalDays: typeof timer.interval === 'number' ? timer.interval : undefined,
     overrideNextRepDate: dateOverride,
     newPriority: timer.priority ?? undefined,
+    basePriority: timer.priorityBase ?? timer.priority ?? undefined,
     reviewTimeSeconds,
     host,
     recordRep: false,
@@ -169,6 +174,7 @@ export async function endEditorReview(
       'editor-review-timer-start',
       'editor-review-timer-interval',
       'editor-review-timer-priority',
+      'editor-review-timer-priority-base',
       'editor-review-timer-rem-name',
       'editor-review-timer-from-queue',
       'editor-review-timer-origin',
@@ -248,7 +254,11 @@ async function startNextInList(
   );
   // FORK (#13): never seed the unreadable-priority placeholder — End / Next Review would write
   // it into the real priority slot (seedPriorityForTimer seeds undefined for a 'fallback').
-  await plugin.storage.setSession('editor-review-timer-priority', seedPriorityForTimer(nextIncRemInfo));
+  // The base is what was seeded (upstream: the Rem's priority), so a placeholder that was not
+  // seeded is not taken for a priority changed during the review either.
+  const seededPriority = seedPriorityForTimer(nextIncRemInfo);
+  await plugin.storage.setSession('editor-review-timer-priority', seededPriority);
+  await plugin.storage.setSession('editor-review-timer-priority-base', seededPriority);
   await plugin.storage.setSession('editor-review-timer-rem-name', nextRemName || 'Unnamed Rem');
   await plugin.storage.setSession('editor-review-timer-queue-list', newQueueList);
   // Reset pause state for the next item — otherwise a pause taken on this item
@@ -279,6 +289,7 @@ export async function nextEditorReview(
     // date in force for it (review_jobs.ts) instead of making the Rem due now.
     intervalDays: typeof timer.interval === 'number' ? timer.interval : undefined,
     newPriority: timer.priority ?? undefined,
+    basePriority: timer.priorityBase ?? timer.priority ?? undefined,
     reviewTimeSeconds: Math.round(elapsedMs / 1000),
     host,
     recordRep: false,
@@ -320,6 +331,7 @@ export async function dismissEditorReview(
         'editor-review-timer-start',
         'editor-review-timer-interval',
         'editor-review-timer-priority',
+      'editor-review-timer-priority-base',
         'editor-review-timer-rem-name',
         'editor-review-timer-from-queue',
         'editor-review-timer-origin',

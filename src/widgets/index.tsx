@@ -24,6 +24,8 @@ import { registerPluginSettings } from '../register/settings';
 import { registerWidgets } from '../register/widgets';
 import { registerMenus } from '../register/menus';
 import { registerCommands } from '../register/commands';
+import { registerMediaBridgeCommands } from '../register/media_bridge_commands';
+import { registerCorpusCommands } from '../register/corpus_commands';
 import { registerCallbacks, resetSessionItemCounter } from '../register/callbacks';
 import { registerPrefetchTrackers } from '../lib/queue_prefetch';
 import {
@@ -36,20 +38,24 @@ import {
 } from '../register/queue_display_commands';
 import { registerMcScissors } from '../lib/mc_scissors';
 import { registerTrueFalseClusterTracker, registerTrueFalseCommands, registerTrueFalsePowerups } from '../register/true_false';
-import { autoRefreshPriorityQueueId, enableHideInQueueIntegrationId, enableFlashcardPrioritisationId, pdfHighlightBordersReloadKey, priorityBandColorsReloadKey, priorityColorScaleKey, cardInfoBarHeightKey, queueBeautifulBarWidthKey, editorReviewTimerHeightsKey } from '../lib/consts';
+import { autoRefreshPriorityQueueId, enableHideInQueueIntegrationId, enableFlashcardPrioritisationId, pdfHighlightBordersReloadKey, priorityBandColorsReloadKey, priorityColorScaleKey, cardInfoBarHeightKey, editorReviewTimerHeightsKey } from '../lib/consts';
 import { registerCardInfoBarDockCss } from '../lib/card_info_bar_dock';
 import { installQueueInfoBarDock } from '../lib/queue_info_bar_dock'; // FORK (Deviation 14)
-import { registerQueueBeautifulBarFitCss } from '../lib/queue_beautiful_bar_fit';
 import { registerEditorReviewTimerHeadersCss } from '../lib/editor_review_timer_sticky';
 import { refreshKbPriorityQueueAtStartup } from '../lib/priority_review_document/queue_doc';
 import { bandVerboseLogsEnabled } from '../lib/priority_bands';
 import { registerIncrementalRemTracker } from '../register/tracker';
+import { registerNoticeHost } from '../lib/notice';
+import { registerAudioPlaylist } from '../lib/audio_playlist';
+import { registerExtractEditorHost } from '../lib/extract_editor';
 import { registerLogosBridge } from '../lib/logos_bridge';
 import { registerMediaBridge } from '../lib/media_bridge';
 import { registerExternalPriorityBridge } from '../lib/external_priority_bridge';
 import { registerExternalCardVideoBridge } from '../lib/external_card_video_bridge';
+import { registerExternalMediaBridge } from '../lib/external_media_bridge';
 import { registerWindowSourcesPresence } from '../lib/window_sources';
 import { registerOpenInWindowListener } from '../lib/open_in_window';
+import { registerSendToWindowWatcher } from '../lib/send_to_window';
 import { registerFollowQueueSources, startFollowingQueueSources } from '../lib/follow_queue_sources';
 import { registerVideoReviewBar } from '../lib/video_review_bar';
 import { registerImageSizeSession } from '../lib/image_size_session';
@@ -57,7 +63,7 @@ import { cleanupOrphanedReviewGraphs } from '../lib/priority_review_document/cle
 import { migrateAuthoritativeAggregatesToShards } from '../lib/authoritative_aggregates';
 import { registerJumpToRemHelper } from '../register/window';
 import { refreshPriorityColorScale, restorePriorityColorScale } from '../lib/priority_color_scale';
-import { registerPluginHidingCSS, registerPdfHighlightCSS, registerClozeExtractCSS, registerTagBadgeCSS, registerIgnoreTagCSS, registerHighlightBandBadgeCSS, registerTableBandBadgeCSS, registerHasImageCSS, registerPinReferenceCSS } from '../lib/ui_helpers';
+import { registerPluginHidingCSS, registerPdfHighlightCSS, registerClozeExtractCSS, registerTagBadgeCSS, registerAiNoteCSS, registerIgnoreTagCSS, registerHighlightBandBadgeCSS, registerTableBandBadgeCSS, registerHasImageCSS, registerPinReferenceCSS } from '../lib/ui_helpers';
 import { installForkGates, registerForkWidgets, registerForkSettingsSignpost, FORK_FEATURES } from '../lib/fork_gates';
 import { getIESetting } from '../lib/settings';
 import { StartupTaskBoard, waitForSessionFlag } from '../lib/startup_status';
@@ -136,6 +142,9 @@ async function onActivate(plugin: ReactRNPlugin) {
   registerEventListeners(plugin, resetSessionItemCounter);
 
   registerIncrementalRemTracker(plugin);
+  // Kept live: a review job (Reschedule, the Dismiss command, Opt+X) that fails to save is
+  // reported through a notice since b01355e (register/tracker.ts), not a popup.
+  registerNoticeHost(plugin);
   // A full load was measured at 29s; the deadline only has to catch a load that died.
   const incRemSettled = startup.track(
     'incRemCache',
@@ -170,6 +179,7 @@ async function onActivate(plugin: ReactRNPlugin) {
   // other plugins — off (the card-priority engine is disabled here).
   if (FORK_FEATURES.pluginBridges) {
     registerExternalCardVideoBridge(plugin);
+    registerExternalMediaBridge(plugin); // b01355e: other plugins store audio through the Local Media Bridge
     registerExternalPriorityBridge(plugin);
   }
   // Publishes this window's open PDFs/articles so a command run in another
@@ -183,11 +193,21 @@ async function onActivate(plugin: ReactRNPlugin) {
     // Shows the sources of the queue's cards in the window that asks to follow it.
     void registerFollowQueueSources(plugin);
   }
+  // Closes a document's pane here once the window it was sent to has it open.
+  // FORK (Deviation 13, b01355e sync): Send to Another Window is off (FORK_FEATURES.sendToWindow).
+  if (FORK_FEATURES.sendToWindow) registerSendToWindowWatcher(plugin);
   await registerWidgets(plugin);
   await registerForkWidgets(plugin); // FORK (Deviation 13): combined History tab
   installQueueInfoBarDock(plugin); // FORK (Deviation 14): dock queue_info_bar in the Beautiful queue
   // The review timer's floating bar over RemNote's video page.
   if (FORK_FEATURES.editorReviewTimer) registerVideoReviewBar(plugin); // FORK (Deviation 13, 10297b3 sync)
+  // Audio Playlist: its commands, and keeping its floating player open while wanted.
+  // FORK (Deviation 13, b01355e sync): off (FORK_FEATURES.audioPlaylist) — registers three
+  // commands and a 4 s timer of its own, which the deny-list alone would not stop.
+  if (FORK_FEATURES.audioPlaylist) registerAudioPlaylist(plugin);
+  // The Extract Editor over a queue card closes when that card goes.
+  // FORK (b01355e sync, Deviation 19): the fork's ExtractViewer opens it (✎ Edit), with the flag.
+  if (FORK_FEATURES.extractEditor) registerExtractEditorHost(plugin);
   // Runs Cycle Image Size's presses, and what its popup and floating widget ask for.
   if (FORK_FEATURES.mediaTools) registerImageSizeSession(plugin); // FORK (Deviation 13, 10297b3 sync)
 
@@ -216,13 +236,6 @@ async function onActivate(plugin: ReactRNPlugin) {
   plugin.track(async (rp) => {
     const barHeight = await rp.storage.getSession<number>(cardInfoBarHeightKey);
     await registerCardInfoBarDockCss(plugin, barHeight);
-  });
-
-  // The Beautiful queue's top-right strip fits queue_beautiful_bar's content, which the
-  // widget reports (lib/queue_beautiful_bar_fit). Also runs at activation with the default.
-  plugin.track(async (rp) => {
-    const width = await rp.storage.getSession<number>(queueBeautifulBarWidthKey);
-    await registerQueueBeautifulBarFitCss(plugin, width);
   });
 
   // The pinned Editor Review Timer sits where RemNote draws its sticky headers, so
@@ -264,6 +277,7 @@ async function onActivate(plugin: ReactRNPlugin) {
   await registerPluginHidingCSS(plugin);
   await registerClozeExtractCSS(plugin);
   await registerTagBadgeCSS(plugin);
+  await registerAiNoteCSS(plugin);
   await registerIgnoreTagCSS(plugin);
   // Descendants of #cloze-extract / #ignore Rems; kept current by the listeners
   // in lib/tag_subtree_css. Not awaited: it walks the open panes.
@@ -272,6 +286,13 @@ async function onActivate(plugin: ReactRNPlugin) {
   await registerPinReferenceCSS(plugin);
 
   await registerCommands(plugin);
+  // Upscale image / Read aloud: registered only while the Local Media Bridge setting is on.
+  // FORK (Deviation 13, b01355e sync): Read aloud / Add pronunciation need the Local Media
+  // Bridge (mediaTools, off); the Find Sources commands need upstream's AI helper and a corpus
+  // provider, and their registration polls the helper every 5 minutes until it answers
+  // (corpusTools, off).
+  if (FORK_FEATURES.mediaTools) registerMediaBridgeCommands(plugin);
+  if (FORK_FEATURES.corpusTools) registerCorpusCommands(plugin);
 
   // Remove Parent / Remove Grandparent commands are always available — they
   // wrap powerups that are always registered and don't conflict with anything.

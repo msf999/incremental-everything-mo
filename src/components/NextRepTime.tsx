@@ -15,6 +15,11 @@ export interface NextRepTimeProps {
   /** FORK (2026-10-10, owner request): drop the leading "in " — the queue answer row's
    *  Next / Open second line reads "5 days", not "in 5 days". */
   bare?: boolean;
+  /**
+   * The chip above the interval instead of beside it, in two small lines: for a
+   * narrow button, where one line would cut the interval short.
+   */
+  stacked?: boolean;
 }
 
 export function durationToHumanReadable(duration: any) {
@@ -73,6 +78,29 @@ export function NextRepTime(props: NextRepTimeProps): React.ReactElement {
   const longVersion = durationToHumanReadable(duration);
   const shortVersion = longVersion.replace(/mins/g, 'min').replace(/hours/g, 'hrs');
   const described = props.showScheduler && scheduler ? describeScheduler(scheduler) : null;
+  if (props.stacked) {
+    return (
+      <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1, lineHeight: 1.05 }}>
+        {described && (
+          <span
+            title={`Scheduler: ${described.name} (${described.source}). ${described.explanation} Change it in Reschedule.`}
+            style={{
+              padding: '0 4px',
+              borderRadius: 6,
+              fontSize: '0.85em',
+              fontWeight: 600,
+              backgroundColor: 'rgba(255, 255, 255, 0.22)',
+              boxShadow: scheduler?.source === 'item' ? '0 0 0 1px rgba(255, 255, 255, 0.75)' : 'none',
+            }}
+          >
+            {described.chip}
+          </span>
+        )}
+        {/* The narrow button (a phone): months and years as m and y, the longest words here. */}
+        <span style={{ whiteSpace: 'nowrap' }}>in {shortVersion.replace(/ months?$/, ' m').replace(/ years?$/, ' y')}</span>
+      </span>
+    );
+  }
   return (
     <>
       {described && (

@@ -108,6 +108,13 @@ export interface EditorReviewJob extends ReviewJobBase {
   overrideNextRepDate?: number;
   /** Left unset to keep the priority as it is. */
   newPriority?: number;
+  /**
+   * The slot's priority when the review began. When the slot holds something
+   * else by the time the job runs, the priority was changed during the review
+   * (Set Priority, the editor) and newPriority — a copy taken at the start — is
+   * dropped instead of reverting that change.
+   */
+  basePriority?: number;
   reviewTimeSeconds: number;
   /** Optional explicit note; a note parked for the rem is consumed either way. */
   note?: string;
@@ -527,9 +534,14 @@ export async function runReviewJob(
       // FORK (#3/#13): as in 'reschedule' — an untouched placeholder is not a priority.
       const untouchedPlaceholder =
         incRem.prioritySource === 'fallback' && job.newPriority === incRem.priority;
+      const changedDuringReview =
+        job.basePriority !== undefined &&
+        incRem.prioritySource === 'slot' &&
+        incRem.priority !== job.basePriority;
       const priorityChanged =
         job.newPriority !== undefined &&
         !untouchedPlaceholder &&
+        !changedDuringReview &&
         (job.newPriority !== incRem.priority || incRem.prioritySource !== 'slot');
       if (priorityChanged) {
         // recordHistory: false — the rep entry written below carries this priority.

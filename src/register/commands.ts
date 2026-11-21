@@ -14,8 +14,8 @@ import { convertRemTree } from '../lib/markup_to_richtext';
 import { aiTranscribeHighlight, restoreHighlightBeforeAi } from '../lib/ai_ocr';
 import { pinSourceQuote, pinSourceQuotesInTree } from '../lib/pdf_source_pins';
 import { toggleFollowQueueSources } from '../lib/follow_queue_sources';
+import { sendFocusedPaneToAnotherWindow } from '../lib/send_to_window';
 import { localizeMediaInRems } from '../lib/localize_media';
-import { openUpscaleImage } from '../lib/upscale_image';
 import { showMessageDialog } from '../lib/message_dialog';
 import {
   addVideoTranscript,
@@ -51,7 +51,6 @@ import {
   pinSourceQuotesInTreeCommandId,
   localizeMediaCommandId,
   localizeMediaTreeCommandId,
-  upscaleImageCommandId,
   currentIncrementalRemTypeKey,
   incremReviewStartTimeKey,
   allCardPriorityInfoKey,
@@ -184,6 +183,7 @@ import {
 import {
   registerSelectionTracker,
   getEffectiveSelection,
+  getEffectiveSelectionWithSource,
 } from '../lib/editor_selection';
 import { createExtract } from '../lib/extract';
 import {
@@ -218,10 +218,17 @@ import type { QueueCommandTarget } from '../lib/queue_target'; // FORK (2026-10-
 // (runNextInQueueAction) and Ctrl+G still save first and advance after, so they keep them.
 import { handleNextRepetitionClick } from '../lib/incremental_rem';
 import { addPageToHistory, getIncrementalReadingPosition, resolveSessionBookmarkCarry } from '../lib/pdfUtils';
+import {
+  searchBrowseAckKey,
+  searchBrowseFloatIdKey,
+  searchBrowseRequestKey,
+  searchBrowseWidgetId,
+} from '../lib/consts';
 import { getIESetting } from '../lib/settings';
 import { copyTextToClipboard } from '../lib/clipboard';
 import { formatQueueDiagnostics } from '../lib/queue_diagnostics'; // FORK (2026-11-14)
 import { incRemPreviewWidgetId, incRemPreviewOpenKey, IncRemPreviewOpen, INC_REM_PREVIEW_FRESH_MS } from '../lib/consts'; // FORK (2026-11-14)
+import { collectRemIdChoices, copyRemIdPopupWidgetId } from '../lib/copy_rem_id';
 
 // Opens a priority popup against one or many rems. Single-rem calls behave
 // exactly as before; multi-rem calls hand the full id list to the widget through
@@ -383,14 +390,6 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     name: 'Store linked images & audio in RemNote',
     quickCode: 'slm',
     action: async () => runLocalizeMedia(false),
-  });
-
-  await plugin.app.registerCommand({
-    id: upscaleImageCommandId,
-    name: 'Upscale image with ChatGPT',
-    description: "Regenerate the focused rem's image at a higher resolution (Local Media Bridge + Codex CLI), compare, replace.",
-    quickCode: 'upi',
-    action: async () => openUpscaleImage(plugin),
   });
 
   await plugin.app.registerCommand({
@@ -1318,6 +1317,15 @@ export async function registerCommands(plugin: ReactRNPlugin) {
         false
       );
       await plugin.storage.setSession(sourceFloatingActiveIdKey, id);
+    },
+  });
+
+  plugin.app.registerCommand({
+    id: 'send-pane-to-another-window',
+    name: 'Send Pane to Another Window',
+    description: "Opens the focused pane's document in another RemNote window, then closes the pane here",
+    action: async () => {
+      await sendFocusedPaneToAnotherWindow(plugin);
     },
   });
 
@@ -2521,7 +2529,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       try {
         const focused = await plugin.focus.getFocusedRem();
         await plugin.app.toast('📂 Choose the folder in the dialog…');
-        const picked = await chooseLocalVideo('folder', 'Choose a folder of videos to import');
+        const picked = await chooseLocalVideo(plugin, 'folder', 'Choose a folder of videos to import');
         if (!picked) return;
         await plugin.widget.openPopup('local_video_import', {
           ...picked,
@@ -2559,7 +2567,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       try {
         if (!(await confirmNoDuplicateSource(plugin, [rem])).length) return;
         await plugin.app.toast('🎞️ Choose the video in the dialog…');
-        const file = await chooseLocalVideo('file', 'Choose a video for this Rem');
+        const file = await chooseLocalVideo(plugin, 'file', 'Choose a video for this Rem');
         if (!file) return;
         await setLocalVideo(rem, file);
         const name = localVideoTitle(file.path);
@@ -2589,7 +2597,7 @@ export async function registerCommands(plugin: ReactRNPlugin) {
       }
       try {
         await plugin.app.toast('🎞️ Choose the video in the dialog…');
-        const file = await chooseLocalVideo('file', 'Choose the video that explains this card');
+        const file = await chooseLocalVideo(plugin, 'file', 'Choose the video that explains this card');
         if (!file) return;
         await setCardVideo(rem, file);
         const name = localVideoTitle(file.path);
@@ -3408,6 +3416,29 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     },
   });
 
+  // Search & Browse: an Anki-Browser-like table over the AI helper's Search Engine
+  // (components/SearchBrowseView.tsx, plans/implemented/SEARCH_ENGINE_PLAN.md phase 4).
+  plugin.app.registerCommand({
+    id: 'search-and-browse',
+    name: 'Search & Browse',
+    quickCode: 'sb',
+    action: async () => {
+      // A browser already open (perhaps collapsed to its bar) is asked to expand;
+      // only when it doesn't answer is a new one opened.
+      const openId = await plugin.storage.getSession<string>(searchBrowseFloatIdKey);
+      if (openId) {
+        const at = Date.now();
+        await plugin.storage.setSession(searchBrowseRequestKey, { action: 'expand', at });
+        for (let i = 0; i < 10; i++) {
+          await new Promise((r) => setTimeout(r, 50));
+          if ((await plugin.storage.getSession<number>(searchBrowseAckKey)) === at) return;
+        }
+      }
+      const id = await plugin.window.openFloatingWidget(searchBrowseWidgetId, { top: 0, left: 0 }, undefined, false);
+      await plugin.storage.setSession(searchBrowseFloatIdKey, id);
+    },
+  });
+
   // Dismiss Incremental Rem command (Ctrl+D)
   // In Queue: replicates the Dismiss button (card priority inheritance, review time, transfer to dismissed, remove powerup)
   // In Editor: dismisses the focused Incremental Rem (transfer history to dismissed, remove powerup)
@@ -4007,47 +4038,57 @@ export async function registerCommands(plugin: ReactRNPlugin) {
     },
   });
 
-  // For pointing an AI agent (MCP) or a debug tool at a Rem. Selected Rems win
-  // (one ID per line), then the Rem with the caret, then the card in the queue.
+  // For pointing an AI agent (MCP) or a debug tool at a Rem. Selected Rems are
+  // copied at once (one ID per line). Otherwise the candidates are the queue
+  // card or the focused Rem, its sources, and the PDF or web page open in the
+  // focused pane (lib/copy_rem_id.ts: the focused Rem can be stale there); one
+  // candidate is copied at once, several open a picker.
   plugin.app.registerCommand({
     id: 'copy-rem-id',
     name: 'Copy Rem ID',
-    description: 'Copies the ID of the focused Rem (or of each selected Rem, one per line) to the clipboard.',
+    description:
+      'Copies the ID of the focused Rem (or of each selected Rem, one per line) to the clipboard. On a Rem with sources, or with a PDF or web page open, lets you pick which one.',
     keyboardShortcut: 'ctrl+opt+i',
     quickCode: 'id',
     action: async () => {
-      let remIds: string[] = [];
-      const sel = await getEffectiveSelection(plugin);
-      if (sel?.type === SelectionType.Rem && sel.remIds?.length) {
-        remIds = sel.remIds;
-      } else if (sel?.type === SelectionType.Text && sel.remId) {
-        remIds = [sel.remId];
-      } else {
-        const focused = await plugin.focus.getFocusedRem();
-        if (focused) {
-          remIds = [focused._id];
-        } else if ((await plugin.window.getURL()).includes('/flashcards')) {
-          const card = await plugin.queue.getCurrentCard();
-          if (card?.remId) remIds = [card.remId];
-          // FORK (2026-11-15, review 3 lead c): an Incremental Rem in the queue is no card, so
-          // the command said "No Rem focused or selected." on every one — take the Rem on
-          // screen, by the plugin-screen rule (UPSTREAM_ISSUES.md #15; after 🔄, the one shown).
-          else if ((await plugin.queue.getCurrentQueueScreenType()) === QueueItemType.Plugin) {
-            const onScreen = await plugin.storage.getSession<string>(currentIncRemKey);
-            if (onScreen) remIds = [onScreen];
-          }
-        }
-      }
-
-      if (remIds.length === 0) {
-        await plugin.app.toast('No Rem focused or selected.');
+      const { selection: sel, source } = await getEffectiveSelectionWithSource(plugin);
+      if (sel?.type === SelectionType.Rem && sel.remIds?.length > 1) {
+        await copyTextToClipboard(plugin, sel.remIds.join('\n'), `${sel.remIds.length} Rem IDs`);
         return;
       }
-      await copyTextToClipboard(
+
+      const inQueue = (await plugin.window.getURL()).includes('/flashcards');
+      let primaryId: string | undefined;
+      let paneRemId: string | undefined;
+      if (inQueue) {
+        primaryId = (await plugin.queue.getCurrentCard())?.remId;
+        // FORK (2026-11-15, review 3 lead c; re-applied at the b01355e sync): an Incremental Rem in
+        // the queue is no card, so upstream finds nothing there and says "No Rem focused or
+        // selected." on every one — take the Rem on screen, by the plugin-screen rule
+        // (UPSTREAM_ISSUES.md #15 and #35; after 🔄, the one shown).
+        if (!primaryId && (await plugin.queue.getCurrentQueueScreenType()) === QueueItemType.Plugin) {
+          primaryId = (await plugin.storage.getSession<string>(currentIncRemKey)) ?? undefined;
+        }
+      } else {
+        if (sel?.type === SelectionType.Rem && sel.remIds?.length === 1) primaryId = sel.remIds[0];
+        else if (sel?.type === SelectionType.Text && sel.remId && source === 'live') primaryId = sel.remId;
+        else primaryId = (await plugin.focus.getFocusedRem())?._id;
+        paneRemId = (await plugin.window.getOpenPaneRemId(await plugin.window.getFocusedPaneId())) ?? undefined;
+      }
+
+      const { choices, preferred } = await collectRemIdChoices(
         plugin,
-        remIds.join('\n'),
-        remIds.length === 1 ? 'Rem ID' : `${remIds.length} Rem IDs`
+        primaryId,
+        inQueue ? 'card' : 'focused',
+        paneRemId
       );
+      if (choices.length === 0) {
+        await plugin.app.toast('No Rem focused or selected.');
+      } else if (choices.length === 1) {
+        await copyTextToClipboard(plugin, choices[0].remId, 'Rem ID');
+      } else {
+        await plugin.widget.openPopup(copyRemIdPopupWidgetId, { choices, preferred });
+      }
     },
   });
 

@@ -430,7 +430,7 @@ Both issues can be introduced by manual reorganization of a PDF rem, restoring f
 ### Diagnosing with "Debug PDF"
 
 1. Open the rem you want to inspect in the RemNote editor (the PDF document rem itself, or any rem that has the PDF as a source).
-2. Type `/debug` in the editor to open the **Debug Widget** below the rem.
+2. Type `/debug` in the editor to open the **Debug Widget** below the rem, or use the document's ⋯ menu → **Incremental RemNote…** → **Debug**.
 3. Scroll to the **PDF Structure Debug** section at the bottom of the widget.
 4. Click **Debug PDF**.
 
@@ -479,7 +479,7 @@ Open the PDF in RemNote's PDF viewer and make **any single highlight** anywhere.
 **Step 2 — Run Repair PDF**
 
 1. Navigate to the PDF rem (or any rem that has it as a source).
-2. Type `/debug` → open the **Debug Widget**.
+2. Type `/debug` → open the **Debug Widget**. When no Rem can take the cursor (the PDF open in its viewer, say), use the document's ⋯ menu → **Incremental RemNote…** → **Debug** instead.
 3. Click **Repair PDF**.
 4. Review the list of detected issues in the confirmation dialog.
 5. Click **OK** to proceed.
@@ -775,8 +775,8 @@ One exception: a hint can't extend beyond the plugin window it belongs to. In st
 
 The plugin watches for these stalls and writes what it saw to the developer console (desktop app: **View → Toggle Developer Tools**, then the **Console** tab; web app: `F12`). It writes nothing while things are normal, apart from one `[StallDiag] watching for stalls since …` line at startup.
 
-- `[StallDiag] ⚠️ STALL started …`: RemNote has stopped answering the plugin quickly. The line lists the calls still waiting; the plugin's log lines just above it name the job that was running.
-- `[StallDiag] main thread blocked for …`: the plugin's own work froze all of its widgets for that long.
+- `[StallDiag] ⚠️ STALL started …`: RemNote has stopped answering the plugin quickly. The line lists the calls still waiting and the calls (and large payloads) of the seconds before; the plugin's log lines just above it name the job that was running.
+- `[StallDiag] main thread blocked for …`: the plugin's own work froze all of its widgets for that long. Its last line, `Index calls while blocked`, lists the calls the plugin sent to RemNote and got answers to during the freeze, and any **large payload**: a list or text big enough that copying it in or out cost the plugin real time, with its storage key when it has one. That names the job. For example, `card.getAll answered with 71,661 items` at startup is the Card Priority cache reading every card in your knowledge base, a one-off cost of about 2 seconds on a large library.
 - `[StallDiag] widget "…"`: a single widget reporting its own slow calls, so you can see which widgets were waiting.
 - `[StallDiag] ✅ stall ended …`: how long it lasted, and whether the plugin's own work or the wait for RemNote caused it.
 
